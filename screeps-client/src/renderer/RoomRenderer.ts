@@ -209,6 +209,11 @@ export class RoomRenderer {
     const canvas = this.app.canvas
     const CLICK_THRESHOLD = 4
 
+    // Prevent context menu so Ctrl+Click works on macOS
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+    })
+
     canvas.addEventListener('pointerdown', (e) => {
       this.cancelBounce()
       this.cancelWheelTimeout()
