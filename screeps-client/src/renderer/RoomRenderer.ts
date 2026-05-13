@@ -21,7 +21,7 @@ export class RoomRenderer {
   private lastMouseY = 0
 
   private onHoverTile: ((tx: number | null, ty: number | null) => void) | null = null
-  private onClickTile: ((tx: number, ty: number) => void) | null = null
+  private onClickTile: ((tx: number, ty: number, ctrlKey: boolean) => void) | null = null
 
   private constructor(app: Application, container: HTMLElement) {
     this.app = app
@@ -252,7 +252,7 @@ export class RoomRenderer {
         const sx = e.clientX - rect.left
         const sy = e.clientY - rect.top
         const tile = this.screenToTile(sx, sy)
-        if (tile) this.onClickTile?.(tile.tx, tile.ty)
+        if (tile) this.onClickTile?.(tile.tx, tile.ty, e.ctrlKey || e.metaKey)
       }
 
       if (wasDragging) this.springBack()
@@ -320,7 +320,7 @@ export class RoomRenderer {
   /** Register callbacks for hover and click tile events. */
   setTileHandlers(
     onHover: (tx: number | null, ty: number | null) => void,
-    onClick: (tx: number, ty: number) => void,
+    onClick: (tx: number, ty: number, ctrlKey: boolean) => void,
   ): void {
     this.onHoverTile = onHover
     this.onClickTile = onClick
