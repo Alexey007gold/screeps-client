@@ -67,6 +67,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
             const msg: ConsoleMessage = {
               log: raw.messages?.log ?? [],
               results: raw.messages?.results ?? [],
+              error: raw.messages?.error ?? [],
             }
             this.console.push(msg)
             if (this.console.length > this.maxConsoleSize) {

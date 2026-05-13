@@ -64,6 +64,7 @@ export interface CpuStats {
 export interface ConsoleMessage {
   log: string[]
   results: string[]
+  error: string[]
 }
 
 export interface ServerVersion {

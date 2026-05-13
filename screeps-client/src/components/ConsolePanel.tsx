@@ -7,6 +7,7 @@ interface ConsoleEntry {
   id: number
   log: string[]
   results: string[]
+  error: string[]
 }
 
 export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boolean; onToggle?: () => void }) {
@@ -31,6 +32,7 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
         id: nextId++,
         log: msg.log ?? [],
         results: msg.results ?? [],
+        error: msg.error ?? [],
       }
       setEntries((prev) => {
         const next = [...prev, entry]
@@ -86,6 +88,7 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
   }
 
   const logLines = () => entries().flatMap((e) => e.log)
+  const errorLines = () => entries().flatMap((e) => e.error)
   const resultLines = () => entries().flatMap((e) => e.results)
 
   return (
@@ -167,9 +170,24 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
               'line-height': '1.5',
             }}
           >
-            {logLines().length === 0 && (
+            {logLines().length === 0 && errorLines().length === 0 && (
               <div style={{ color: '#484f58', 'font-style': 'italic' }}>No console output yet…</div>
             )}
+            <For each={errorLines()}>
+              {(line) => (
+                <div style={{ 'margin-bottom': '4px' }}>
+                  <div
+                    style={{
+                      color: '#f85149',
+                      'white-space': 'pre-wrap',
+                      'word-break': 'break-word',
+                    }}
+                    /* eslint-disable-next-line solid/no-innerhtml */
+                    innerHTML={line}
+                  />
+                </div>
+              )}
+            </For>
             <For each={logLines()}>
               {(line) => (
                 <div style={{ 'margin-bottom': '4px' }}>
