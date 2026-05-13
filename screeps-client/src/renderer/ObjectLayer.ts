@@ -65,6 +65,11 @@ function createObjectVisual(obj: RoomObject): Container {
       g.fill(0xd29922)
       break
     }
+    case 'road': {
+      // Intentionally left empty: rendering is batched in ObjectLayer's roadGraphics
+      // but we still need the empty container for selection tracking
+      break
+    }
     default: {
       // Structures
       const size = TILE_SIZE - 2
@@ -109,11 +114,14 @@ export class ObjectLayer {
   readonly container: Container
   private objects = new Map<string, ContainerWithTarget>()
   private rawObjects = new Map<string, RoomObject>()
+  private roadGraphics: Graphics
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
 
   constructor(ticker?: Ticker) {
     this.container = new Container()
+    this.roadGraphics = new Graphics()
+    this.container.addChild(this.roadGraphics)
     if (ticker) {
       this.ticker = ticker
       this.tickerCallback = () => {
@@ -139,9 +147,14 @@ export class ObjectLayer {
   }
 
   update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
+    let roadsChanged = false
+
     if (diff) {
       for (const [id, changes] of Object.entries(diff)) {
         if (changes === null) {
+          const oldObj = this.rawObjects.get(id)
+          if (oldObj && oldObj.type === 'road') roadsChanged = true
+
           const visual = this.objects.get(id)
           if (visual) {
             this.container.removeChild(visual)
@@ -153,6 +166,13 @@ export class ObjectLayer {
           const obj = objects[id]
           if (!obj) continue
           
+          if (obj.type === 'road') {
+            const existing = this.rawObjects.get(id)
+            if (!existing || existing.x !== obj.x || existing.y !== obj.y) {
+              roadsChanged = true
+            }
+          }
+
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
@@ -207,7 +227,67 @@ export class ObjectLayer {
           this.rawObjects.delete(id)
         }
       }
+
+      roadsChanged = true
     }
+
+    if (roadsChanged) {
+      this.redrawRoads()
+    }
+  }
+
+  private redrawRoads(): void {
+    this.roadGraphics.clear()
+    const color = OBJECT_COLORS['road'] ?? 0x484f58
+
+    const roadGrid = Array.from({ length: 50 }, () => new Array(50).fill(false))
+    const roads: RoomObject[] = []
+
+    for (const obj of this.rawObjects.values()) {
+      if (obj.type === 'road') {
+        roads.push(obj)
+        if (obj.x >= 0 && obj.x < 50 && obj.y >= 0 && obj.y < 50) {
+          roadGrid[obj.x][obj.y] = true
+        }
+      }
+    }
+
+    if (roads.length === 0) return
+
+    const cxOffset = TILE_SIZE / 2
+    const cyOffset = TILE_SIZE / 2
+    const radius = TILE_SIZE * 0.15
+
+    // Draw center dots
+    for (const r of roads) {
+      this.roadGraphics.circle(r.x * TILE_SIZE + cxOffset, r.y * TILE_SIZE + cyOffset, radius)
+    }
+    this.roadGraphics.fill(color)
+
+    // Draw connections
+    const neighbors = [
+      [1, 0],   // right
+      [1, 1],   // bottom-right
+      [0, 1],   // bottom
+      [-1, 1],  // bottom-left
+    ]
+
+    for (const r of roads) {
+      const cx = r.x * TILE_SIZE + cxOffset
+      const cy = r.y * TILE_SIZE + cyOffset
+
+      for (const [dx, dy] of neighbors) {
+        const nx = r.x + dx
+        const ny = r.y + dy
+        if (nx >= 0 && nx < 50 && ny >= 0 && ny < 50 && roadGrid[nx][ny]) {
+          const ncx = nx * TILE_SIZE + cxOffset
+          const ncy = ny * TILE_SIZE + cyOffset
+          this.roadGraphics.moveTo(cx, cy)
+          this.roadGraphics.lineTo(ncx, ncy)
+        }
+      }
+    }
+    this.roadGraphics.stroke({ width: radius * 2, color })
   }
 
   /**
