@@ -18,11 +18,11 @@ class MockWS {
 
 beforeEach(() => {
   MockWS.instances = []
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
     new Response(JSON.stringify({ ok: 1, token: 'authed' }), {
       headers: { 'content-type': 'application/json' },
     })
-  ))
+  )))
 })
 afterEach(() => { vi.unstubAllGlobals() })
 

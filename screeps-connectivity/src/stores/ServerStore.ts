@@ -9,6 +9,12 @@ import type { Cache } from '../cache/Cache.js'
 export class ServerStore extends TypedStore<ServerStoreEvents> {
   private readonly http: HttpClient
   private readonly cache: Cache
+  private _version: ServerVersion | null = null
+  get versionInfo(): ServerVersion | null { return this._version }
+  get isPrivateServer(): boolean | null {
+    if (!this._version) return null
+    return (this._version.serverData?.shards?.length ?? 0) === 0
+  }
   private _shards: ShardInfo[] | null = null
   get shardList(): ShardInfo[] | null { return this._shards }
 
@@ -33,6 +39,7 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
     const cached = this.cache.get<ServerVersion>('server/version')
     if (cached) return cached
     const res = await this.http.request<ServerVersion>('GET', '/api/version')
+    this._version = res
     this.cache.set('server/version', res, 5 * 60_000)
     this.emit('server:version', res)
     return res

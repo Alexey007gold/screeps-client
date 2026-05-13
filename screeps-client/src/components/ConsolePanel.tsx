@@ -9,7 +9,7 @@ interface ConsoleEntry {
   results: string[]
 }
 
-export function ConsolePanel(props: { shard?: string; isCollapsed?: boolean; onToggle?: () => void }) {
+export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boolean; onToggle?: () => void }) {
   const [entries, setEntries] = createSignal<ConsoleEntry[]>([])
   const [input, setInput] = createSignal('')
   const [autoScroll, setAutoScroll] = createSignal(true)

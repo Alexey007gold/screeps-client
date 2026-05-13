@@ -58,6 +58,7 @@ export class ScreepsClient {
     await this.http.authenticate()
     await this.socket.connect(this.http.token!)
     void this.stores.user.me()
+    void this.stores.server.version()
   }
 
   disconnect(): void {

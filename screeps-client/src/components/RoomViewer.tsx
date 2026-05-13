@@ -9,8 +9,8 @@ import { SubscriptionGroup } from 'screeps-connectivity'
 
 interface RoomViewerProps {
   room: string
-  shard: string
-  onNavigate?: (room: string, shard: string) => void
+  shard: string | null
+  onNavigate?: (room: string, shard: string | null) => void
 }
 
 export function RoomViewer(props: RoomViewerProps) {

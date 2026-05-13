@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onMount } from 'solid-js'
-import { client } from '~/stores/clientStore.js'
+import { client, userInfo } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import type { CpuStats } from 'screeps-connectivity'
 
@@ -24,7 +24,8 @@ export function StatsBar() {
   const cpuPercent = () => {
     const stats = cpu()
     if (!stats) return '—'
-    return `${stats.cpu.toFixed(1)} / 20`
+    const limit = userInfo()?.cpu ?? '?'
+    return `${stats.cpu.toFixed(1)} / ${limit}`
   }
 
   const memoryText = () => {

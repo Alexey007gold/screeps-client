@@ -1,9 +1,10 @@
-import { createEffect, createSignal } from 'solid-js'
+import { createEffect, createSignal, Show } from 'solid-js'
+import { isPrivateServer } from '~/stores/clientStore.js'
 
 interface RoomNavigatorProps {
-  onNavigate: (room: string, shard: string) => void
+  onNavigate: (room: string, shard: string | null) => void
   currentRoom?: string
-  currentShard?: string
+  currentShard?: string | null
 }
 
 export function RoomNavigator(props: RoomNavigatorProps) {
@@ -11,25 +12,15 @@ export function RoomNavigator(props: RoomNavigatorProps) {
   const [shard, setShard] = createSignal('shard0')
 
   createEffect(() => {
-    const r = props.currentRoom
-    if (r) {
-      setRoom(r)
-    } else {
-      setRoom('W1N1')
-    }
+    setRoom(props.currentRoom ?? 'W1N1')
   })
   createEffect(() => {
-    const s = props.currentShard
-    if (s) {
-      setShard(s)
-    } else {
-      setShard('shard0')
-    }
+    setShard(props.currentShard ?? 'shard0')
   })
 
   const handleSubmit = (e: Event) => {
     e.preventDefault()
-    props.onNavigate(room(), shard())
+    props.onNavigate(room(), isPrivateServer() ? null : shard())
   }
 
   return (
@@ -57,21 +48,23 @@ export function RoomNavigator(props: RoomNavigatorProps) {
           'font-size': '13px',
         }}
       />
-      <span style={{ 'font-size': '12px', color: '#8b949e' }}>Shard</span>
-      <input
-        type="text"
-        value={shard()}
-        onInput={(e) => setShard(e.currentTarget.value)}
-        style={{
-          width: '80px',
-          padding: '6px 8px',
-          'border-radius': '4px',
-          border: '1px solid #30363d',
-          background: '#0d1117',
-          color: '#c9d1d9',
-          'font-size': '13px',
-        }}
-      />
+      <Show when={!isPrivateServer()}>
+        <span style={{ 'font-size': '12px', color: '#8b949e' }}>Shard</span>
+        <input
+          type="text"
+          value={shard()}
+          onInput={(e) => setShard(e.currentTarget.value)}
+          style={{
+            width: '80px',
+            padding: '6px 8px',
+            'border-radius': '4px',
+            border: '1px solid #30363d',
+            background: '#0d1117',
+            color: '#c9d1d9',
+            'font-size': '13px',
+          }}
+        />
+      </Show>
       <button
         type="submit"
         style={{

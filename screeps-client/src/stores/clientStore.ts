@@ -1,14 +1,22 @@
 import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, IndexedDBStorage } from 'screeps-connectivity'
-import type { AuthStrategy, StorageAdapter } from 'screeps-connectivity'
+import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion } from 'screeps-connectivity'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
 const [client, setClient] = createSignal<ScreepsClient | null>(null)
 const [status, setStatus] = createSignal<ConnectionStatus>('idle')
 const [error, setError] = createSignal<string | null>(null)
+const [userInfo, setUserInfo] = createSignal<UserInfo | null>(null)
+const [serverVersion, setServerVersion] = createSignal<ServerVersion | null>(null)
 
-export { client, status, error }
+export const isPrivateServer = () => {
+  const v = serverVersion()
+  if (!v) return null
+  return (v.serverData?.shards?.length ?? 0) === 0
+}
+
+export { client, status, error, userInfo, serverVersion }
 
 export async function connect(opts: {
   url: string
@@ -39,12 +47,15 @@ export async function connect(opts: {
       url: opts.url,
       auth: authStrategy,
       storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
+      debug: import.meta.env.DEV,
     })
 
     screepsClient.stores.server.on('server:disconnected', (data) => {
       if (!data.willReconnect) {
         setStatus('idle')
         setClient(null)
+        setUserInfo(null)
+        setServerVersion(null)
       }
     })
 
@@ -52,6 +63,9 @@ export async function connect(opts: {
       setError(data.error.message)
       setStatus('error')
     })
+
+    screepsClient.stores.user.on('user:me', (info) => setUserInfo(info))
+    screepsClient.stores.server.on('server:version', (v) => setServerVersion(v))
 
     await screepsClient.connect()
     setClient(screepsClient)
@@ -92,5 +106,7 @@ export function disconnect(): void {
   setClient(null)
   setStatus('idle')
   setError(null)
+  setUserInfo(null)
+  setServerVersion(null)
   localStorage.removeItem('screeps:token')
 }
