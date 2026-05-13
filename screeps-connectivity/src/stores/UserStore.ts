@@ -63,7 +63,11 @@ export class UserStore extends TypedStore<UserStoreEvents> {
             this._cpu = data as CpuStats
             this.emit('user:cpu', this._cpu)
           } else if (channel === 'console') {
-            const msg = (data as { messages: ConsoleMessage }).messages
+            const raw = data as { messages?: ConsoleMessage }
+            const msg: ConsoleMessage = {
+              log: raw.messages?.log ?? [],
+              results: raw.messages?.results ?? [],
+            }
             this.console.push(msg)
             if (this.console.length > this.maxConsoleSize) {
               this.console.splice(0, this.console.length - this.maxConsoleSize)
