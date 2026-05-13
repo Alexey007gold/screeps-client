@@ -1,3 +1,4 @@
 node_modules
 reference
 .DS_Store
+screeps-connectivity/test-live.mjs

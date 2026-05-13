@@ -1,6 +1,9 @@
 export { ScreepsClient } from './ScreepsClient.js'
 export type { ScreepsClientOptions } from './ScreepsClient.js'
 
+export { Logger } from './logger.js'
+export type { LogFn } from './logger.js'
+
 export { TokenAuth } from './http/auth/TokenAuth.js'
 export { PasswordAuth } from './http/auth/PasswordAuth.js'
 export type { AuthStrategy } from './http/auth/AuthStrategy.js'

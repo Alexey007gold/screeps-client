@@ -1,5 +1,6 @@
 import { TypedStore } from './TypedStore.js'
 import { RoomTerrain } from '../types/game.js'
+import type { Logger } from '../logger.js'
 import type { RoomStoreEvents } from '../types/events.js'
 import type { RoomObject, RoomObjectMap } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
@@ -14,8 +15,8 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly roomObjects = new Map<string, RoomObjectMap>()
   private readonly roomSubCount = new Map<string, number>()
 
-  constructor(http: HttpClient, socket: SocketClient, cache: Cache) {
-    super()
+  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger) {
+    super(logger)
     this.http = http
     this.socket = socket
     this.cache = cache
@@ -25,15 +26,20 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const key = `terrain/${shard}/${room}`
 
     const cached = this.cache.get<RoomTerrain>(key)
-    if (cached) return cached
+    if (cached) {
+      this.logger.log('terrain', room, shard, '(memory cache hit)')
+      return cached
+    }
 
     const persisted = await this.cache.getPersistent(key)
     if (persisted) {
+      this.logger.log('terrain', room, shard, '(persistent cache hit)')
       const terrain = new RoomTerrain(persisted)
       this.cache.set(key, terrain)
       return terrain
     }
 
+    this.logger.log('terrain', room, shard, '(fetching)')
     const res = await this.http.game.roomTerrain(room, shard ?? undefined)
     const entry = res.terrain[0]
     if (!entry) throw new Error(`No terrain data for room ${room} shard ${shard}`)
@@ -67,6 +73,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const mapKey = `${room}/${shard}`
     const count = this.roomSubCount.get(mapKey) ?? 0
     this.roomSubCount.set(mapKey, count + 1)
+    this.logger.log('subscribe', room, shard, `(refs: ${count + 1})`)
 
     const channel = shard ? `room:${shard}/${room}` : `room:${room}`
     const socketSub = this.socket.subscribe(channel)
@@ -95,9 +102,11 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
         listenerSub.dispose()
         const remaining = (this.roomSubCount.get(mapKey) ?? 1) - 1
         if (remaining <= 0) {
+          this.logger.log('unsubscribe', room, shard, '(last ref)')
           this.roomSubCount.delete(mapKey)
           this.roomObjects.delete(mapKey)
         } else {
+          this.logger.log('unsubscribe', room, shard, `(refs: ${remaining})`)
           this.roomSubCount.set(mapKey, remaining)
         }
       },

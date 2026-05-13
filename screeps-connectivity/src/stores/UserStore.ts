@@ -1,4 +1,5 @@
 import { TypedStore } from './TypedStore.js'
+import type { Logger } from '../logger.js'
 import type { UserStoreEvents } from '../types/events.js'
 import type { UserInfo, CpuStats, ConsoleMessage } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
@@ -14,10 +15,12 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   readonly maxConsoleSize: number
   private _cpu: CpuStats | null = null
   get cpu(): CpuStats | null { return this._cpu }
+  private _userInfo: UserInfo | null = null
+  get userInfo(): UserInfo | null { return this._userInfo }
   private userId: string | null = null
 
-  constructor(http: HttpClient, socket: SocketClient, cache: Cache, maxConsoleSize = 100) {
-    super()
+  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, maxConsoleSize = 100) {
+    super(logger)
     this.http = http
     this.socket = socket
     this.cache = cache
@@ -27,14 +30,24 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   async me(): Promise<UserInfo> {
     const cached = this.cache.get<UserInfo>('user/me')
     if (cached) return cached
+    this.logger.log('fetch me')
     const res = await this.http.auth.me()
     const user = res as unknown as UserInfo
     this.userId = user._id
+    this._userInfo = user
     this.cache.set('user/me', user, 60_000)
+    this.emit('user:me', user)
     return user
   }
 
+  async refreshMe(): Promise<UserInfo> {
+    this.logger.log('refresh me')
+    this.cache.delete('user/me')
+    return this.me()
+  }
+
   subscribe(channel: 'console' | 'cpu' | 'code'): Subscription {
+    this.logger.log('subscribe', channel)
     let socketSub: Subscription | null = null
     let listenerSub: Subscription | null = null
     let disposed = false
@@ -71,6 +84,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
 
     return {
       dispose: () => {
+        this.logger.log('unsubscribe', channel)
         disposed = true
         socketSub?.dispose()
         listenerSub?.dispose()

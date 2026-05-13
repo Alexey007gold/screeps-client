@@ -4,6 +4,8 @@ import { Cache } from './cache/Cache.js'
 import { RoomStore } from './stores/RoomStore.js'
 import { UserStore } from './stores/UserStore.js'
 import { ServerStore } from './stores/ServerStore.js'
+import { Logger } from './logger.js'
+import type { LogFn } from './logger.js'
 import type { AuthStrategy } from './http/auth/AuthStrategy.js'
 import type { StorageAdapter } from './storage/StorageAdapter.js'
 
@@ -14,6 +16,7 @@ export interface ScreepsClientOptions {
   auth: AuthStrategy
   storage?: StorageAdapter | null
   WebSocket?: WsConstructor
+  debug?: boolean | LogFn
 }
 
 export class ScreepsClient {
@@ -25,6 +28,7 @@ export class ScreepsClient {
     readonly server: ServerStore
   }
   private readonly cache: Cache
+  private readonly logger: Logger
 
   constructor(opts: ScreepsClientOptions) {
     let namespace: string
@@ -33,13 +37,15 @@ export class ScreepsClient {
     } catch {
       throw new TypeError(`ScreepsClient: invalid url "${opts.url}"`)
     }
+    this.logger = Logger.create(opts.debug)
+    this.logger.log(`[screeps:client] init ${opts.url}`)
     this.cache = new Cache(namespace, opts.storage ?? null)
-    this.http = new HttpClient({ url: opts.url, auth: opts.auth })
-    this.socket = new SocketClient({ url: opts.url, WebSocket: opts.WebSocket })
+    this.http = new HttpClient({ url: opts.url, auth: opts.auth, logger: this.logger.child('http') })
+    this.socket = new SocketClient({ url: opts.url, WebSocket: opts.WebSocket, logger: this.logger.child('socket') })
     this.stores = {
-      room: new RoomStore(this.http, this.socket, this.cache),
-      user: new UserStore(this.http, this.socket, this.cache),
-      server: new ServerStore(this.http, this.socket, this.cache),
+      room: new RoomStore(this.http, this.socket, this.cache, this.logger.child('room')),
+      user: new UserStore(this.http, this.socket, this.cache, this.logger.child('user')),
+      server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server')),
     }
   }
 
@@ -48,11 +54,14 @@ export class ScreepsClient {
   }
 
   async connect(): Promise<void> {
+    this.logger.log('[screeps:client] connect')
     await this.http.authenticate()
     await this.socket.connect(this.http.token!)
+    void this.stores.user.me()
   }
 
   disconnect(): void {
+    this.logger.log('[screeps:client] disconnect')
     this.socket.disconnect()
   }
 }

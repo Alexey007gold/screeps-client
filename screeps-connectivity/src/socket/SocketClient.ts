@@ -1,4 +1,5 @@
 import { parseMessage } from './MessageParser.js'
+import { Logger } from '../logger.js'
 import type { Subscription } from '../subscription/index.js'
 
 type WsConstructor = typeof globalThis.WebSocket
@@ -6,6 +7,7 @@ type WsConstructor = typeof globalThis.WebSocket
 export class SocketClient {
   private readonly wsUrl: string
   private readonly WS: WsConstructor
+  private readonly logger: Logger
   private ws: WebSocket | null = null
   private token: string | null = null
   private authed = false
@@ -20,10 +22,11 @@ export class SocketClient {
   private readonly MAX_DELAY_MS = 60_000
   private _intentionalClose = false
 
-  constructor(opts: { url: string; WebSocket?: WsConstructor }) {
+  constructor(opts: { url: string; WebSocket?: WsConstructor; logger?: Logger }) {
     const base = opts.url.replace(/^http/, 'ws').replace(/\/$/, '')
     this.wsUrl = `${base}/socket/websocket`
     this.WS = opts.WebSocket ?? globalThis.WebSocket
+    this.logger = opts.logger ?? Logger.create()
   }
 
   get isConnected(): boolean {
@@ -31,6 +34,7 @@ export class SocketClient {
   }
 
   connect(token: string): Promise<void> {
+    this.logger.log('connect', this.wsUrl)
     this._intentionalClose = false
     this.token = token
     this.authSub?.dispose()
@@ -38,23 +42,27 @@ export class SocketClient {
     return new Promise((resolve, reject) => {
       this.ws = new this.WS(this.wsUrl) as WebSocket
       this.ws.onopen = () => {
+        this.logger.log('WebSocket opened')
         this._connected = true
         this.reconnecting = false
         this.rawSend(`auth ${this.token}`)
         this.authSub = this.once('auth', (data) => {
           const cmd = data as { status: string; token?: string }
           if (cmd.status === 'ok') {
+            this.logger.log('auth ok')
             this.authed = true
             if (cmd.token) this.token = cmd.token
             while (this.queue.length) this.rawSend(this.queue.shift()!)
             this.emit('connected', {})
             resolve()
           } else {
+            this.logger.log('auth failed')
             reject(new Error('WebSocket auth failed'))
           }
         })
       }
       this.ws.onclose = () => {
+        this.logger.log('WebSocket closed')
         this._connected = false
         this.authed = false
         this.authSub?.dispose()
@@ -70,6 +78,7 @@ export class SocketClient {
   }
 
   disconnect(): void {
+    this.logger.log('disconnect')
     this._intentionalClose = true
     this.reconnecting = false
     this.ws?.close()
@@ -83,7 +92,10 @@ export class SocketClient {
     const count = this.subs.get(channel) ?? 0
     this.subs.set(channel, count + 1)
     if (count === 0) {
+      this.logger.log('subscribe', channel)
       this.sendOrQueue(`subscribe ${channel}`)
+    } else {
+      this.logger.log('subscribe', channel, `(refs: ${count + 1})`)
     }
     return { dispose: () => this.doUnsubscribe(channel) }
   }
@@ -103,9 +115,11 @@ export class SocketClient {
   private doUnsubscribe(channel: string): void {
     const count = this.subs.get(channel) ?? 0
     if (count <= 1) {
+      this.logger.log('unsubscribe', channel)
       this.subs.delete(channel)
       if (this.authed) this.rawSend(`unsubscribe ${channel}`)
     } else {
+      this.logger.log('unsubscribe', channel, `(refs: ${count - 1})`)
       this.subs.set(channel, count - 1)
     }
   }
@@ -139,6 +153,7 @@ export class SocketClient {
     let retries = 0
     while (retries < this.MAX_RETRIES && this.reconnecting) {
       const delay = Math.min(Math.pow(2, retries) * 100, this.MAX_DELAY_MS)
+      this.logger.log(`reconnect attempt ${retries + 1}/${this.MAX_RETRIES} in ${delay}ms`)
       await new Promise(r => setTimeout(r, delay))
       if (!this.reconnecting) return
       try {

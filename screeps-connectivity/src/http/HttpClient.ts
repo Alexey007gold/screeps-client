@@ -1,4 +1,5 @@
 import { decompressGzip } from './decompress.js'
+import { Logger } from '../logger.js'
 import type { AuthStrategy } from './auth/AuthStrategy.js'
 import { createAuthEndpoints, type AuthEndpoints } from './endpoints/auth.js'
 import { createGameEndpoints, type GameEndpoints } from './endpoints/game.js'
@@ -15,6 +16,7 @@ export interface RateLimitInfo {
 export class HttpClient {
   readonly baseUrl: string
   private readonly authStrategy: AuthStrategy
+  private readonly logger: Logger
   token: string | null = null
   readonly rateLimits = new Map<string, RateLimitInfo>()
   private authenticating = false
@@ -25,9 +27,10 @@ export class HttpClient {
   readonly leaderboard: LeaderboardEndpoints
   readonly experimental: ExperimentalEndpoints
 
-  constructor(opts: { url: string; auth: AuthStrategy }) {
+  constructor(opts: { url: string; auth: AuthStrategy; logger?: Logger }) {
     this.baseUrl = opts.url.endsWith('/') ? opts.url : `${opts.url}/`
     this.authStrategy = opts.auth
+    this.logger = opts.logger ?? Logger.create()
     this.auth = createAuthEndpoints(this)
     this.game = createGameEndpoints(this)
     this.user = createUserEndpoints(this)
@@ -36,15 +39,18 @@ export class HttpClient {
   }
 
   async authenticate(): Promise<void> {
+    this.logger.log('authenticate')
     this.authenticating = true
     try {
       this.token = await this.authStrategy.authenticate(this)
+      this.logger.log('authenticated')
     } finally {
       this.authenticating = false
     }
   }
 
   async request<T>(method: string, path: string, body?: Record<string, unknown>, isRetry = false): Promise<T> {
+    this.logger.log(method, path)
     const url = new URL(path.startsWith('/') ? path.slice(1) : path, this.baseUrl)
     const headers: Record<string, string> = {}
 
