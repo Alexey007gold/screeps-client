@@ -3,9 +3,9 @@ import { RoomRenderer } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { client } from '~/stores/clientStore.js'
-import { setSelection, clearSelection, selection } from '~/stores/selectionStore.js'
+import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
-import type { RoomTerrain, RoomObjectMap } from 'screeps-connectivity'
+import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { SubscriptionGroup } from 'screeps-connectivity'
 
 interface RoomViewerProps {
@@ -19,7 +19,7 @@ export function RoomViewer(props: RoomViewerProps) {
   let objLayer: ObjectLayer | null = null
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<RoomTerrain | null>(null)
-  const [objects, setObjects] = createSignal<RoomObjectMap | null>(null)
+  const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff } | null>(null)
   const [gameTime, setGameTime] = createSignal<number | null>(null)
 
   onMount(async () => {
@@ -46,7 +46,7 @@ export function RoomViewer(props: RoomViewerProps) {
 
     // Reset state
     setTerrain(null)
-    setObjects(null)
+    setObjectState(null)
     setGameTime(null)
     clearSelection()
     r.clear()
@@ -101,7 +101,7 @@ export function RoomViewer(props: RoomViewerProps) {
     group.add(c.stores.room.subscribe(room, shard))
 
     group.add(c.stores.room.on('room:update', (data) => {
-      setObjects(data.objects)
+      setObjectState({ objects: data.objects, diff: data.diff })
       setGameTime(data.gameTime ?? null)
     }))
 
@@ -124,8 +124,10 @@ export function RoomViewer(props: RoomViewerProps) {
   // Render objects when they update
   createEffect(() => {
     const r = renderer()
-    const objs = objects()
-    if (!r || !objs) return
+    const state = objectState()
+    if (!r || !state) return
+
+    const { objects: objs, diff } = state
 
     if (!objLayer) {
       objLayer = new ObjectLayer(r.app.ticker)
@@ -193,7 +195,12 @@ export function RoomViewer(props: RoomViewerProps) {
         },
       )
     }
-    objLayer.update(objs)
+
+    if (diff) {
+      updateSelectionWithDiff(diff, objs)
+    }
+
+    objLayer.update(objs, diff)
   })
 
   return (

@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, Ticker } from 'pixi.js'
-import type { RoomObject, RoomObjectMap } from 'screeps-connectivity'
+import type { RoomObject, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { TILE_SIZE } from './RoomRenderer.js'
 
 const OBJECT_COLORS: Record<string, number> = {
@@ -138,38 +138,74 @@ export class ObjectLayer {
     }
   }
 
-  update(objects: RoomObjectMap): void {
-    const seen = new Set<string>()
-
-    for (const [id, obj] of Object.entries(objects)) {
-      seen.add(id)
-      this.rawObjects.set(id, obj)
-      const existing = this.objects.get(id)
-      if (!existing) {
-        const visual: ContainerWithTarget = createObjectVisual(obj)
-        this.objects.set(id, visual)
-        this.container.addChild(visual)
-      } else {
-        const tx = obj.x * TILE_SIZE
-        const ty = obj.y * TILE_SIZE
-        if (obj.type === 'creep') {
-          if (existing.x !== tx || existing.y !== ty) {
-            existing.__targetX = tx
-            existing.__targetY = ty
+  update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
+    if (diff) {
+      for (const [id, changes] of Object.entries(diff)) {
+        if (changes === null) {
+          const visual = this.objects.get(id)
+          if (visual) {
+            this.container.removeChild(visual)
+            visual.destroy()
+            this.objects.delete(id)
+            this.rawObjects.delete(id)
           }
         } else {
-          existing.position.set(tx, ty)
+          const obj = objects[id]
+          if (!obj) continue
+          
+          this.rawObjects.set(id, obj)
+          const existing = this.objects.get(id)
+          if (!existing) {
+            const visual: ContainerWithTarget = createObjectVisual(obj)
+            this.objects.set(id, visual)
+            this.container.addChild(visual)
+          } else {
+            const tx = obj.x * TILE_SIZE
+            const ty = obj.y * TILE_SIZE
+            if (obj.type === 'creep') {
+              if (existing.x !== tx || existing.y !== ty) {
+                existing.__targetX = tx
+                existing.__targetY = ty
+              }
+            } else {
+              existing.position.set(tx, ty)
+            }
+          }
         }
       }
-    }
+    } else {
+      const seen = new Set<string>()
 
-    // Remove objects that no longer exist
-    for (const [id, visual] of this.objects) {
-      if (!seen.has(id)) {
-        this.container.removeChild(visual)
-        visual.destroy()
-        this.objects.delete(id)
-        this.rawObjects.delete(id)
+      for (const [id, obj] of Object.entries(objects)) {
+        seen.add(id)
+        this.rawObjects.set(id, obj)
+        const existing = this.objects.get(id)
+        if (!existing) {
+          const visual: ContainerWithTarget = createObjectVisual(obj)
+          this.objects.set(id, visual)
+          this.container.addChild(visual)
+        } else {
+          const tx = obj.x * TILE_SIZE
+          const ty = obj.y * TILE_SIZE
+          if (obj.type === 'creep') {
+            if (existing.x !== tx || existing.y !== ty) {
+              existing.__targetX = tx
+              existing.__targetY = ty
+            }
+          } else {
+            existing.position.set(tx, ty)
+          }
+        }
+      }
+
+      // Remove objects that no longer exist
+      for (const [id, visual] of this.objects) {
+        if (!seen.has(id)) {
+          this.container.removeChild(visual)
+          visual.destroy()
+          this.objects.delete(id)
+          this.rawObjects.delete(id)
+        }
       }
     }
   }
