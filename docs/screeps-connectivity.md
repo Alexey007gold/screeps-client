@@ -62,8 +62,8 @@ await client.connect()
 // Later: load a room
 const terrain = await client.stores.room.terrain('W7N7', 'shard0')
 const roomSub = client.stores.room.subscribe('W7N7', 'shard0')
-client.stores.room.on('room:update', ({ gameTime, objects }) => {
-  console.log('Tick', gameTime, 'objects:', Object.keys(objects).length)
+client.stores.room.on('room:update', ({ gameTime, objects, diff }) => {
+  console.log('Tick', gameTime, 'objects:', Object.keys(objects).length, 'changed:', Object.keys(diff).length)
 })
 
 // Cleanup
@@ -336,14 +336,32 @@ roomStore.subscribe(room: string, shard: string | null): Subscription
 ```
 Opens a WebSocket subscription for live room updates. Manages ref-counting internally — the socket subscription is only sent once per unique room/shard and only removed when the last subscriber disposes.
 
-The first WebSocket message for a room is the full object state; subsequent messages are diffs. `RoomStore` merges diffs internally so `room:update` always delivers complete state.
+The first WebSocket message for a room is the full object state; subsequent messages are diffs. `RoomStore` merges diffs internally so `room:update` always delivers complete state in `objects`. The raw per-tick diff is also available as `diff` for event processing.
 
 #### Events
 
 | Event | Payload | When |
 |---|---|---|
-| `room:update` | `{ room, shard, gameTime, objects: RoomObjectMap }` | Each WebSocket tick for a subscribed room |
+| `room:update` | `{ room, shard, gameTime, objects: RoomObjectMap, diff: RoomObjectDiff }` | Each WebSocket tick for a subscribed room |
 | `room:terrainavailable` | `{ room, shard, terrain: RoomTerrain }` | After terrain is fetched from HTTP (not from cache) |
+
+**`objects` vs `diff`**: `objects` is the fully merged state — every object in the room with all its current fields, suitable for rendering. `diff` contains only what the server sent this tick: partial objects with only changed fields, and `null` for deleted objects. Use `objects` to draw the room; use `diff` to detect per-tick events (actions, deaths, spawns) without comparing previous and current state.
+
+Creep actions are carried in each creep's `actionLog` field within the diff. An `actionLog` entry is non-null when that action was performed this tick — for example `actionLog.upgradeController: { x, y }` when the creep upgraded a controller:
+
+```ts
+group.add(client.stores.room.on('room:update', ({ objects, diff, gameTime }) => {
+  // rendering — always complete state
+  renderObjects(objects, gameTime)
+
+  // per-tick events — only what changed
+  for (const [id, d] of Object.entries(diff)) {
+    if (d === null) onObjectDeleted(id)
+    else if (d.actionLog?.upgradeController) onUpgrade(objects[id])
+    else if (d.actionLog?.attack) onAttack(objects[id])
+  }
+}))
+```
 
 **Terrain data format**: `RoomTerrain` wraps a `Uint8Array(2500)` — one byte per tile, values 0–3 (`TerrainType.Plain`, `TerrainType.Wall`, `TerrainType.Swamp`). Stored as raw binary in persistent storage.
 
@@ -360,8 +378,9 @@ const terrain = await client.stores.room.terrain('W7N7', 'shard0')
 renderTerrain(terrain)
 
 group.add(client.stores.room.subscribe('W7N7', 'shard0'))
-group.add(client.stores.room.on('room:update', ({ gameTime, objects }) => {
+group.add(client.stores.room.on('room:update', ({ gameTime, objects, diff }) => {
   renderObjects(objects, gameTime)
+  // diff available here for action/event processing
 }))
 
 // Cleanup when navigating away
@@ -664,7 +683,7 @@ class RoomTerrain {
 enum TerrainType { Plain = 0, Wall = 1, Swamp = 2 }
 ```
 
-### `RoomObject`
+### `RoomObject` / `RoomObjectMap` / `RoomObjectDiff`
 
 ```ts
 interface RoomObject {
@@ -673,10 +692,11 @@ interface RoomObject {
   room: string
   x: number
   y: number
-  [key: string]: unknown  // type-specific fields
+  [key: string]: unknown  // type-specific fields (energy, hits, actionLog, etc.)
 }
 
-type RoomObjectMap = Record<string, RoomObject>
+type RoomObjectMap  = Record<string, RoomObject>           // complete merged state
+type RoomObjectDiff = Record<string, Partial<RoomObject> | null>  // per-tick changes; null = deleted
 ```
 
 ### `Subscription` / `SubscriptionGroup`

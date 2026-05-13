@@ -44,6 +44,7 @@ export interface RoomObject {
 }
 
 export type RoomObjectMap = Record<string, RoomObject>
+export type RoomObjectDiff = Record<string, Partial<RoomObject> | null>
 
 export interface UserInfo {
   _id: string

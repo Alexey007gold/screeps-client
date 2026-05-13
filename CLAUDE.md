@@ -8,6 +8,7 @@ Monorepo with two active packages and a `reference/` directory containing third-
 
 - `screeps-connectivity/` — core TypeScript library: HTTP, WebSocket, stores, cache, storage
 - `screeps-client/` — SolidJS + PixiJS browser frontend that consumes `screeps-connectivity`
+- `docs/screeps-connectivity.md` — full API reference for the library
 - `docs/superpowers/` — design specs and plans (markdown, do not edit generated specs)
 - `reference/` — third-party source for reference only, never edit
 - `test-live.mjs` — ad-hoc live integration test script (Node.js)

@@ -19,6 +19,7 @@ export { TerrainType, RoomTerrain } from './types/game.js'
 export type {
   RoomObject,
   RoomObjectMap,
+  RoomObjectDiff,
   UserInfo,
   CpuStats,
   ConsoleMessage,

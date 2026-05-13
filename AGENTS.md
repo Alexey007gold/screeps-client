@@ -1,7 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository currently centers on the `screeps-connectivity/` package. Keep production code in `screeps-connectivity/src/` and group it by concern: `http/`, `socket/`, `storage/`, `stores/`, `cache/`, and `types/`. Put tests in `screeps-connectivity/tests/`, mirroring the source layout where possible, for example `src/socket/SocketClient.ts` and `tests/socket/SocketClient.test.ts`. Build output goes to `screeps-connectivity/dist/` and should be treated as generated artifacts.
+This is a monorepo with two active packages:
+
+- `screeps-connectivity/` — core TypeScript library (HTTP, WebSocket, stores, cache, storage). Zero production dependencies; uses native platform APIs only.
+- `screeps-client/` — SolidJS + PixiJS browser frontend that consumes `screeps-connectivity`.
+
+The full library API is documented in `docs/screeps-connectivity.md`. Keep that file up to date when changing public interfaces, event payloads, or store behaviour.
+
+Keep production code in `screeps-connectivity/src/` and group it by concern: `http/`, `socket/`, `storage/`, `stores/`, `cache/`, and `types/`. Put tests in `screeps-connectivity/tests/`, mirroring the source layout where possible, for example `src/socket/SocketClient.ts` and `tests/socket/SocketClient.test.ts`. Build output goes to `screeps-connectivity/dist/` and should be treated as generated artifacts.
 
 ## Build, Test, and Development Commands
 Run commands from `screeps-connectivity/`.

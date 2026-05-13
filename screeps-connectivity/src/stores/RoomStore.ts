@@ -2,7 +2,7 @@ import { TypedStore } from './TypedStore.js'
 import { RoomTerrain } from '../types/game.js'
 import type { Logger } from '../logger.js'
 import type { RoomStoreEvents } from '../types/events.js'
-import type { RoomObject, RoomObjectMap } from '../types/game.js'
+import type { RoomObject, RoomObjectMap, RoomObjectDiff } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
@@ -66,7 +66,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       }
     }
     this.roomObjects.set(mapKey, map)
-    this.emit('room:update', { room, shard, gameTime: undefined, objects: map })
+    this.emit('room:update', { room, shard, gameTime: undefined, objects: map, diff: map })
   }
 
   subscribe(room: string, shard: string | null): Subscription {
@@ -79,7 +79,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const socketSub = this.socket.subscribe(channel)
 
     const listenerSub = this.socket.on(channel, (data) => {
-      const update = data as { objects: Record<string, Partial<RoomObject> | null>; gameTime?: number }
+      const update = data as { objects: RoomObjectDiff; gameTime?: number }
       const current: RoomObjectMap = { ...(this.roomObjects.get(mapKey) ?? {}) }
 
       for (const [id, obj] of Object.entries(update.objects)) {
@@ -93,7 +93,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       }
 
       this.roomObjects.set(mapKey, current)
-      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current })
+      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current, diff: update.objects })
     })
 
     return {
