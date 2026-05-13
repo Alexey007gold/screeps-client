@@ -8,7 +8,9 @@ Monorepo with two active packages and a `reference/` directory containing third-
 
 - `screeps-connectivity/` — core TypeScript library: HTTP, WebSocket, stores, cache, storage
 - `screeps-client/` — SolidJS + PixiJS browser frontend that consumes `screeps-connectivity`
-- `docs/superpowers/` — design specs and plans
+- `docs/superpowers/` — design specs and plans (markdown, do not edit generated specs)
+- `reference/` — third-party source for reference only, never edit
+- `test-live.mjs` — ad-hoc live integration test script (Node.js)
 
 ## Commands
 
@@ -36,6 +38,8 @@ npm run lint    # ESLint src
 
 The Vite config aliases `screeps-connectivity` directly to `screeps-connectivity/src/index.ts`, so the library does **not** need to be built before running the dev server.
 
+The path alias `~/` maps to `screeps-client/src/` — use it for all intra-package imports.
+
 ## Architecture
 
 ### screeps-connectivity
@@ -45,6 +49,7 @@ Five layers, each with a single responsibility:
 ```
 ScreepsClient          — facade, wires everything together
   ├─ HttpClient        — fetch wrapper, auth headers, rate limiting, gzip decompression
+  │    └─ endpoints/   — auth · game · user · leaderboard · experimental
   └─ SocketClient      — WebSocket lifecycle, reconnect (exponential backoff), sub ref-counting
        └─ MessageParser — plain-text commands and JSON-array messages, gzip via DecompressionStream
 DataStores             — RoomStore · UserStore · ServerStore (extend TypedStore → EventTarget)
@@ -64,11 +69,55 @@ StorageAdapter         — binary interface (Uint8Array); IndexedDBStorage · Fi
 
 **Cache namespacing** is derived from the server URL hostname, preventing collisions when connecting to multiple servers.
 
+**HTTP endpoints** are grouped by domain under `HttpClient`:
+- `http.auth` — signin, me, queryToken
+- `http.game` — room data, game time, shard info
+- `http.user` — user profile, console, branches
+- `http.leaderboard` — rankings, seasons
+- `http.experimental` — experimental API endpoints
+
 ### screeps-client
 
-SolidJS app with PixiJS for room rendering. State lives in `src/stores/clientStore.ts` as SolidJS signals. The `clientStore` holds the active `ScreepsClient` instance and connection status. `App.tsx` switches between `<LoginForm>` and `<Dashboard>` based on connection state.
+SolidJS app with PixiJS for room rendering.
 
-`RoomRenderer` (`src/renderer/`) manages a PixiJS `Application` with a draggable/zoomable `world` container. `TerrainLayer` and `ObjectLayer` are separate PixiJS layers added to `world`.
+#### Source structure
+
+```
+src/
+├── index.tsx              # Entry point: renders <App> into #root
+├── app/
+│   ├── App.tsx            # Root: auto-connects on mount, switches LoginForm ↔ Dashboard
+│   └── Dashboard.tsx      # Main layout: header, room canvas, console panel, sidebar with draggable splitters
+├── components/
+│   ├── ConnectionStatus.tsx  # Color-coded status chip (idle/connecting/connected/error)
+│   ├── ConsolePanel.tsx      # Console I/O: Log and Console tabs, auto-scroll, input form
+│   ├── LoginForm.tsx         # Auth form: password or token mode, server URL
+│   ├── PixiCanvas.tsx        # Demo PixiJS canvas (tile grid prototype)
+│   ├── RoomNavigator.tsx     # Room name + shard input with Load button
+│   ├── RoomViewer.tsx        # Ties RoomRenderer to store subscriptions, manages terrain/object layers
+│   ├── Sidebar.tsx           # Collapsible right panel (properties placeholder)
+│   └── StatsBar.tsx          # Live CPU and memory stats via UserStore subscription
+├── renderer/
+│   ├── RoomRenderer.ts       # PixiJS Application: draggable/zoomable world container, navigation zones
+│   ├── TerrainLayer.ts       # Graphics layer: Plain (grey)/Wall (dark)/Swamp (green) tiles
+│   └── ObjectLayer.ts        # Object sprites: creeps, structures; smooth movement via ticker
+├── stores/
+│   └── clientStore.ts        # SolidJS signals (client, status, error) + connect/disconnect/tryAutoConnect
+├── types/
+│   └── client.ts             # ClientState, RoomViewState type definitions
+└── utils/
+    └── roomName.ts           # Parse/format room names (e.g. W7N7 ↔ {x, y} coordinates)
+```
+
+**State management**: `clientStore.ts` holds three SolidJS signals (`client`, `status`, `error`) and three functions (`connect`, `disconnect`, `tryAutoConnect`). On connect, credentials are persisted to `localStorage` (`screeps:url`, `screeps:token`) for auto-reconnect on page reload.
+
+**`App.tsx`** calls `tryAutoConnect()` on mount to restore the previous session from `localStorage`. It switches between `<LoginForm>` and `<Dashboard>` based on connection state.
+
+**`Dashboard.tsx`** uses CSS flex layout with draggable splitters. The room canvas is the main content area; `ConsolePanel` sits below it; `Sidebar` is to the right.
+
+**`RoomViewer.tsx`** subscribes to `RoomStore` and `UserStore`, creates `TerrainLayer` and `ObjectLayer`, and hands them to `RoomRenderer`. Handles room navigation triggered from `RoomNavigator`.
+
+**`RoomRenderer.ts`** wraps a PixiJS `Application` in a `world` container with pointer-drag panning and wheel zoom, navigation zones (edge-scroll regions), and a view-reset method.
 
 ## Coding Conventions
 
@@ -77,3 +126,12 @@ SolidJS app with PixiJS for room rendering. State lives in `src/stores/clientSto
 - `PascalCase` for classes and files, `camelCase` for functions and variables
 - Zero production dependencies in `screeps-connectivity` — use native platform APIs only
 - `screeps-connectivity/dist/` is generated — never hand-edit it
+- Use `~/` alias for imports within `screeps-client/src/` (e.g. `import { client } from '~/stores/clientStore.js'`)
+
+## Testing
+
+Tests live in `screeps-connectivity/tests/`, mirroring the `src/` layout. `screeps-client` has no test suite currently.
+
+- Run all tests: `npm test` (from `screeps-connectivity/`)
+- Run one file: `npx vitest run tests/socket/SocketClient.test.ts`
+- Test environment: Node (Vitest); uses `fake-indexeddb` for storage tests
