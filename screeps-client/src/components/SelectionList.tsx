@@ -1,5 +1,5 @@
 import { For, Show } from 'solid-js'
-import { selection } from '~/stores/selectionStore.js'
+import { selection, deselectItem } from '~/stores/selectionStore.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 
 // Mirror the palette from ObjectLayer so colors match
@@ -70,10 +70,7 @@ function formatValue(value: unknown): string | null {
   return null
 }
 
-function SelectionItem(props: { item: SelectedObject }) {
-  const color = () => OBJECT_COLORS[props.item.type] ?? '#c9d1d9'
-  const label = () => TYPE_LABELS[props.item.type] ?? props.item.type
-
+function DefaultDetails(props: { item: SelectedObject }) {
   // Collect displayable flat fields from the raw object
   const fields = () => {
     const raw = props.item.raw as Record<string, unknown>
@@ -94,6 +91,101 @@ function SelectionItem(props: { item: SelectedObject }) {
   }
 
   return (
+    <Show when={fields().length > 0}>
+      <div
+        style={{
+          display: 'grid',
+          'grid-template-columns': '1fr 1fr',
+          gap: '1px',
+          background: '#21262d',
+          'font-size': '10px',
+        }}
+      >
+        <For each={fields()}>
+          {(field) => (
+            <>
+              <div
+                style={{
+                  padding: '3px 8px',
+                  background: '#0d1117',
+                  color: '#8b949e',
+                  overflow: 'hidden',
+                  'text-overflow': 'ellipsis',
+                  'white-space': 'nowrap',
+                }}
+              >
+                {field.key}
+              </div>
+              <div
+                style={{
+                  padding: '3px 8px',
+                  background: '#0d1117',
+                  color: '#c9d1d9',
+                  overflow: 'hidden',
+                  'text-overflow': 'ellipsis',
+                  'white-space': 'nowrap',
+                  'font-variant-numeric': 'tabular-nums',
+                }}
+              >
+                {field.value}
+              </div>
+            </>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+}
+
+function StoreDetails(props: { store?: Record<string, number> }) {
+  const items = () => Object.entries(props.store || {})
+
+  return (
+    <Show when={items().length > 0}>
+      <div style={{ background: '#21262d', 'border-top': '1px solid #30363d', 'font-size': '10px' }}>
+        <div style={{ padding: '4px 8px', background: '#161b22', color: '#8b949e', 'font-weight': 600 }}>
+          Store Contents
+        </div>
+        <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '1px', background: '#21262d' }}>
+          <For each={items()}>
+            {([res, amount]) => (
+              <>
+                <div style={{ padding: '3px 8px', background: '#0d1117', color: '#8b949e' }}>
+                  {res}
+                </div>
+                <div style={{ padding: '3px 8px', background: '#0d1117', color: '#c9d1d9', 'font-variant-numeric': 'tabular-nums' }}>
+                  {amount}
+                </div>
+              </>
+            )}
+          </For>
+        </div>
+      </div>
+    </Show>
+  )
+}
+
+function CreepDetails(props: { item: SelectedObject }) {
+  const store = props.item.raw.store as Record<string, number> | undefined
+  return (
+    <>
+      <DefaultDetails item={props.item} />
+      <StoreDetails store={store} />
+    </>
+  )
+}
+
+const CUSTOM_DETAILS: Record<string, (props: { item: SelectedObject }) => any> = {
+  creep: CreepDetails,
+}
+
+function SelectionItem(props: { item: SelectedObject }) {
+  const color = () => OBJECT_COLORS[props.item.type] ?? '#c9d1d9'
+  const label = () => TYPE_LABELS[props.item.type] ?? props.item.type
+
+  const DetailsRenderer = CUSTOM_DETAILS[props.item.type] || DefaultDetails
+
+  return (
     <div
       style={{
         'border-radius': '6px',
@@ -110,7 +202,7 @@ function SelectionItem(props: { item: SelectedObject }) {
           gap: '7px',
           padding: '6px 8px',
           background: '#161b22',
-          'border-bottom': fields().length > 0 ? '1px solid #21262d' : 'none',
+          'border-bottom': '1px solid #21262d',
         }}
       >
         {/* Color dot */}
@@ -141,55 +233,32 @@ function SelectionItem(props: { item: SelectedObject }) {
             </span>
           )}
         </span>
-        <span style={{ 'font-size': '10px', color: '#484f58', 'flex-shrink': 0 }}>
+        <span style={{ 'font-size': '10px', color: '#484f58', 'flex-shrink': 0, 'margin-right': '2px' }}>
           ({props.item.x},{props.item.y})
         </span>
+        <button
+          onClick={() => deselectItem(props.item.id)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#8b949e',
+            cursor: 'pointer',
+            padding: '0 4px',
+            'font-size': '14px',
+            'line-height': 1,
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center'
+          }}
+          title="Deselect"
+          onMouseEnter={(e) => (e.currentTarget.style.color = '#fff')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = '#8b949e')}
+        >
+          ×
+        </button>
       </div>
 
-      {/* Properties grid */}
-      <Show when={fields().length > 0}>
-        <div
-          style={{
-            display: 'grid',
-            'grid-template-columns': '1fr 1fr',
-            gap: '1px',
-            background: '#21262d',
-            'font-size': '10px',
-          }}
-        >
-          <For each={fields()}>
-            {(field) => (
-              <>
-                <div
-                  style={{
-                    padding: '3px 8px',
-                    background: '#0d1117',
-                    color: '#8b949e',
-                    overflow: 'hidden',
-                    'text-overflow': 'ellipsis',
-                    'white-space': 'nowrap',
-                  }}
-                >
-                  {field.key}
-                </div>
-                <div
-                  style={{
-                    padding: '3px 8px',
-                    background: '#0d1117',
-                    color: '#c9d1d9',
-                    overflow: 'hidden',
-                    'text-overflow': 'ellipsis',
-                    'white-space': 'nowrap',
-                    'font-variant-numeric': 'tabular-nums',
-                  }}
-                >
-                  {field.value}
-                </div>
-              </>
-            )}
-          </For>
-        </div>
-      </Show>
+      <DetailsRenderer item={props.item} />
     </div>
   )
 }

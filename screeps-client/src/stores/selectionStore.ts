@@ -18,6 +18,10 @@ export function clearSelection(): void {
   setSelection([])
 }
 
+export function deselectItem(id: string): void {
+  setSelection((prev) => prev.filter((item) => item.id !== id))
+}
+
 export function updateSelectionWithDiff(
   diff: Record<string, Partial<RoomObject> | null>,
   objects: Record<string, RoomObject>
