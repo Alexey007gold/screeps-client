@@ -99,9 +99,9 @@ export function LoginForm() {
         {authType() === 'password' ? (
           <>
             <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-              <span style={{ 'font-size': '12px', color: '#8b949e' }}>Email</span>
+              <span style={{ 'font-size': '12px', color: '#8b949e' }}>Email or Username</span>
               <input
-                type="email"
+                type="text"
                 value={email()}
                 onInput={(e) => setEmail(e.currentTarget.value)}
                 style={{
