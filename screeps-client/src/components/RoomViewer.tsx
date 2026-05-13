@@ -54,15 +54,36 @@ export function RoomViewer(props: RoomViewerProps) {
     objLayer?.destroy()
     objLayer = null
 
-    // Setup navigation zones
+    // Setup navigation zones + arrow-key navigation
     const coord = parseRoomName(room)
-    if (coord && props.onNavigate) {
-      r.setupNavigationZones({
-        west: () => props.onNavigate!(formatRoomName(coord.x - 1, coord.y), shard),
-        east: () => props.onNavigate!(formatRoomName(coord.x + 1, coord.y), shard),
+    const navHandlers = coord && props.onNavigate
+      ? {
+        west:  () => props.onNavigate!(formatRoomName(coord.x - 1, coord.y), shard),
+        east:  () => props.onNavigate!(formatRoomName(coord.x + 1, coord.y), shard),
         north: () => props.onNavigate!(formatRoomName(coord.x, coord.y - 1), shard),
         south: () => props.onNavigate!(formatRoomName(coord.x, coord.y + 1), shard),
-      })
+      }
+      : null
+
+    if (navHandlers) {
+      r.setupNavigationZones(navHandlers)
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        // Ignore when an input / textarea / contenteditable has focus
+        const tag = (e.target as HTMLElement | null)?.tagName ?? ''
+        const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+
+        switch (e.key) {
+          case 'ArrowLeft':  e.preventDefault(); navHandlers.west();  break
+          case 'ArrowRight': e.preventDefault(); navHandlers.east();  break
+          case 'ArrowUp':    e.preventDefault(); navHandlers.north(); break
+          case 'ArrowDown':  e.preventDefault(); navHandlers.south(); break
+        }
+      }
+
+      window.addEventListener('keydown', onKeyDown)
+      onCleanup(() => window.removeEventListener('keydown', onKeyDown))
     }
 
     const group = new SubscriptionGroup()
