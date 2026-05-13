@@ -20,6 +20,15 @@ export function LoginForm() {
     })
   }
 
+  const handleGuestConnect = async (e: MouseEvent) => {
+    e.preventDefault()
+    await connect({
+      url: url(),
+      auth: 'guest',
+      storage: null,
+    })
+  }
+
   const isConnecting = () => status() === 'connecting'
 
   return (
@@ -166,6 +175,26 @@ export function LoginForm() {
           }}
         >
           {isConnecting() ? 'Connecting…' : 'Connect'}
+        </button>
+
+        <button
+          type="button"
+          disabled={isConnecting()}
+          onClick={handleGuestConnect}
+          style={{
+            padding: '8px',
+            'border-radius': '6px',
+            border: '1px solid #30363d',
+            background: 'transparent',
+            color: '#8b949e',
+            'font-size': '12px',
+            cursor: isConnecting() ? 'not-allowed' : 'pointer',
+            opacity: isConnecting() ? 0.6 : 1,
+          }}
+          onMouseEnter={(e) => { if (!isConnecting()) e.currentTarget.style.borderColor = '#8b949e' }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#30363d' }}
+        >
+          Connect as Guest (read-only)
         </button>
       </form>
     </div>

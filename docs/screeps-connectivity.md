@@ -158,6 +158,25 @@ import { PasswordAuth } from 'screeps-connectivity'
 new PasswordAuth({ email: 'user@example.com', password: 'secret' })
 ```
 
+### GuestAuth
+
+Read-only observer access for `xxscreeps`-compatible private servers. No account or credentials required. The server accepts the literal token `"guest"` and grants a read-only view of the world.
+
+> **Note**: Not supported on the official `screeps.com` server. Guest sessions cannot write code, execute console commands, or access user-specific endpoints — `UserStore.me()` will fail silently.
+
+```ts
+import { GuestAuth } from 'screeps-connectivity'
+
+const client = new ScreepsClient({
+  url: 'http://localhost:21025',
+  auth: new GuestAuth(),
+})
+
+await client.connect()
+// Can now observe rooms, terrain, and live object updates
+// without being signed in
+```
+
 ### Custom AuthStrategy
 
 Implement `AuthStrategy` to handle any custom auth flow:

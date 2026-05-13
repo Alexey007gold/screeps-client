@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { ScreepsClient, PasswordAuth, TokenAuth, IndexedDBStorage } from 'screeps-connectivity'
+import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion } from 'screeps-connectivity'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
@@ -21,7 +21,7 @@ export { client, status, error, userInfo, serverVersion, gameTime, setGameTime }
 
 export async function connect(opts: {
   url: string
-  auth: 'password' | 'token'
+  auth: 'password' | 'token' | 'guest'
   email?: string
   password?: string
   token?: string
@@ -32,7 +32,9 @@ export async function connect(opts: {
 
   try {
     let authStrategy: AuthStrategy
-    if (opts.auth === 'password') {
+    if (opts.auth === 'guest') {
+      authStrategy = new GuestAuth()
+    } else if (opts.auth === 'password') {
       if (!opts.email || !opts.password) {
         throw new Error('Email and password are required')
       }
