@@ -329,6 +329,8 @@ function createObjectVisual(obj: RoomObject): Container {
     container.addChild(label)
   }
 
+  if (obj.type === 'creep') container.zIndex = 1
+
   container.position.set(obj.x * TILE_SIZE, obj.y * TILE_SIZE)
   return container
 }
@@ -371,6 +373,7 @@ export class ObjectLayer {
 
   constructor(ticker?: Ticker) {
     this.container = new Container()
+    this.container.sortableChildren = true
     this.roadGraphics = new Graphics()
     this.container.addChild(this.roadGraphics)
     if (ticker) {
