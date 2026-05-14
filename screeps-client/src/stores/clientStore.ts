@@ -143,7 +143,11 @@ export async function tryAutoConnect(): Promise<void> {
 
   log(`auto-connect: ${url}`)
   try {
-    await connect({ url, auth: 'token', token })
+    if (token === 'guest') {
+      await connect({ url, auth: 'guest', storage: null })
+    } else {
+      await connect({ url, auth: 'token', token })
+    }
   } catch {
     log('auto-connect failed — clearing stored token')
     localStorage.removeItem('screeps:token')
