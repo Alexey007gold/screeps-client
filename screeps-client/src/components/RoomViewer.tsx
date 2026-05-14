@@ -121,7 +121,7 @@ export function RoomViewer(props: RoomViewerProps) {
     if (!r || !t) return
 
     const layer = createTerrainLayer(t)
-    r.world.addChild(layer)
+    r.world.addChildAt(layer, 0)
     r.bringNavOverlayToTop()
   })
 
