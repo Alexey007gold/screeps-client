@@ -1,14 +1,27 @@
 import { onMount } from 'solid-js'
-import { client, status, tryAutoConnect } from '~/stores/clientStore.js'
+import { client, status, tryAutoConnect, connect } from '~/stores/clientStore.js'
 import { LoginForm } from '~/components/LoginForm.js'
 import { Dashboard } from './Dashboard.js'
+
+function guestAutoConnectUrl(): string | null {
+  const param = new URLSearchParams(window.location.search).get('guest')
+  if (param === null) return null
+  if (param.startsWith('http')) return param
+  return localStorage.getItem('screeps:url') ?? 'https://screeps.com'
+}
 
 export function App() {
   const isConnected = () => status() === 'connected' && client() !== null
 
-  onMount(() => {
+  onMount(async () => {
     if (status() === 'idle') {
-      tryAutoConnect().catch(() => {})
+      await tryAutoConnect().catch(() => {})
+      if (status() !== 'connected') {
+        const guestUrl = guestAutoConnectUrl()
+        if (guestUrl) {
+          connect({ url: guestUrl, auth: 'guest', storage: null }).catch(() => {})
+        }
+      }
     }
   })
 
