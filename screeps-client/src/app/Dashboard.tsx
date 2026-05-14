@@ -1,4 +1,4 @@
-import { createSignal } from 'solid-js'
+import { createSignal, onCleanup, onMount } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomNavigator } from '~/components/RoomNavigator.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
@@ -6,10 +6,25 @@ import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
 import { disconnect } from '~/stores/clientStore.js'
+import { parseRoomName } from '~/utils/roomName.js'
+
+function parseRoomUrl(): { room: string | null; shard: string | null } {
+  const match = window.location.pathname.match(/^\/room\/([A-Za-z0-9]+)/)
+  if (!match) return { room: null, shard: null }
+  const room = match[1].toUpperCase()
+  if (!parseRoomName(room)) return { room: null, shard: null }
+  const shard = new URLSearchParams(window.location.search).get('shard')
+  return { room, shard }
+}
+
+function buildRoomUrl(room: string, shard: string | null): string {
+  return `/room/${room}${shard ? `?shard=${encodeURIComponent(shard)}` : ''}`
+}
 
 export function Dashboard() {
-  const [room, setRoom] = createSignal(localStorage.getItem('screeps:room') ?? 'W1N1')
-  const [shard, setShard] = createSignal<string | null>(localStorage.getItem('screeps:shard'))
+  const urlState = parseRoomUrl()
+  const [room, setRoom] = createSignal(urlState.room ?? localStorage.getItem('screeps:room') ?? 'W1N1')
+  const [shard, setShard] = createSignal<string | null>(urlState.shard ?? localStorage.getItem('screeps:shard'))
 
   const [sidebarWidth, setSidebarWidth] = createSignal(260)
   const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(260)
@@ -87,7 +102,25 @@ export function Dashboard() {
     localStorage.setItem('screeps:room', r)
     if (s) localStorage.setItem('screeps:shard', s)
     else localStorage.removeItem('screeps:shard')
+    history.pushState(null, '', buildRoomUrl(r, s))
   }
+
+  onMount(() => {
+    // Ensure URL reflects the active room even when loaded without a room path
+    if (!parseRoomUrl().room) {
+      history.replaceState(null, '', buildRoomUrl(room(), shard()))
+    }
+
+    const onPopState = () => {
+      const { room: r, shard: s } = parseRoomUrl()
+      if (r) {
+        setRoom(r)
+        setShard(s)
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    onCleanup(() => window.removeEventListener('popstate', onPopState))
+  })
 
   return (
     <div
