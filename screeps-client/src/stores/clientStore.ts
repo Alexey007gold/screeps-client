@@ -4,6 +4,10 @@ import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion } from 'scre
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
+const log = import.meta.env.DEV
+  ? (...args: unknown[]) => console.log('[client]', ...args)
+  : () => {}
+
 const [client, setClient] = createSignal<ScreepsClient | null>(null)
 const [status, setStatus] = createSignal<ConnectionStatus>('idle')
 const [error, setError] = createSignal<string | null>(null)
@@ -29,6 +33,7 @@ export function recordGameTime(gt: number | undefined): void {
       }
       const avg = tickDurations.reduce((a, b) => a + b, 0) / tickDurations.length
       setTickDuration(Math.round(avg))
+      log(`tick ${lastGameTime} → ${gt}  elapsed ${elapsed}ms  avg ${Math.round(avg)}ms`)
     }
   }
   lastGameTime = gt
@@ -58,6 +63,7 @@ export async function connect(opts: {
   token?: string
   storage?: StorageAdapter | null
 }): Promise<void> {
+  log(`connecting to ${opts.url} (auth: ${opts.auth})`)
   setStatus('connecting')
   setError(null)
 
@@ -85,6 +91,7 @@ export async function connect(opts: {
     })
 
     screepsClient.stores.server.on('server:disconnected', (data) => {
+      log(`server disconnected (willReconnect: ${data.willReconnect})`)
       if (!data.willReconnect) {
         setStatus('idle')
         setClient(null)
@@ -94,17 +101,24 @@ export async function connect(opts: {
     })
 
     screepsClient.stores.server.on('server:error', (data) => {
+      log('server error:', data.error.message)
       setError(data.error.message)
       setStatus('error')
     })
 
-    screepsClient.stores.user.on('user:me', (info) => setUserInfo(info))
-    screepsClient.stores.server.on('server:version', (v) => setServerVersion(v))
+    screepsClient.stores.user.on('user:me', (info) => {
+      log(`user: ${info.username} (id: ${info._id})`)
+      setUserInfo(info)
+    })
+    screepsClient.stores.server.on('server:version', (v) => {
+      log(`server version: ${v.package ?? 'unknown'}`)
+      setServerVersion(v)
+    })
 
     await screepsClient.connect()
     setClient(screepsClient)
     setStatus('connected')
-    console.log('Connected to Screeps server', opts.url)
+    log(`connected to ${opts.url}`)
     // Persist credentials for auto-reconnect on reload
     localStorage.setItem('screeps:url', opts.url)
     if (screepsClient.http.token) {
@@ -112,6 +126,7 @@ export async function connect(opts: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    log('connection failed:', message)
     setError(message)
     setStatus('error')
     setClient(null)
@@ -124,15 +139,17 @@ export async function tryAutoConnect(): Promise<void> {
   const token = localStorage.getItem('screeps:token')
   if (!url || !token) return
 
+  log(`auto-connect: ${url}`)
   try {
     await connect({ url, auth: 'token', token })
   } catch {
-    // Invalid or expired token — clear it so user sees login form
+    log('auto-connect failed — clearing stored token')
     localStorage.removeItem('screeps:token')
   }
 }
 
 export function disconnect(): void {
+  log('disconnecting')
   const c = client()
   if (c) {
     c.disconnect()

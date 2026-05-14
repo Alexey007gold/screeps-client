@@ -3,6 +3,10 @@ import { client, status, tryAutoConnect, connect } from '~/stores/clientStore.js
 import { LoginForm } from '~/components/LoginForm.js'
 import { Dashboard } from './Dashboard.js'
 
+const log = import.meta.env.DEV
+  ? (...args: unknown[]) => console.log('[app]', ...args)
+  : () => {}
+
 function guestAutoConnectUrl(): string | null {
   const param = new URLSearchParams(window.location.search).get('guest')
   if (param === null) return null
@@ -19,6 +23,7 @@ export function App() {
       if (status() !== 'connected') {
         const guestUrl = guestAutoConnectUrl()
         if (guestUrl) {
+          log(`?guest param — auto-connecting as guest to ${guestUrl}`)
           connect({ url: guestUrl, auth: 'guest', storage: null }).catch(() => {})
         }
       }

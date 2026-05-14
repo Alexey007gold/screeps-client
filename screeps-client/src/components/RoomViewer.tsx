@@ -1,4 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
+
+const log = import.meta.env.DEV
+  ? (...args: unknown[]) => console.log('[room]', ...args)
+  : () => {}
 import { RoomRenderer } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
@@ -47,6 +51,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const room = props.room
     const shard = props.shard
 
+    log(`subscribing to ${room} shard=${shard ?? 'default'}`)
     setTerrain(null)
     setObjectState(null)
     setGameTime(null)
@@ -55,17 +60,23 @@ export function RoomViewer(props: RoomViewerProps) {
     const group = new SubscriptionGroup()
 
     c.stores.room.terrain(room, shard)
-      .then((t) => setTerrain(t))
-      .catch((err) => console.error('Failed to load terrain:', err))
+      .then((t) => { log(`terrain ready for ${room}`); setTerrain(t) })
+      .catch((err) => console.error(`[room] terrain load failed for ${room}:`, err))
 
     group.add(c.stores.room.subscribe(room, shard))
     group.add(c.stores.room.on('room:update', (data) => {
+      if (!data.diff) {
+        log(`initial state: ${Object.keys(data.objects).length} objects, tick=${data.gameTime}`)
+      }
       setObjectState({ objects: data.objects, diff: data.diff })
       setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
     }))
 
-    onCleanup(() => group.dispose())
+    onCleanup(() => {
+      log(`unsubscribing from ${room}`)
+      group.dispose()
+    })
   })
 
   // Reset renderer and setup navigation when room or renderer changes
