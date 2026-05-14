@@ -6,6 +6,7 @@ import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
 import { disconnect, isGuest } from '~/stores/clientStore.js'
+
 import { parseRoomName } from '~/utils/roomName.js'
 
 function parseRoomUrl(): { room: string | null; shard: string | null } {
@@ -136,7 +137,9 @@ export function Dashboard() {
       {/* Header */}
       <div style={{ display: 'flex', 'border-bottom': '1px solid #30363d', 'align-items': 'center' }}>
         <ConnectionStatus />
-        <StatsBar />
+        <Show when={!isGuest()}>
+          <StatsBar />
+        </Show>
         <div style={{ flex: 1 }} />
         <RoomNavigator
           onNavigate={handleNavigate}

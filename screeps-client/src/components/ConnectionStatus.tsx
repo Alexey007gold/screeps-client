@@ -1,4 +1,5 @@
-import { status } from '~/stores/clientStore.js'
+import { Show } from 'solid-js'
+import { status, isGuest } from '~/stores/clientStore.js'
 
 export function ConnectionStatus() {
   const statusColor = () => {
@@ -35,7 +36,23 @@ export function ConnectionStatus() {
           {status() === 'connected' ? 'Online' : status()}
         </span>
       </div>
-
+      <Show when={isGuest()}>
+        <span
+          style={{
+            padding: '2px 8px',
+            'border-radius': '4px',
+            background: '#21262d',
+            border: '1px solid #30363d',
+            color: '#8b949e',
+            'font-size': '11px',
+            'font-weight': 600,
+            'letter-spacing': '0.05em',
+            'text-transform': 'uppercase',
+          }}
+        >
+          Guest
+        </span>
+      </Show>
     </div>
   )
 }
