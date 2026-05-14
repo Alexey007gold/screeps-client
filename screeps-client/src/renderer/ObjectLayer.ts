@@ -24,6 +24,42 @@ function drawCreepArc(g: Graphics, startAngle: number, endAngle: number, color: 
   g.fill(color)
 }
 
+function getCreepStore(obj: RoomObject): { used: number; capacity: number } {
+  let capacity = 0
+  if (typeof obj.storeCapacity === 'number') {
+    capacity = obj.storeCapacity
+  } else {
+    const body = obj.body as Array<{ type: string }> | undefined
+    if (body) capacity = body.filter(p => p.type === 'carry').length * 50
+  }
+  if (capacity === 0) return { used: 0, capacity: 0 }
+
+  let used = 0
+  if (obj.store && typeof obj.store === 'object') {
+    for (const v of Object.values(obj.store as Record<string, unknown>)) {
+      if (typeof v === 'number') used += v
+    }
+  } else if (typeof obj.energy === 'number') {
+    used = obj.energy
+  }
+  return { used, capacity }
+}
+
+function calcCreepFillRadius(used: number, capacity: number): number {
+  if (capacity <= 0 || used <= 0) return 0
+  return CREEP_INNER_R * Math.min(1, used / capacity)
+}
+
+function updateCreepFill(visual: Container, radius: number): void {
+  const fill = (visual as Container & { __creepFillGraphics?: Graphics }).__creepFillGraphics
+  if (!fill) return
+  fill.clear()
+  if (radius > 0) {
+    fill.circle(0, 0, radius)
+    fill.fill(ENERGY_FILL)
+  }
+}
+
 function getObjectColor(type: string): number {
   return OBJECT_COLORS[type] ?? OBJ_DEFAULT
 }
@@ -204,6 +240,19 @@ function createObjectVisual(obj: RoomObject): Container {
       innerG.fill(BG_DARK)
       bodyContainer.addChild(innerG)
 
+      // Store fill (animated, updated on store changes)
+      const { used, capacity } = getCreepStore(obj)
+      const fillRadius = calcCreepFillRadius(used, capacity)
+      const fillG = new Graphics()
+      if (fillRadius > 0) {
+        fillG.circle(0, 0, fillRadius)
+        fillG.fill(ENERGY_FILL)
+      }
+      bodyContainer.addChild(fillG)
+      ;(container as ContainerWithTarget).__creepFillGraphics = fillG
+      ;(container as ContainerWithTarget).__creepUsed = used
+      ;(container as ContainerWithTarget).__creepCapacity = capacity
+
       // Direction indicator (notch pointing right = local angle 0)
       const midR   = (CREEP_OUTER_R + CREEP_INNER_R) / 2
       const halfH  = (CREEP_OUTER_R - CREEP_INNER_R) * 0.45
@@ -291,6 +340,9 @@ type ContainerWithTarget = Container & {
   __tileY?: number
   __angle?: number
   __bodyContainer?: Container
+  __creepFillGraphics?: Graphics
+  __creepUsed?: number
+  __creepCapacity?: number
 }
 
 interface ExtAnimation {
@@ -314,6 +366,7 @@ export class ObjectLayer {
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
   private extAnimations = new Map<string, ExtAnimation>()
+  private creepFillAnimations = new Map<string, ExtAnimation>()
   private readonly EXT_ANIM_DURATION = 300
 
   constructor(ticker?: Ticker) {
@@ -346,18 +399,21 @@ export class ObjectLayer {
       }
     }
 
-    // Extension fill animations
+    // Extension + creep fill animations
     const now = performance.now()
     for (const [id, anim] of this.extAnimations) {
       const elapsed = now - anim.startTime
       const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
-      // ease-in-out quad
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-      const currentRadius = anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease
-      updateExtensionFill(anim.visual, currentRadius)
-      if (t >= 1) {
-        this.extAnimations.delete(id)
-      }
+      updateExtensionFill(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
+      if (t >= 1) this.extAnimations.delete(id)
+    }
+    for (const [id, anim] of this.creepFillAnimations) {
+      const elapsed = now - anim.startTime
+      const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      updateCreepFill(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
+      if (t >= 1) this.creepFillAnimations.delete(id)
     }
   }
 
@@ -372,13 +428,21 @@ export class ObjectLayer {
     const fromRadius = calcExtensionFillRadius(fromEnergy, fromCapacity)
     const toRadius = calcExtensionFillRadius(toEnergy, toCapacity)
     if (fromRadius === toRadius) return
+    this.extAnimations.set(id, { visual, fromRadius, toRadius, startTime: performance.now() })
+  }
 
-    this.extAnimations.set(id, {
-      visual,
-      fromRadius,
-      toRadius,
-      startTime: performance.now(),
-    })
+  private startCreepFillAnimation(
+    id: string,
+    visual: ContainerWithTarget,
+    fromUsed: number,
+    fromCapacity: number,
+    toUsed: number,
+    toCapacity: number,
+  ): void {
+    const fromRadius = calcCreepFillRadius(fromUsed, fromCapacity)
+    const toRadius = calcCreepFillRadius(toUsed, toCapacity)
+    if (fromRadius === toRadius) return
+    this.creepFillAnimations.set(id, { visual, fromRadius, toRadius, startTime: performance.now() })
   }
 
   update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
@@ -397,6 +461,7 @@ export class ObjectLayer {
             this.objects.delete(id)
             this.rawObjects.delete(id)
             this.extAnimations.delete(id)
+            this.creepFillAnimations.delete(id)
           }
         } else {
           const obj = objects[id]
@@ -432,6 +497,12 @@ export class ObjectLayer {
               if (existing.x !== tx || existing.y !== ty) {
                 existing.__targetX = tx
                 existing.__targetY = ty
+              }
+              const { used, capacity } = getCreepStore(obj)
+              if (existing.__creepUsed !== used || existing.__creepCapacity !== capacity) {
+                this.startCreepFillAnimation(id, existing, existing.__creepUsed ?? 0, existing.__creepCapacity ?? capacity, used, capacity)
+                existing.__creepUsed = used
+                existing.__creepCapacity = capacity
               }
             } else {
               existing.position.set(tx, ty)
@@ -485,6 +556,12 @@ export class ObjectLayer {
               existing.__targetX = tx
               existing.__targetY = ty
             }
+            const { used, capacity } = getCreepStore(obj)
+            if (existing.__creepUsed !== used || existing.__creepCapacity !== capacity) {
+              this.startCreepFillAnimation(id, existing, existing.__creepUsed ?? 0, existing.__creepCapacity ?? capacity, used, capacity)
+              existing.__creepUsed = used
+              existing.__creepCapacity = capacity
+            }
           } else {
             existing.position.set(tx, ty)
           }
@@ -516,6 +593,7 @@ export class ObjectLayer {
           this.objects.delete(id)
           this.rawObjects.delete(id)
           this.extAnimations.delete(id)
+          this.creepFillAnimations.delete(id)
         }
       }
 
@@ -610,6 +688,7 @@ export class ObjectLayer {
     this.objects.clear()
     this.rawObjects.clear()
     this.extAnimations.clear()
+    this.creepFillAnimations.clear()
     this.container.removeChildren()
   }
 
