@@ -33,6 +33,78 @@ function getObjectColor(type: string): number {
   return OBJECT_COLORS[type] ?? 0xc9d1d9
 }
 
+function getExtensionEnergy(obj: RoomObject): { energy: number; capacity: number } {
+  const capacity = typeof obj.energyCapacity === 'number'
+    ? obj.energyCapacity
+    : typeof obj.storeCapacity === 'number'
+      ? obj.storeCapacity
+      : 50
+
+  let energy = 0
+  if (typeof obj.energy === 'number') {
+    energy = obj.energy
+  } else if (obj.store && typeof obj.store === 'object') {
+    const store = obj.store as Record<string, number>
+    energy = store.energy ?? 0
+  }
+
+  return { energy, capacity }
+}
+
+function calcExtensionFillRadius(energy: number, capacity: number): number {
+  const outerRadius = TILE_SIZE * 0.42
+  if (capacity <= 0 || energy <= 0) return 0
+  const ratio = Math.min(1, energy / capacity)
+  return outerRadius * 0.25 + (outerRadius * 0.7) * ratio
+}
+
+function drawExtensionVisual(container: Container, energy: number, capacity: number): void {
+  const cx = TILE_SIZE / 2
+  const cy = TILE_SIZE / 2
+  const outerRadius = TILE_SIZE * 0.42
+  const borderColor = OBJECT_COLORS['extension'] ?? 0x79c0ff
+  const bgColor = 0x161b22
+  const fillColor = 0xffe066
+
+  // Remove old graphics children
+  for (const child of container.children) {
+    if (child instanceof Graphics) {
+      child.destroy()
+    }
+  }
+
+  const bg = new Graphics()
+  bg.circle(cx, cy, outerRadius)
+  bg.fill(bgColor)
+  bg.circle(cx, cy, outerRadius)
+  bg.stroke({ width: 1, color: borderColor })
+  container.addChild(bg)
+
+  const radius = calcExtensionFillRadius(energy, capacity)
+  const fill = new Graphics()
+  if (radius > 0) {
+    fill.circle(cx, cy, radius)
+    fill.fill(fillColor)
+  }
+  container.addChild(fill)
+
+  ;(container as Container & { __fillGraphics?: Graphics }).__fillGraphics = fill
+}
+
+function updateExtensionFill(visual: Container, radius: number): void {
+  const cx = TILE_SIZE / 2
+  const cy = TILE_SIZE / 2
+  const fillColor = 0xffe066
+  const fill = (visual as Container & { __fillGraphics?: Graphics }).__fillGraphics
+
+  if (!fill) return
+  fill.clear()
+  if (radius > 0) {
+    fill.circle(cx, cy, radius)
+    fill.fill(fillColor)
+  }
+}
+
 function createObjectVisual(obj: RoomObject): Container {
   const container = new Container()
   const g = new Graphics()
@@ -44,6 +116,13 @@ function createObjectVisual(obj: RoomObject): Container {
     case 'creep': {
       g.circle(cx, cy, TILE_SIZE * 0.35)
       g.fill(color)
+      break
+    }
+    case 'extension': {
+      const { energy, capacity } = getExtensionEnergy(obj)
+      drawExtensionVisual(container, energy, capacity)
+      ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extEnergy = energy
+      ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extCapacity = capacity
       break
     }
     case 'source':
@@ -78,7 +157,9 @@ function createObjectVisual(obj: RoomObject): Container {
     }
   }
 
-  container.addChild(g)
+  if (obj.type !== 'extension' && obj.type !== 'road') {
+    container.addChild(g)
+  }
 
   // Label for creeps
   if (obj.type === 'creep' && typeof obj.name === 'string') {
@@ -104,6 +185,13 @@ type ContainerWithTarget = Container & {
   __targetY?: number
 }
 
+interface ExtAnimation {
+  visual: ContainerWithTarget
+  fromRadius: number
+  toRadius: number
+  startTime: number
+}
+
 export interface ObjectEntry {
   id: string
   obj: RoomObject
@@ -117,6 +205,8 @@ export class ObjectLayer {
   private roadGraphics: Graphics
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
+  private extAnimations = new Map<string, ExtAnimation>()
+  private readonly EXT_ANIM_DURATION = 300
 
   constructor(ticker?: Ticker) {
     this.container = new Container()
@@ -124,26 +214,63 @@ export class ObjectLayer {
     this.container.addChild(this.roadGraphics)
     if (ticker) {
       this.ticker = ticker
-      this.tickerCallback = () => {
-        for (const visual of this.objects.values()) {
-          const targetX = visual.__targetX
-          const targetY = visual.__targetY
-          if (targetX !== undefined && targetY !== undefined) {
-            const dx = targetX - visual.x
-            const dy = targetY - visual.y
-            if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
-              visual.position.set(targetX, targetY)
-              visual.__targetX = undefined
-              visual.__targetY = undefined
-            } else {
-              visual.x += dx * 0.15
-              visual.y += dy * 0.15
-            }
-          }
-        }
-      }
+      this.tickerCallback = () => this.tick()
       ticker.add(this.tickerCallback)
     }
+  }
+
+  private tick(): void {
+    // Creep movement interpolation
+    for (const visual of this.objects.values()) {
+      const targetX = visual.__targetX
+      const targetY = visual.__targetY
+      if (targetX !== undefined && targetY !== undefined) {
+        const dx = targetX - visual.x
+        const dy = targetY - visual.y
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+          visual.position.set(targetX, targetY)
+          visual.__targetX = undefined
+          visual.__targetY = undefined
+        } else {
+          visual.x += dx * 0.15
+          visual.y += dy * 0.15
+        }
+      }
+    }
+
+    // Extension fill animations
+    const now = performance.now()
+    for (const [id, anim] of this.extAnimations) {
+      const elapsed = now - anim.startTime
+      const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
+      // ease-in-out quad
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      const currentRadius = anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease
+      updateExtensionFill(anim.visual, currentRadius)
+      if (t >= 1) {
+        this.extAnimations.delete(id)
+      }
+    }
+  }
+
+  private startExtAnimation(
+    id: string,
+    visual: ContainerWithTarget,
+    fromEnergy: number,
+    fromCapacity: number,
+    toEnergy: number,
+    toCapacity: number,
+  ): void {
+    const fromRadius = calcExtensionFillRadius(fromEnergy, fromCapacity)
+    const toRadius = calcExtensionFillRadius(toEnergy, toCapacity)
+    if (fromRadius === toRadius) return
+
+    this.extAnimations.set(id, {
+      visual,
+      fromRadius,
+      toRadius,
+      startTime: performance.now(),
+    })
   }
 
   update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
@@ -161,6 +288,7 @@ export class ObjectLayer {
             visual.destroy()
             this.objects.delete(id)
             this.rawObjects.delete(id)
+            this.extAnimations.delete(id)
           }
         } else {
           const obj = objects[id]
@@ -190,6 +318,23 @@ export class ObjectLayer {
             } else {
               existing.position.set(tx, ty)
             }
+
+            if (obj.type === 'extension') {
+              const { energy, capacity } = getExtensionEnergy(obj)
+              const ext = existing as ContainerWithTarget & { __extEnergy?: number; __extCapacity?: number }
+              if (ext.__extEnergy !== energy || ext.__extCapacity !== capacity) {
+                this.startExtAnimation(
+                  id,
+                  existing,
+                  ext.__extEnergy ?? 0,
+                  ext.__extCapacity ?? capacity,
+                  energy,
+                  capacity,
+                )
+                ext.__extEnergy = energy
+                ext.__extCapacity = capacity
+              }
+            }
           }
         }
       }
@@ -215,6 +360,23 @@ export class ObjectLayer {
           } else {
             existing.position.set(tx, ty)
           }
+
+          if (obj.type === 'extension') {
+            const { energy, capacity } = getExtensionEnergy(obj)
+            const ext = existing as ContainerWithTarget & { __extEnergy?: number; __extCapacity?: number }
+            if (ext.__extEnergy !== energy || ext.__extCapacity !== capacity) {
+              this.startExtAnimation(
+                id,
+                existing,
+                ext.__extEnergy ?? 0,
+                ext.__extCapacity ?? capacity,
+                energy,
+                capacity,
+              )
+              ext.__extEnergy = energy
+              ext.__extCapacity = capacity
+            }
+          }
         }
       }
 
@@ -225,6 +387,7 @@ export class ObjectLayer {
           visual.destroy()
           this.objects.delete(id)
           this.rawObjects.delete(id)
+          this.extAnimations.delete(id)
         }
       }
 
@@ -318,6 +481,7 @@ export class ObjectLayer {
     }
     this.objects.clear()
     this.rawObjects.clear()
+    this.extAnimations.clear()
     this.container.removeChildren()
   }
 

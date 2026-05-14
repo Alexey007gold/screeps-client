@@ -1,27 +1,13 @@
 import { defineConfig } from 'vite'
 import solid from 'vite-plugin-solid'
+import { viteSingleFile } from 'vite-plugin-singlefile'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  plugins: [solid()],
-  server: {
-    proxy: {
-      '/api': {
-        //target: 'https://screeps.w4rl0ck.dev',
-        target: 'http://localhost:21025',
-        changeOrigin: true,
-      },
-      '/socket': {
-       // target: 'https://screeps.w4rl0ck.dev',
-        target: 'http://localhost:21025',
-        changeOrigin: true,
-        ws: true,
-      },
-    },
-  },
+  plugins: [solid(), viteSingleFile()],
   resolve: {
     alias: {
       '~/': '/src/',
