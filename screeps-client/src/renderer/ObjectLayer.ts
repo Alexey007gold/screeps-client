@@ -1,36 +1,31 @@
 import { Container, Graphics, Text, Ticker } from 'pixi.js'
 import type { RoomObject, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { TILE_SIZE } from './RoomRenderer.js'
+import {
+  BODY_PART_COLORS,
+  OBJECT_COLORS,
+  BG_DEEP, BG_DARK,
+  OBJ_DEFAULT, OBJ_CYAN, OBJ_ROAD, OBJ_GOLD,
+  ENERGY_FILL,
+  CREEP_RING_DARK, CREEP_NOTCH,
+} from './colors.js'
 
-const OBJECT_COLORS: Record<string, number> = {
-  creep: 0xf0883e,
-  spawn: 0x58a6ff,
-  extension: 0x79c0ff,
-  tower: 0x3fb950,
-  container: 0x8b949e,
-  storage: 0xd29922,
-  link: 0xa371f7,
-  rampart: 0x58a6ff,
-  road: 0x484f58,
-  wall: 0x21262d,
-  extractor: 0x8b949e,
-  lab: 0xf778ba,
-  terminal: 0xd29922,
-  observer: 0x79c0ff,
-  powerSpawn: 0xf0883e,
-  nuker: 0xf85149,
-  factory: 0x8b949e,
-  invaderCore: 0xf85149,
-  source: 0xd29922,
-  mineral: 0x79c0ff,
-  deposit: 0xd29922,
-  controller: 0x58a6ff,
-  powerBank: 0xf0883e,
-  portal: 0xa371f7,
+const CREEP_OUTER_R = TILE_SIZE * 0.44
+const CREEP_INNER_R = TILE_SIZE * 0.28
+const CREEP_MAX_BODY = 50
+
+function drawCreepArc(g: Graphics, startAngle: number, endAngle: number, color: number): void {
+  if (endAngle - startAngle < 0.001) return
+  g.moveTo(CREEP_OUTER_R * Math.cos(startAngle), CREEP_OUTER_R * Math.sin(startAngle))
+  g.arc(0, 0, CREEP_OUTER_R, startAngle, endAngle)
+  g.lineTo(CREEP_INNER_R * Math.cos(endAngle), CREEP_INNER_R * Math.sin(endAngle))
+  g.arc(0, 0, CREEP_INNER_R, endAngle, startAngle, true)
+  g.closePath()
+  g.fill(color)
 }
 
 function getObjectColor(type: string): number {
-  return OBJECT_COLORS[type] ?? 0xc9d1d9
+  return OBJECT_COLORS[type] ?? OBJ_DEFAULT
 }
 
 function getExtensionEnergy(obj: RoomObject): { energy: number; capacity: number } {
@@ -66,9 +61,9 @@ function drawExtensionVisual(container: Container, energy: number, capacity: num
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
   const outerRadius = getExtensionOuterRadius(capacity)
-  const borderColor = OBJECT_COLORS['extension'] ?? 0x79c0ff
-  const bgColor = 0x161b22
-  const fillColor = 0xffe066
+  const borderColor = OBJ_CYAN
+  const bgColor = BG_DARK
+  const fillColor = ENERGY_FILL
 
   // Remove old graphics children
   for (const child of container.children) {
@@ -98,7 +93,7 @@ function drawExtensionVisual(container: Container, energy: number, capacity: num
 function updateExtensionFill(visual: Container, radius: number): void {
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
-  const fillColor = 0xffe066
+  const fillColor = ENERGY_FILL
   const fill = (visual as Container & { __fillGraphics?: Graphics }).__fillGraphics
 
   if (!fill) return
@@ -118,8 +113,110 @@ function createObjectVisual(obj: RoomObject): Container {
 
   switch (obj.type) {
     case 'creep': {
-      g.circle(cx, cy, TILE_SIZE * 0.35)
-      g.fill(color)
+      const FULL = 2 * Math.PI
+
+      const bodyContainer = new Container()
+      bodyContainer.position.set(cx, cy)
+      bodyContainer.rotation = -Math.PI / 2
+
+      const bgG = new Graphics()
+      bgG.circle(0, 0, CREEP_OUTER_R)
+      bgG.fill(BG_DEEP)
+      bodyContainer.addChild(bgG)
+
+      // Count body parts by zone
+      const bodyParts = (obj.body as Array<{ type: string }> | undefined) ?? []
+      let workCount = 0
+      let moveCount = 0
+      const otherOrder: string[] = []
+      const otherCounts: Record<string, number> = {}
+      for (const part of bodyParts) {
+        if (part.type === 'work') {
+          workCount++
+        } else if (part.type === 'move') {
+          moveCount++
+        } else {
+          if (otherCounts[part.type] === undefined) {
+            otherOrder.push(part.type)
+            otherCounts[part.type] = 0
+          }
+          otherCounts[part.type]!++
+        }
+      }
+      const otherTotal = otherOrder.reduce((s, t) => s + (otherCounts[t] ?? 0), 0)
+
+      // Proportional angle allocations (relative to MAX_BODY=50)
+      const workAngle  = (workCount  / CREEP_MAX_BODY) * FULL
+      const moveAngle  = (moveCount  / CREEP_MAX_BODY) * FULL
+      const otherAngle = (otherTotal / CREEP_MAX_BODY) * FULL
+
+      // Zone boundaries (local space: 0 = top after -π/2 rotation, clockwise)
+      // WORK: centered at local 0 (top)
+      // MOVE: centered at local π (bottom)
+      // OTHER: split left/right, adjacent to WORK, filling toward MOVE
+      // DARK: remaining space between OTHER and MOVE
+      const workEnd        = workAngle / 2
+      const rightOtherEnd  = workEnd + otherAngle / 2
+      const moveStart      = Math.PI - moveAngle / 2
+      const moveEnd        = Math.PI + moveAngle / 2
+      const leftOtherStart = FULL - workAngle / 2 - otherAngle / 2
+      const leftOtherEnd   = FULL - workAngle / 2
+
+      const arcsG = new Graphics()
+
+      // 1. WORK — top, centered
+      if (workAngle > 0) {
+        drawCreepArc(arcsG, -workAngle / 2, workEnd, BODY_PART_COLORS['work'] ?? 0xffe56d)
+      }
+
+      // 2. RIGHT OTHER — clockwise from WORK, filling toward MOVE
+      let rightCur = workEnd
+      for (const type of otherOrder) {
+        const angle = ((otherCounts[type] ?? 0) / CREEP_MAX_BODY) * FULL / 2
+        drawCreepArc(arcsG, rightCur, rightCur + angle, BODY_PART_COLORS[type] ?? 0x777777)
+        rightCur += angle
+      }
+
+      // 3. RIGHT DARK
+      drawCreepArc(arcsG, rightOtherEnd, moveStart, CREEP_RING_DARK)
+
+      // 4. MOVE — bottom, centered
+      if (moveAngle > 0) {
+        drawCreepArc(arcsG, moveStart, moveEnd, BODY_PART_COLORS['move'] ?? 0xa9b7c6)
+      }
+
+      // 5. LEFT DARK
+      drawCreepArc(arcsG, moveEnd, leftOtherStart, CREEP_RING_DARK)
+
+      // 6. LEFT OTHER — filling from WORK downward (counter-clockwise = reverse order, drawn as clockwise arcs)
+      let leftCur = leftOtherEnd
+      for (const type of otherOrder) {
+        const angle = ((otherCounts[type] ?? 0) / CREEP_MAX_BODY) * FULL / 2
+        drawCreepArc(arcsG, leftCur - angle, leftCur, BODY_PART_COLORS[type] ?? 0x777777)
+        leftCur -= angle
+      }
+
+      bodyContainer.addChild(arcsG)
+
+      // Inner dark circle
+      const innerG = new Graphics()
+      innerG.circle(0, 0, CREEP_INNER_R)
+      innerG.fill(BG_DARK)
+      bodyContainer.addChild(innerG)
+
+      // Direction indicator (notch pointing right = local angle 0)
+      const midR   = (CREEP_OUTER_R + CREEP_INNER_R) / 2
+      const halfH  = (CREEP_OUTER_R - CREEP_INNER_R) * 0.45
+      const notchG = new Graphics()
+      notchG.moveTo(CREEP_OUTER_R, 0)
+      notchG.lineTo(midR, -halfH)
+      notchG.lineTo(midR,  halfH)
+      notchG.closePath()
+      notchG.fill(CREEP_NOTCH)
+      bodyContainer.addChild(notchG)
+
+      container.addChild(bodyContainer)
+      ;(container as ContainerWithTarget).__bodyContainer = bodyContainer
       break
     }
     case 'extension': {
@@ -140,12 +237,12 @@ function createObjectVisual(obj: RoomObject): Container {
       g.circle(cx, cy, TILE_SIZE * 0.4)
       g.fill(color)
       g.circle(cx, cy, TILE_SIZE * 0.25)
-      g.stroke({ width: 1, color: 0xffffff })
+      g.stroke({ width: 1, color: OBJ_DEFAULT })
       break
     }
     case 'energy': {
       g.circle(cx, cy, TILE_SIZE * 0.2)
-      g.fill(0xd29922)
+      g.fill(OBJ_GOLD)
       break
     }
     case 'road': {
@@ -161,19 +258,22 @@ function createObjectVisual(obj: RoomObject): Container {
     }
   }
 
-  if (obj.type !== 'extension' && obj.type !== 'road') {
+  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep') {
     container.addChild(g)
   }
 
-  // Label for creeps
+  // Label for creeps — render at 4× font size, scale down to stay crisp when zoomed
   if (obj.type === 'creep' && typeof obj.name === 'string') {
+    const FONT_SIZE = 32
+    const FONT_SCALE = 8 / FONT_SIZE
     const label = new Text({
       text: obj.name as string,
       style: {
-        fontSize: 8,
+        fontSize: FONT_SIZE,
         fill: 0xffffff,
       },
     })
+    label.scale.set(FONT_SCALE)
     label.anchor.set(0.5, 1)
     label.x = cx
     label.y = -2
@@ -187,6 +287,10 @@ function createObjectVisual(obj: RoomObject): Container {
 type ContainerWithTarget = Container & {
   __targetX?: number
   __targetY?: number
+  __tileX?: number
+  __tileY?: number
+  __angle?: number
+  __bodyContainer?: Container
 }
 
 interface ExtAnimation {
@@ -309,12 +413,22 @@ export class ObjectLayer {
           const existing = this.objects.get(id)
           if (!existing) {
             const visual: ContainerWithTarget = createObjectVisual(obj)
+            visual.__tileX = obj.x
+            visual.__tileY = obj.y
             this.objects.set(id, visual)
             this.container.addChild(visual)
           } else {
             const tx = obj.x * TILE_SIZE
             const ty = obj.y * TILE_SIZE
             if (obj.type === 'creep') {
+              const dx = obj.x - (existing.__tileX ?? obj.x)
+              const dy = obj.y - (existing.__tileY ?? obj.y)
+              if (dx !== 0 || dy !== 0) {
+                existing.__angle = Math.atan2(dy, dx)
+                if (existing.__bodyContainer) existing.__bodyContainer.rotation = existing.__angle
+              }
+              existing.__tileX = obj.x
+              existing.__tileY = obj.y
               if (existing.x !== tx || existing.y !== ty) {
                 existing.__targetX = tx
                 existing.__targetY = ty
@@ -351,12 +465,22 @@ export class ObjectLayer {
         const existing = this.objects.get(id)
         if (!existing) {
           const visual: ContainerWithTarget = createObjectVisual(obj)
+          visual.__tileX = obj.x
+          visual.__tileY = obj.y
           this.objects.set(id, visual)
           this.container.addChild(visual)
         } else {
           const tx = obj.x * TILE_SIZE
           const ty = obj.y * TILE_SIZE
           if (obj.type === 'creep') {
+            const dx = obj.x - (existing.__tileX ?? obj.x)
+            const dy = obj.y - (existing.__tileY ?? obj.y)
+            if (dx !== 0 || dy !== 0) {
+              existing.__angle = Math.atan2(dy, dx)
+              if (existing.__bodyContainer) existing.__bodyContainer.rotation = existing.__angle
+            }
+            existing.__tileX = obj.x
+            existing.__tileY = obj.y
             if (existing.x !== tx || existing.y !== ty) {
               existing.__targetX = tx
               existing.__targetY = ty
@@ -405,7 +529,7 @@ export class ObjectLayer {
 
   private redrawRoads(): void {
     this.roadGraphics.clear()
-    const color = OBJECT_COLORS['road'] ?? 0x484f58
+    const color = OBJ_ROAD
 
     const roadGrid = Array.from({ length: 50 }, () => new Array(50).fill(false))
     const roads: RoomObject[] = []

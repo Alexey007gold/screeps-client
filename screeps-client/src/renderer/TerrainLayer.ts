@@ -1,11 +1,12 @@
 import { Graphics } from 'pixi.js'
 import { TerrainType, RoomTerrain } from 'screeps-connectivity'
 import { TILE_SIZE } from './RoomRenderer.js'
+import { TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD, TERRAIN_BORDER } from './colors.js'
 
 const TERRAIN_COLORS: Record<TerrainType, number> = {
-  [TerrainType.Plain]: 0x2d333b,
-  [TerrainType.Wall]: 0x0d1117,
-  [TerrainType.Swamp]: 0x3d5a3d,
+  [TerrainType.Plain]: TERRAIN_PLAIN,
+  [TerrainType.Wall]:  TERRAIN_WALL,
+  [TerrainType.Swamp]: TERRAIN_SWAMP,
 }
 
 function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: TerrainType) {
@@ -112,7 +113,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
 }
 
 function drawExits(g: Graphics, terrain: RoomTerrain) {
-  const exitColor = 0x484f58
+  const exitColor = TERRAIN_ROAD
   const T = TILE_SIZE
 
   const drawArrow = (x: number, y: number, dir: 'up' | 'down' | 'left' | 'right') => {
@@ -169,7 +170,7 @@ export function createTerrainLayer(terrain: RoomTerrain): Graphics {
 
   // Room border
   g.rect(0, 0, 50 * TILE_SIZE, 50 * TILE_SIZE)
-  g.stroke({ width: 1, color: 0x30363d })
+  g.stroke({ width: 1, color: TERRAIN_BORDER })
 
   return g
 }

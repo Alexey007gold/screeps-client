@@ -1,5 +1,6 @@
 import { Container, Graphics, Ticker } from 'pixi.js'
 import { TILE_SIZE } from './RoomRenderer.js'
+import { ANIM_HARVEST, ANIM_UPGRADE } from './colors.js'
 
 interface BeamAnimation {
   fromX: number
@@ -12,8 +13,6 @@ interface BeamAnimation {
   width: number
 }
 
-const HARVEST_COLOR = 0xffe066
-const UPGRADE_COLOR = 0x79c0ff
 const BEAM_WIDTH = 2
 
 function tileCenter(x: number, y: number): { cx: number; cy: number } {
@@ -52,7 +51,7 @@ export class ActionAnimationLayer {
       toY: to.cy,
       startTime: performance.now(),
       duration: durationMs,
-      color: HARVEST_COLOR,
+      color: ANIM_HARVEST,
       width: BEAM_WIDTH,
     })
   }
@@ -67,7 +66,7 @@ export class ActionAnimationLayer {
       toY: to.cy,
       startTime: performance.now(),
       duration: durationMs,
-      color: UPGRADE_COLOR,
+      color: ANIM_UPGRADE,
       width: BEAM_WIDTH,
     })
   }
