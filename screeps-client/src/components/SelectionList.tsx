@@ -61,7 +61,7 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 /** Fields we want to surface as key-value rows (exclude noisy / structural ones) */
-const SKIP_FIELDS = new Set(['x', 'y', 'type', 'id', 'name', 'user', '_id', 'room', 'hitsMax'])
+const SKIP_FIELDS = new Set(['x', 'y', 'type', 'id', 'name', 'user', '_id', 'room', 'hitsMax', 'energyCapacity'])
 const NUMERIC_FIELDS = new Set(['hits', 'energy', 'energyCapacity', 'store', 'progress', 'progressTotal', 'nextDecayTime'])
 
 function formatValue(value: unknown): string | null {
@@ -84,6 +84,10 @@ function DefaultDetails(props: { item: SelectedObject }) {
 
       if (k === 'hits' && typeof raw.hitsMax === 'number') {
         finalValue = `${v} / ${raw.hitsMax}`
+      }
+
+      if (k === 'energy' && typeof raw.energyCapacity === 'number') {
+        finalValue = `${v} / ${raw.energyCapacity}`
       }
 
       if (k === 'nextDecayTime' && typeof v === 'number') {

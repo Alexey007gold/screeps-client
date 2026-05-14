@@ -51,8 +51,12 @@ function getExtensionEnergy(obj: RoomObject): { energy: number; capacity: number
   return { energy, capacity }
 }
 
+function getExtensionOuterRadius(capacity: number): number {
+  return capacity < 100 ? TILE_SIZE * 0.32 : TILE_SIZE * 0.42
+}
+
 function calcExtensionFillRadius(energy: number, capacity: number): number {
-  const outerRadius = TILE_SIZE * 0.42
+  const outerRadius = getExtensionOuterRadius(capacity)
   if (capacity <= 0 || energy <= 0) return 0
   const ratio = Math.min(1, energy / capacity)
   return outerRadius * 0.25 + (outerRadius * 0.7) * ratio
@@ -61,7 +65,7 @@ function calcExtensionFillRadius(energy: number, capacity: number): number {
 function drawExtensionVisual(container: Container, energy: number, capacity: number): void {
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
-  const outerRadius = TILE_SIZE * 0.42
+  const outerRadius = getExtensionOuterRadius(capacity)
   const borderColor = OBJECT_COLORS['extension'] ?? 0x79c0ff
   const bgColor = 0x161b22
   const fillColor = 0xffe066
