@@ -213,23 +213,21 @@ export function RoomViewer(props: RoomViewerProps) {
 
     objLayer.update(objs, diff)
 
-    if (diff && animLayer) {
+    if (animLayer) {
+      animLayer.clear()
       const duration = (tickDuration() ?? 2000) * 0.6
-      for (const [id, changes] of Object.entries(diff)) {
-        if (!changes || typeof changes !== 'object') continue
-        const actionLog = (changes as Record<string, unknown>).actionLog as Record<string, { x: number; y: number }> | undefined
+      for (const [, obj] of Object.entries(objs)) {
+        if (!obj || obj.type !== 'creep') continue
+        const actionLog = obj.actionLog as Record<string, { x: number; y: number } | null> | null | undefined
         if (!actionLog) continue
-        const creep = objs[id]
-        if (!creep || creep.type !== 'creep') continue
 
         if (actionLog.harvest) {
-          console.log('creep harvest',creep.name, duration, id, actionLog.harvest )
           const target = actionLog.harvest
-          animLayer.addHarvest(target.x, target.y, creep.x, creep.y, duration)
+          animLayer.addHarvest(target.x, target.y, obj.x, obj.y, duration)
         }
         if (actionLog.upgradeController) {
           const target = actionLog.upgradeController
-          animLayer.addUpgradeController(creep.x, creep.y, target.x, target.y, duration)
+          animLayer.addUpgradeController(obj.x, obj.y, target.x, target.y, duration)
         }
       }
     }
