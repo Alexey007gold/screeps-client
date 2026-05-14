@@ -15,6 +15,7 @@ const [userInfo, setUserInfo] = createSignal<UserInfo | null>(null)
 const [serverVersion, setServerVersion] = createSignal<ServerVersion | null>(null)
 const [gameTime, setGameTime] = createSignal<number | null>(null)
 const [tickDuration, setTickDuration] = createSignal<number | null>(null)
+const [isGuest, setIsGuest] = createSignal(false)
 
 let lastGameTime = -1
 let lastTickTimestamp = -1
@@ -53,7 +54,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest }
 
 export async function connect(opts: {
   url: string
@@ -71,6 +72,7 @@ export async function connect(opts: {
     let authStrategy: AuthStrategy
     if (opts.auth === 'guest') {
       authStrategy = new GuestAuth()
+      setIsGuest(true)
     } else if (opts.auth === 'password') {
       if (!opts.email || !opts.password) {
         throw new Error('Email and password are required')
@@ -160,6 +162,7 @@ export function disconnect(): void {
   setUserInfo(null)
   setServerVersion(null)
   setGameTime(null)
+  setIsGuest(false)
   resetTickTracking()
   localStorage.removeItem('screeps:token')
 }

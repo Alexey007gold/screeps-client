@@ -1,11 +1,11 @@
-import { createSignal, onCleanup, onMount } from 'solid-js'
+import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomNavigator } from '~/components/RoomNavigator.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
-import { disconnect } from '~/stores/clientStore.js'
+import { disconnect, isGuest } from '~/stores/clientStore.js'
 import { parseRoomName } from '~/utils/roomName.js'
 
 function parseRoomUrl(): { room: string | null; shard: string | null } {
@@ -177,35 +177,37 @@ export function Dashboard() {
           </div>
 
           {/* Bottom Console */}
-          <div
-            style={{
-              height: `${consoleHeight()}px`,
-              'border-top': '1px solid #30363d',
-              transition: consoleDragging() ? 'none' : 'height 0.15s ease',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            {/* Drag handle */}
+          <Show when={!isGuest()}>
             <div
-              onPointerDown={startConsoleDrag}
               style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '4px',
-                cursor: 'row-resize',
-                'z-index': 10,
-                background: '#21262d',
+                height: `${consoleHeight()}px`,
+                'border-top': '1px solid #30363d',
+                transition: consoleDragging() ? 'none' : 'height 0.15s ease',
+                overflow: 'hidden',
+                position: 'relative',
               }}
-            />
-            <ConsolePanel
-              shard={shard()}
-              isCollapsed={consoleCollapsed()}
-              onToggle={toggleConsole}
-            />
-          </div>
+            >
+              {/* Drag handle */}
+              <div
+                onPointerDown={startConsoleDrag}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '4px',
+                  cursor: 'row-resize',
+                  'z-index': 10,
+                  background: '#21262d',
+                }}
+              />
+              <ConsolePanel
+                shard={shard()}
+                isCollapsed={consoleCollapsed()}
+                onToggle={toggleConsole}
+              />
+            </div>
+          </Show>
         </div>
 
         {/* Right Sidebar */}
