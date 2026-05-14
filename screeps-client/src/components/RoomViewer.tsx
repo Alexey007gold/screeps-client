@@ -2,7 +2,8 @@ import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { RoomRenderer } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
-import { client, gameTime, setGameTime } from '~/stores/clientStore.js'
+import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
+import { client, gameTime, setGameTime, recordGameTime, tickDuration } from '~/stores/clientStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
@@ -17,6 +18,7 @@ interface RoomViewerProps {
 export function RoomViewer(props: RoomViewerProps) {
   let containerRef: HTMLDivElement | undefined
   let objLayer: ObjectLayer | null = null
+  let animLayer: ActionAnimationLayer | null = null
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<RoomTerrain | null>(null)
   const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff } | null>(null)
@@ -30,6 +32,8 @@ export function RoomViewer(props: RoomViewerProps) {
   onCleanup(() => {
     objLayer?.destroy()
     objLayer = null
+    animLayer?.destroy()
+    animLayer = null
     const r = renderer()
     if (r) r.destroy()
   })
@@ -52,6 +56,8 @@ export function RoomViewer(props: RoomViewerProps) {
     r.resetView()
     objLayer?.destroy()
     objLayer = null
+    animLayer?.destroy()
+    animLayer = null
 
     // Setup navigation zones + arrow-key navigation
     const coord = parseRoomName(room)
@@ -94,7 +100,7 @@ export function RoomViewer(props: RoomViewerProps) {
 
     // Fetch initial room objects
     c.stores.room.fetchObjects(room, shard)
-      .catch((err) => console.error('Failed to load room objects:', err))
+      .catch((err) => console.error('Failed to load room objects:', room, shard, err))
 
     // Subscribe to room updates
     group.add(c.stores.room.subscribe(room, shard))
@@ -102,6 +108,7 @@ export function RoomViewer(props: RoomViewerProps) {
     group.add(c.stores.room.on('room:update', (data) => {
       setObjectState({ objects: data.objects, diff: data.diff })
       setGameTime(data.gameTime ?? null)
+      recordGameTime(data.gameTime)
     }))
 
     onCleanup(() => {
@@ -132,6 +139,11 @@ export function RoomViewer(props: RoomViewerProps) {
       objLayer = new ObjectLayer(r.app.ticker)
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)
+      r.bringNavOverlayToTop()
+
+      animLayer = new ActionAnimationLayer(r.app.ticker)
+      animLayer.container.label = 'animations'
+      r.world.addChild(animLayer.container)
       r.bringNavOverlayToTop()
 
       // Wire up tile click → selection
@@ -200,6 +212,27 @@ export function RoomViewer(props: RoomViewerProps) {
     }
 
     objLayer.update(objs, diff)
+
+    if (diff && animLayer) {
+      const duration = (tickDuration() ?? 2000) * 0.6
+      for (const [id, changes] of Object.entries(diff)) {
+        if (!changes || typeof changes !== 'object') continue
+        const actionLog = (changes as Record<string, unknown>).actionLog as Record<string, { x: number; y: number }> | undefined
+        if (!actionLog) continue
+        const creep = objs[id]
+        if (!creep || creep.type !== 'creep') continue
+
+        if (actionLog.harvest) {
+          console.log('creep harvest',creep.name, duration, id, actionLog.harvest )
+          const target = actionLog.harvest
+          animLayer.addHarvest(target.x, target.y, creep.x, creep.y, duration)
+        }
+        if (actionLog.upgradeController) {
+          const target = actionLog.upgradeController
+          animLayer.addUpgradeController(creep.x, creep.y, target.x, target.y, duration)
+        }
+      }
+    }
   })
 
   return (

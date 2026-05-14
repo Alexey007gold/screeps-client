@@ -10,6 +10,37 @@ const [error, setError] = createSignal<string | null>(null)
 const [userInfo, setUserInfo] = createSignal<UserInfo | null>(null)
 const [serverVersion, setServerVersion] = createSignal<ServerVersion | null>(null)
 const [gameTime, setGameTime] = createSignal<number | null>(null)
+const [tickDuration, setTickDuration] = createSignal<number | null>(null)
+
+let lastGameTime = -1
+let lastTickTimestamp = -1
+const tickDurations: number[] = []
+const MAX_TICK_SAMPLES = 5
+
+export function recordGameTime(gt: number | undefined): void {
+  if (gt === undefined) return
+  const now = Date.now()
+  if (lastGameTime >= 0 && gt > lastGameTime) {
+    const elapsed = now - lastTickTimestamp
+    if (elapsed > 0) {
+      tickDurations.push(elapsed)
+      if (tickDurations.length > MAX_TICK_SAMPLES) {
+        tickDurations.shift()
+      }
+      const avg = tickDurations.reduce((a, b) => a + b, 0) / tickDurations.length
+      setTickDuration(Math.round(avg))
+    }
+  }
+  lastGameTime = gt
+  lastTickTimestamp = now
+}
+
+export function resetTickTracking(): void {
+  lastGameTime = -1
+  lastTickTimestamp = -1
+  tickDurations.length = 0
+  setTickDuration(null)
+}
 
 export const isPrivateServer = () => {
   const v = serverVersion()
@@ -17,7 +48,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration }
 
 export async function connect(opts: {
   url: string
@@ -73,7 +104,7 @@ export async function connect(opts: {
     await screepsClient.connect()
     setClient(screepsClient)
     setStatus('connected')
-
+    console.log('Connected to Screeps server', opts.url)
     // Persist credentials for auto-reconnect on reload
     localStorage.setItem('screeps:url', opts.url)
     if (screepsClient.http.token) {
@@ -111,5 +142,7 @@ export function disconnect(): void {
   setError(null)
   setUserInfo(null)
   setServerVersion(null)
+  setGameTime(null)
+  resetTickTracking()
   localStorage.removeItem('screeps:token')
 }
