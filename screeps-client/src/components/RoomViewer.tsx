@@ -38,20 +38,44 @@ export function RoomViewer(props: RoomViewerProps) {
     if (r) r.destroy()
   })
 
-  // Load terrain and subscribe to room when room/shard changes
+  // Subscribe to room data as soon as client is ready (no renderer dependency to avoid
+  // a race where PixiJS init finishes after the initial room state arrives)
   createEffect(() => {
     const c = client()
-    const r = renderer()
-    if (!c || !r) return
+    if (!c) return
 
     const room = props.room
     const shard = props.shard
 
-    // Reset state
     setTerrain(null)
     setObjectState(null)
     setGameTime(null)
     clearSelection()
+
+    const group = new SubscriptionGroup()
+
+    c.stores.room.terrain(room, shard)
+      .then((t) => setTerrain(t))
+      .catch((err) => console.error('Failed to load terrain:', err))
+
+    group.add(c.stores.room.subscribe(room, shard))
+    group.add(c.stores.room.on('room:update', (data) => {
+      setObjectState({ objects: data.objects, diff: data.diff })
+      setGameTime(data.gameTime ?? null)
+      recordGameTime(data.gameTime)
+    }))
+
+    onCleanup(() => group.dispose())
+  })
+
+  // Reset renderer and setup navigation when room or renderer changes
+  createEffect(() => {
+    const r = renderer()
+    if (!r) return
+
+    const room = props.room
+    const shard = props.shard
+
     r.clear()
     r.resetView()
     objLayer?.destroy()
@@ -59,7 +83,6 @@ export function RoomViewer(props: RoomViewerProps) {
     animLayer?.destroy()
     animLayer = null
 
-    // Setup navigation zones + arrow-key navigation
     const coord = parseRoomName(room)
     const navHandlers = coord && props.onNavigate
       ? {
@@ -74,7 +97,6 @@ export function RoomViewer(props: RoomViewerProps) {
       r.setupNavigationZones(navHandlers)
 
       const onKeyDown = (e: KeyboardEvent) => {
-        // Ignore when an input / textarea / contenteditable has focus
         const tag = (e.target as HTMLElement | null)?.tagName ?? ''
         const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
         if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
@@ -90,26 +112,6 @@ export function RoomViewer(props: RoomViewerProps) {
       window.addEventListener('keydown', onKeyDown)
       onCleanup(() => window.removeEventListener('keydown', onKeyDown))
     }
-
-    const group = new SubscriptionGroup()
-
-    // Fetch terrain
-    c.stores.room.terrain(room, shard)
-      .then((t) => setTerrain(t))
-      .catch((err) => console.error('Failed to load terrain:', err))
-
-    // Subscribe to room updates
-    group.add(c.stores.room.subscribe(room, shard))
-
-    group.add(c.stores.room.on('room:update', (data) => {
-      setObjectState({ objects: data.objects, diff: data.diff })
-      setGameTime(data.gameTime ?? null)
-      recordGameTime(data.gameTime)
-    }))
-
-    onCleanup(() => {
-      group.dispose()
-    })
   })
 
   // Render terrain when it arrives
