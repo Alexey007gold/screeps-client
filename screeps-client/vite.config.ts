@@ -7,12 +7,14 @@ export default defineConfig({
     proxy: {
       '/api': {
         //target: 'https://screeps.w4rl0ck.dev',
-        target: 'http://localhost:21025',
+      //  target: 'http://localhost:21025',
+        target: 'https://screeps.com',
         changeOrigin: true,
       },
       '/socket': {
        // target: 'https://screeps.w4rl0ck.dev',
-        target: 'http://localhost:21025',
+      //  target: 'http://localhost:21025',
+        target: 'https://screeps.com',
         changeOrigin: true,
         ws: true,
       },
