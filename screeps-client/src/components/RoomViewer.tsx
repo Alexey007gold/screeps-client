@@ -7,6 +7,7 @@ import { RoomRenderer } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
+import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration } from '~/stores/clientStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
@@ -23,9 +24,11 @@ export function RoomViewer(props: RoomViewerProps) {
   let containerRef: HTMLDivElement | undefined
   let objLayer: ObjectLayer | null = null
   let animLayer: ActionAnimationLayer | null = null
+  let visualLayer: VisualLayer | null = null
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<RoomTerrain | null>(null)
   const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff } | null>(null)
+  const [visualState, setVisualState] = createSignal<string>('')
 
   onMount(async () => {
     if (!containerRef) return
@@ -38,6 +41,8 @@ export function RoomViewer(props: RoomViewerProps) {
     objLayer = null
     animLayer?.destroy()
     animLayer = null
+    visualLayer?.destroy()
+    visualLayer = null
     const r = renderer()
     if (r) r.destroy()
   })
@@ -54,6 +59,7 @@ export function RoomViewer(props: RoomViewerProps) {
     log(`subscribing to ${room} shard=${shard ?? 'default'}`)
     setTerrain(null)
     setObjectState(null)
+    setVisualState('')
     setGameTime(null)
     clearSelection()
 
@@ -69,6 +75,7 @@ export function RoomViewer(props: RoomViewerProps) {
         log(`initial state: ${Object.keys(data.objects).length} objects, tick=${data.gameTime}`)
       }
       setObjectState({ objects: data.objects, diff: data.diff })
+      setVisualState(data.visual)
       setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
     }))
@@ -93,6 +100,8 @@ export function RoomViewer(props: RoomViewerProps) {
     objLayer = null
     animLayer?.destroy()
     animLayer = null
+    visualLayer?.destroy()
+    visualLayer = null
 
     const coord = parseRoomName(room)
     const navHandlers = coord && props.onNavigate
@@ -153,6 +162,9 @@ export function RoomViewer(props: RoomViewerProps) {
       animLayer = new ActionAnimationLayer(r.app.ticker)
       animLayer.container.label = 'animations'
       r.world.addChild(animLayer.container)
+
+      visualLayer = new VisualLayer()
+      r.world.addChild(visualLayer.container)
       r.bringNavOverlayToTop()
 
       // Wire up tile click → selection
@@ -240,6 +252,14 @@ export function RoomViewer(props: RoomViewerProps) {
         }
       }
     }
+  })
+
+  // Update RoomVisuals overlay each tick (layer is created in the objects effect).
+  // Read visualState() before the optional chain so SolidJS always tracks it,
+  // even when visualLayer hasn't been created yet.
+  createEffect(() => {
+    const raw = visualState()
+    visualLayer?.update(raw)
   })
 
   return (
