@@ -71,6 +71,9 @@ export function MapViewer(props: MapViewerProps) {
 
       await renderer.init(canvasRef!)
       if (!renderer) return
+      // Apply world bounds immediately if already known (worldInfo arrived before renderer init)
+      const initialBounds = worldBounds()
+      if (initialBounds) renderer.setBounds(initialBounds.minX, initialBounds.maxX, initialBounds.minY, initialBounds.maxY)
 
       if (props.originRoom) {
         const coord = parseRoomName(props.originRoom)
@@ -113,22 +116,25 @@ export function MapViewer(props: MapViewerProps) {
         const cur = selectedRoom()
         const coord = cur ? parseRoomName(cur) : null
 
+        const bounds = worldBounds()
+        const inBounds = (nx: number, ny: number) => !bounds || isRoomInWorld(nx, ny, bounds)
+
         switch (e.key) {
           case 'ArrowLeft':
             e.preventDefault()
-            if (coord) moveSelection(coord.x - 1, coord.y)
+            if (coord && inBounds(coord.x - 1, coord.y)) moveSelection(coord.x - 1, coord.y)
             break
           case 'ArrowRight':
             e.preventDefault()
-            if (coord) moveSelection(coord.x + 1, coord.y)
+            if (coord && inBounds(coord.x + 1, coord.y)) moveSelection(coord.x + 1, coord.y)
             break
           case 'ArrowUp':
             e.preventDefault()
-            if (coord) moveSelection(coord.x, coord.y - 1)
+            if (coord && inBounds(coord.x, coord.y - 1)) moveSelection(coord.x, coord.y - 1)
             break
           case 'ArrowDown':
             e.preventDefault()
-            if (coord) moveSelection(coord.x, coord.y + 1)
+            if (coord && inBounds(coord.x, coord.y + 1)) moveSelection(coord.x, coord.y + 1)
             break
           case 'm':
             if (cur && canNavigateTo(cur)) props.onNavigateToRoom(cur)
@@ -215,6 +221,13 @@ export function MapViewer(props: MapViewerProps) {
   // Sync room name label visibility when the setting changes
   createEffect(() => {
     renderer?.setShowRoomNames(showMapRoomNames())
+  })
+
+  // Draw world bounds border when worldBounds signal updates (renderer already ready at this point)
+  createEffect(() => {
+    const bounds = worldBounds()
+    if (!bounds) renderer?.clearBounds()
+    else renderer?.setBounds(bounds.minX, bounds.maxX, bounds.minY, bounds.maxY)
   })
 
   // Single map2 update listener — re-wired if client reconnects

@@ -2,7 +2,7 @@ import { Application, Container, Graphics, Text } from 'pixi.js'
 import type { RoomTerrain, RoomMap2Data } from 'screeps-connectivity'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import {
-  TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD,
+  TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD, TERRAIN_BORDER,
   OBJ_GOLD, OBJ_BLUE, OBJ_CYAN, OBJ_ORANGE,
 } from '~/renderer/colors.js'
 
@@ -36,6 +36,7 @@ export interface MapRendererCallbacks {
 export class MapRenderer {
   readonly app: Application
   private world!: Container
+  private boundsGraphics!: Graphics
   private selectionGraphics!: Graphics
   private readonly rooms = new Map<string, RoomEntry>()
   private readonly callbacks: MapRendererCallbacks
@@ -87,6 +88,9 @@ export class MapRenderer {
     this.app.stage.addChild(this.world)
     this.app.stage.eventMode = 'static'
     this.app.stage.hitArea = this.app.screen
+
+    this.boundsGraphics = new Graphics()
+    this.world.addChild(this.boundsGraphics)
 
     this.selectionGraphics = new Graphics()
     this.world.addChild(this.selectionGraphics)
@@ -247,6 +251,21 @@ export class MapRenderer {
     const y = coord.y * MAP_ROOM_SIZE
     this.selectionGraphics.rect(x + 1, y + 1, MAP_ROOM_SIZE - 2, MAP_ROOM_SIZE - 2)
     this.selectionGraphics.stroke({ color: 0xffffff, width: 2 })
+  }
+
+  setBounds(minX: number, maxX: number, minY: number, maxY: number): void {
+    this.boundsGraphics.clear()
+    const x = minX * MAP_ROOM_SIZE
+    const y = minY * MAP_ROOM_SIZE
+    const w = (maxX - minX + 1) * MAP_ROOM_SIZE
+    const h = (maxY - minY + 1) * MAP_ROOM_SIZE
+    // alignment: 0 = outer stroke — extends outward, never overlaps room tiles
+    this.boundsGraphics.rect(x, y, w, h)
+    this.boundsGraphics.stroke({ color: TERRAIN_BORDER, width: 6, alignment: 0 })
+  }
+
+  clearBounds(): void {
+    this.boundsGraphics.clear()
   }
 
   setShowRoomNames(show: boolean): void {
