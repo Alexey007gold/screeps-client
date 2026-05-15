@@ -1,9 +1,14 @@
-import { createSignal, onCleanup, onMount } from 'solid-js'
+import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { client, userInfo } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import type { CpuStats } from 'screeps-connectivity'
 
-export function StatsBar() {
+interface StatsBarProps {
+  mapZoom?: number | null
+  mapSubsActive?: boolean | null
+}
+
+export function StatsBar(props: StatsBarProps) {
   const [cpu, setCpu] = createSignal<CpuStats | null>(null)
 
   onMount(() => {
@@ -46,14 +51,28 @@ export function StatsBar() {
         'align-items': 'center',
       }}
     >
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ 'font-weight': 600 }}>CPU:</span>
-        <span style={{ color: '#c9d1d9' }}>{cpuPercent()}</span>
-      </div>
-      <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
-        <span style={{ 'font-weight': 600 }}>Memory:</span>
-        <span style={{ color: '#c9d1d9' }}>{memoryText()}</span>
-      </div>
+      <Show when={cpu() !== null}>
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <span style={{ 'font-weight': 600 }}>CPU:</span>
+          <span style={{ color: '#c9d1d9' }}>{cpuPercent()}</span>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <span style={{ 'font-weight': 600 }}>Memory:</span>
+          <span style={{ color: '#c9d1d9' }}>{memoryText()}</span>
+        </div>
+      </Show>
+      <Show when={props.mapZoom !== null && props.mapZoom !== undefined}>
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <span style={{ 'font-weight': 600 }}>Zoom:</span>
+          <span style={{ color: '#c9d1d9' }}>{(props.mapZoom! * 100).toFixed(0)}%</span>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <span style={{ 'font-weight': 600 }}>Subs:</span>
+          <span style={{ color: props.mapSubsActive === false ? '#e3b341' : '#3fb950' }}>
+            {props.mapSubsActive === false ? 'paused' : 'active'}
+          </span>
+        </div>
+      </Show>
     </div>
   )
 }

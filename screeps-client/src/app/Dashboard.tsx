@@ -45,6 +45,8 @@ export function Dashboard() {
   const [mapOriginRoom, setMapOriginRoom] = createSignal<string | undefined>(undefined)
   const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
+  const [mapZoom, setMapZoom] = createSignal<number | null>(null)
+  const [mapSubsActive, setMapSubsActive] = createSignal<boolean | null>(null)
 
   const [sidebarWidth, setSidebarWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
   const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
@@ -196,8 +198,11 @@ export function Dashboard() {
       {/* Header */}
       <div style={{ display: 'flex', 'border-bottom': '1px solid #30363d', 'align-items': 'center' }}>
         <ConnectionStatus />
-        <Show when={!isGuest()}>
-          <StatsBar />
+        <Show when={!isGuest() || mapMode()}>
+          <StatsBar
+            mapZoom={mapMode() ? mapZoom() : null}
+            mapSubsActive={mapMode() ? mapSubsActive() : null}
+          />
         </Show>
         <div style={{ flex: 1 }} />
         <button
@@ -268,6 +273,8 @@ export function Dashboard() {
                       onNavigateToRoom={(r) => handleNavigate(r, shard())}
                       onHoveredRoomChanged={setHoveredRoomInfo}
                       onSelectedRoomChanged={setSelectedRoomInfo}
+                      onZoomChanged={setMapZoom}
+                      onSubscriptionStateChanged={setMapSubsActive}
                     />
                   }
                 >

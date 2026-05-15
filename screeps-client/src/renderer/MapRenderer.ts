@@ -31,6 +31,7 @@ export interface MapRendererCallbacks {
   onRoomHover: (room: string | null) => void
   onRoomClick: (room: string) => void
   onVisibleRoomsChanged: (rooms: string[]) => void
+  onZoomChanged?: (zoom: number) => void
 }
 
 export class MapRenderer {
@@ -111,6 +112,10 @@ export class MapRenderer {
       }
       this.checkVisibleRooms()
     })
+  }
+
+  get zoom(): number {
+    return this.world?.scale.x ?? 1
   }
 
   centerOn(rx: number, ry: number, animated = false): void {
@@ -397,6 +402,7 @@ export class MapRenderer {
       this.world.scale.set(next)
       this.world.x = e.offsetX - wx * next
       this.world.y = e.offsetY - wy * next
+      this.callbacks.onZoomChanged?.(next)
     }, { passive: false })
   }
 

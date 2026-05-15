@@ -18,6 +18,8 @@ interface MapViewerProps {
   onNavigateToRoom: (room: string) => void
   onHoveredRoomChanged?: (info: RoomInfo | null) => void
   onSelectedRoomChanged?: (info: RoomInfo | null) => void
+  onZoomChanged?: (zoom: number) => void
+  onSubscriptionStateChanged?: (active: boolean) => void
 }
 
 export function MapViewer(props: MapViewerProps) {
@@ -26,6 +28,7 @@ export function MapViewer(props: MapViewerProps) {
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
   const [selectedRoom, setSelectedRoom] = createSignal<string | null>(props.originRoom ?? null)
+  let lastSubsActive: boolean | null = null
 
   // key = `${room}/${shard}` so shard changes invalidate existing subs
   const map2Subs = new Map<string, Subscription>()
@@ -84,10 +87,14 @@ export function MapViewer(props: MapViewerProps) {
         onVisibleRoomsChanged: (rooms) => {
           setVisibleRooms(rooms)
         },
+        onZoomChanged: (zoom) => {
+          props.onZoomChanged?.(zoom)
+        },
       })
 
       await renderer.init(canvasRef!)
       if (!renderer) return
+      props.onZoomChanged?.(renderer.zoom)
       // Apply world bounds immediately if already known (worldInfo arrived before renderer init)
       const initialBounds = worldBounds()
       if (initialBounds) renderer.setBounds(initialBounds.minX, initialBounds.maxX, initialBounds.minY, initialBounds.maxY)
@@ -238,7 +245,12 @@ export function MapViewer(props: MapViewerProps) {
 
     // Reconcile map2 subscriptions — drop all when too many rooms are visible
     const MAP2_ROOM_LIMIT = 50
-    if (rooms.length > MAP2_ROOM_LIMIT) {
+    const subsActive = rooms.length <= MAP2_ROOM_LIMIT
+    if (subsActive !== lastSubsActive) {
+      lastSubsActive = subsActive
+      props.onSubscriptionStateChanged?.(subsActive)
+    }
+    if (!subsActive) {
       for (const [, sub] of map2Subs) sub.dispose()
       map2Subs.clear()
     } else {
