@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
-import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion } from 'screeps-connectivity'
+import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from 'screeps-connectivity'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
@@ -16,6 +16,7 @@ const [serverVersion, setServerVersion] = createSignal<ServerVersion | null>(nul
 const [gameTime, setGameTime] = createSignal<number | null>(null)
 const [tickDuration, setTickDuration] = createSignal<number | null>(null)
 const [isGuest, setIsGuest] = createSignal(false)
+const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
 
 let lastGameTime = -1
 let lastTickTimestamp = -1
@@ -54,7 +55,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds }
 
 export async function connect(opts: {
   url: string
@@ -121,6 +122,10 @@ export async function connect(opts: {
     setClient(screepsClient)
     setStatus('connected')
     log(`connected to ${opts.url}`)
+    screepsClient.stores.server.worldInfo().then((info) => {
+      setWorldBounds(info)
+      log(`world: ${info.width}x${info.height} x[${info.minX},${info.maxX}] y[${info.minY},${info.maxY}]`)
+    }).catch(() => {})
     // Persist credentials for auto-reconnect on reload
     localStorage.setItem('screeps:url', opts.url)
     if (screepsClient.http.token) {
@@ -167,6 +172,7 @@ export function disconnect(): void {
   setServerVersion(null)
   setGameTime(null)
   setIsGuest(false)
+  setWorldBounds(null)
   resetTickTracking()
   localStorage.removeItem('screeps:token')
 }

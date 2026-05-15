@@ -8,10 +8,10 @@ import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
-import { client, gameTime, setGameTime, recordGameTime, tickDuration } from '~/stores/clientStore.js'
+import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds } from '~/stores/clientStore.js'
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
-import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
+import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { SubscriptionGroup } from 'screeps-connectivity'
 
@@ -105,17 +105,12 @@ export function RoomViewer(props: RoomViewerProps) {
     visualLayer = null
 
     const coord = parseRoomName(room)
-    const navHandlers = coord && props.onNavigate
-      ? {
-        west:  () => props.onNavigate!(formatRoomName(coord.x - 1, coord.y), shard),
-        east:  () => props.onNavigate!(formatRoomName(coord.x + 1, coord.y), shard),
-        north: () => props.onNavigate!(formatRoomName(coord.x, coord.y - 1), shard),
-        south: () => props.onNavigate!(formatRoomName(coord.x, coord.y + 1), shard),
-      }
-      : null
 
-    if (navHandlers) {
-      r.setupNavigationZones(navHandlers)
+    if (coord && props.onNavigate) {
+      const nav = props.onNavigate
+      const bounds = worldBounds()
+      const canNavigate = (tx: number, ty: number) =>
+        !bounds || isRoomInWorld(tx, ty, bounds)
 
       const onKeyDown = (e: KeyboardEvent) => {
         const tag = (e.target as HTMLElement | null)?.tagName ?? ''
@@ -123,15 +118,22 @@ export function RoomViewer(props: RoomViewerProps) {
         if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
 
         switch (e.key) {
-          case 'ArrowLeft':  e.preventDefault(); navHandlers.west();  break
-          case 'ArrowRight': e.preventDefault(); navHandlers.east();  break
-          case 'ArrowUp':    e.preventDefault(); navHandlers.north(); break
-          case 'ArrowDown':  e.preventDefault(); navHandlers.south(); break
+          case 'ArrowLeft':  { e.preventDefault(); const tx = coord.x - 1; if (canNavigate(tx, coord.y)) nav(formatRoomName(tx, coord.y), shard); break }
+          case 'ArrowRight': { e.preventDefault(); const tx = coord.x + 1; if (canNavigate(tx, coord.y)) nav(formatRoomName(tx, coord.y), shard); break }
+          case 'ArrowUp':    { e.preventDefault(); const ty = coord.y - 1; if (canNavigate(coord.x, ty)) nav(formatRoomName(coord.x, ty), shard); break }
+          case 'ArrowDown':  { e.preventDefault(); const ty = coord.y + 1; if (canNavigate(coord.x, ty)) nav(formatRoomName(coord.x, ty), shard); break }
         }
       }
 
       window.addEventListener('keydown', onKeyDown)
       onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+
+      r.setupNavigationZones({
+        west:  canNavigate(coord.x - 1, coord.y) ? () => nav(formatRoomName(coord.x - 1, coord.y), shard) : undefined,
+        east:  canNavigate(coord.x + 1, coord.y) ? () => nav(formatRoomName(coord.x + 1, coord.y), shard) : undefined,
+        north: canNavigate(coord.x, coord.y - 1) ? () => nav(formatRoomName(coord.x, coord.y - 1), shard) : undefined,
+        south: canNavigate(coord.x, coord.y + 1) ? () => nav(formatRoomName(coord.x, coord.y + 1), shard) : undefined,
+      })
     }
   })
 

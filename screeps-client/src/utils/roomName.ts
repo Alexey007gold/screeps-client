@@ -1,6 +1,12 @@
+import type { WorldInfo } from 'screeps-connectivity'
+
 export interface RoomCoord {
   x: number
   y: number
+}
+
+export function isRoomInWorld(x: number, y: number, bounds: WorldInfo): boolean {
+  return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY
 }
 
 export function parseRoomName(name: string): RoomCoord | null {
@@ -8,8 +14,11 @@ export function parseRoomName(name: string): RoomCoord | null {
   if (!match) return null
 
   const [, ew, ewNum, ns, nsNum] = match
-  const x = ew === 'W' ? -parseInt(ewNum, 10) : parseInt(ewNum, 10)
-  const y = ns === 'N' ? -parseInt(nsNum, 10) : parseInt(nsNum, 10)
+  // W0 = -1, W1 = -2, ... / E0 = 0, E1 = 1, ...
+  // N0 = -1, N1 = -2, ... / S0 = 0, S1 = 1, ...
+  // This avoids -0 === 0 collision between W0/E0 and N0/S0.
+  const x = ew === 'W' ? -(parseInt(ewNum, 10) + 1) : parseInt(ewNum, 10)
+  const y = ns === 'N' ? -(parseInt(nsNum, 10) + 1) : parseInt(nsNum, 10)
 
   return { x, y }
 }
@@ -17,5 +26,7 @@ export function parseRoomName(name: string): RoomCoord | null {
 export function formatRoomName(x: number, y: number): string {
   const ew = x < 0 ? 'W' : 'E'
   const ns = y < 0 ? 'N' : 'S'
-  return `${ew}${Math.abs(x)}${ns}${Math.abs(y)}`
+  const ewNum = x < 0 ? (-x - 1) : x
+  const nsNum = y < 0 ? (-y - 1) : y
+  return `${ew}${ewNum}${ns}${nsNum}`
 }

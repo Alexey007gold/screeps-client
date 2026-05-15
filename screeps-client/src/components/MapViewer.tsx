@@ -1,8 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MapRenderer } from '~/renderer/MapRenderer.js'
-import { client, userInfo } from '~/stores/clientStore.js'
+import { client, userInfo, worldBounds } from '~/stores/clientStore.js'
 import { showMapRoomNames } from '~/stores/settingsStore.js'
-import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
+import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import type { Subscription } from 'screeps-connectivity'
 
 export interface RoomInfo {
@@ -30,6 +30,13 @@ export function MapViewer(props: MapViewerProps) {
   // key = `${room}/${shard}` so shard changes invalidate existing subs
   const map2Subs = new Map<string, Subscription>()
 
+  const canNavigateTo = (room: string): boolean => {
+    const bounds = worldBounds()
+    if (!bounds) return true // server doesn't provide world-size → allow all
+    const coord = parseRoomName(room)
+    return !!coord && isRoomInWorld(coord.x, coord.y, bounds)
+  }
+
   // Latest mapStats data for info box lookups — written async, read in hover handler
   let latestStats: Record<string, { own?: { user: string; level: number }; mineral?: string; density?: number }> = {}
   let latestUsers: Record<string, { username: string }> = {}
@@ -55,7 +62,7 @@ export function MapViewer(props: MapViewerProps) {
           props.onHoveredRoomChanged?.(room ? buildRoomInfo(room) : null)
         },
         onRoomClick: (room) => {
-          props.onNavigateToRoom(room)
+          if (canNavigateTo(room)) props.onNavigateToRoom(room)
         },
         onVisibleRoomsChanged: (rooms) => {
           setVisibleRooms(rooms)
@@ -124,7 +131,7 @@ export function MapViewer(props: MapViewerProps) {
             if (coord) moveSelection(coord.x, coord.y + 1)
             break
           case 'm':
-            if (cur) props.onNavigateToRoom(cur)
+            if (cur && canNavigateTo(cur)) props.onNavigateToRoom(cur)
             break
         }
       }
