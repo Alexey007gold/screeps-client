@@ -15,13 +15,22 @@ Monorepo with two active packages and a `reference/` directory containing third-
 
 ## Commands
 
+### Root (pnpm workspace)
+
+```sh
+pnpm dev            # start screeps-client dev server
+pnpm build          # build connectivity then client
+pnpm test           # run screeps-connectivity tests
+pnpm lint           # lint all packages
+```
+
 ### screeps-connectivity (run from `screeps-connectivity/`)
 
 ```sh
-npm run build       # tsup → dist/ (ESM + CJS + .d.ts)
-npm test            # Vitest, single run
-npm run test:watch  # Vitest watch mode
-npm run lint        # ESLint src + tests
+pnpm build          # tsup → dist/ (ESM + CJS + .d.ts)
+pnpm test           # Vitest, single run
+pnpm test:watch     # Vitest watch mode
+pnpm lint           # ESLint src + tests
 ```
 
 Run a single test file:
@@ -32,12 +41,12 @@ npx vitest run tests/socket/SocketClient.test.ts
 ### screeps-client (run from `screeps-client/`)
 
 ```sh
-npm run dev     # Vite dev server
-npm run build   # tsc + vite build
-npm run lint    # ESLint src
+pnpm dev            # Vite dev server
+pnpm build          # tsc + vite build
+pnpm lint           # ESLint src
 ```
 
-The Vite config aliases `screeps-connectivity` directly to `screeps-connectivity/src/index.ts`, so the library does **not** need to be built before running the dev server.
+`screeps-connectivity` is a pnpm workspace dependency. It exposes a `"development"` export condition pointing to its TypeScript source, so the library does **not** need to be built before running the dev server. For production (`pnpm build`), run `pnpm --filter screeps-connectivity build` first (the root `pnpm build` does this automatically).
 
 The path alias `~/` maps to `screeps-client/src/` — use it for all intra-package imports.
 

@@ -1,0 +1,13 @@
+{
+  "name": "screeps-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter screeps-client dev",
+    "build": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build",
+    "test": "pnpm --filter screeps-connectivity test",
+    "lint": "pnpm -r lint"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

@@ -4,11 +4,13 @@
   "type": "module",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
     "./file-storage": {
+      "development": "./src/file-storage.ts",
       "types": "./dist/file-storage.d.ts",
       "import": "./dist/file-storage.js",
       "require": "./dist/file-storage.cjs"
