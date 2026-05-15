@@ -2,6 +2,7 @@ import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomNavigator } from '~/components/RoomNavigator.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
+import { MapViewer } from '~/components/MapViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
@@ -22,10 +23,21 @@ function buildRoomUrl(room: string, shard: string | null): string {
   return `/room/${room}${shard ? `?shard=${encodeURIComponent(shard)}` : ''}`
 }
 
+function buildMapUrl(shard: string | null): string {
+  return `/map${shard ? `?shard=${encodeURIComponent(shard)}` : ''}`
+}
+
+function parseMapUrl(): { shard: string | null } | null {
+  if (!window.location.pathname.startsWith('/map')) return null
+  const shard = new URLSearchParams(window.location.search).get('shard')
+  return { shard }
+}
+
 export function Dashboard() {
   const urlState = parseRoomUrl()
   const [room, setRoom] = createSignal(urlState.room ?? localStorage.getItem('screeps:room') ?? 'W1N1')
   const [shard, setShard] = createSignal<string | null>(urlState.shard ?? localStorage.getItem('screeps:shard'))
+  const [mapMode, setMapMode] = createSignal(parseMapUrl() !== null)
 
   const [sidebarWidth, setSidebarWidth] = createSignal(260)
   const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(260)
@@ -100,23 +112,41 @@ export function Dashboard() {
   const handleNavigate = (r: string, s: string | null) => {
     setRoom(r)
     setShard(s)
+    setMapMode(false)
     localStorage.setItem('screeps:room', r)
     if (s) localStorage.setItem('screeps:shard', s)
     else localStorage.removeItem('screeps:shard')
     history.pushState(null, '', buildRoomUrl(r, s))
   }
 
+  const toggleMap = () => {
+    if (mapMode()) {
+      setMapMode(false)
+      history.pushState(null, '', buildRoomUrl(room(), shard()))
+    } else {
+      setMapMode(true)
+      history.pushState(null, '', buildMapUrl(shard()))
+    }
+  }
+
   onMount(() => {
-    // Ensure URL reflects the active room even when loaded without a room path
-    if (!parseRoomUrl().room) {
+    // Ensure URL reflects the active view even when loaded without a path
+    if (!parseRoomUrl().room && !parseMapUrl()) {
       history.replaceState(null, '', buildRoomUrl(room(), shard()))
     }
 
     const onPopState = () => {
+      const mapState = parseMapUrl()
+      if (mapState) {
+        setMapMode(true)
+        if (mapState.shard !== null) setShard(mapState.shard)
+        return
+      }
       const { room: r, shard: s } = parseRoomUrl()
       if (r) {
         setRoom(r)
         setShard(s)
+        setMapMode(false)
       }
     }
     window.addEventListener('popstate', onPopState)
@@ -147,6 +177,21 @@ export function Dashboard() {
           currentShard={shard()}
         />
         <button
+          onClick={toggleMap}
+          style={{
+            padding: '6px 14px',
+            'border-radius': '4px',
+            border: `1px solid ${mapMode() ? '#388bfd' : '#30363d'}`,
+            background: mapMode() ? '#1f3158' : '#21262d',
+            color: mapMode() ? '#58a6ff' : '#c9d1d9',
+            'font-size': '13px',
+            cursor: 'pointer',
+            margin: '0 4px',
+          }}
+        >
+          {mapMode() ? 'Room View' : 'Map'}
+        </button>
+        <button
           onClick={disconnect}
           style={{
             padding: '6px 14px',
@@ -176,7 +221,17 @@ export function Dashboard() {
         >
           {/* Canvas */}
           <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-            <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+            <Show
+              when={!mapMode()}
+              fallback={
+                <MapViewer
+                  shard={shard()}
+                  onNavigateToRoom={(r) => handleNavigate(r, shard())}
+                />
+              }
+            >
+              <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+            </Show>
           </div>
 
           {/* Bottom Console */}
