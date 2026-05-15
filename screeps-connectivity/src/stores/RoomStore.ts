@@ -2,7 +2,7 @@ import { TypedStore } from './TypedStore.js'
 import { RoomTerrain } from '../types/game.js'
 import type { Logger } from '../logger.js'
 import type { RoomStoreEvents } from '../types/events.js'
-import type { RoomObject, RoomObjectMap, RoomObjectDiff } from '../types/game.js'
+import type { RoomObject, RoomObjectMap, RoomObjectDiff, RoomMap2Data } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
@@ -14,6 +14,8 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly cache: Cache
   private readonly roomObjects = new Map<string, RoomObjectMap>()
   private readonly roomSubCount = new Map<string, number>()
+  private readonly roomMap2 = new Map<string, RoomMap2Data>()
+  private readonly roomMap2SubCount = new Map<string, number>()
 
   constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger) {
     super(logger)
@@ -113,6 +115,42 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     }
     this.roomObjects.set(mapKey, map)
     this.emit('room:update', { room, shard, gameTime: undefined, objects: map, diff: map, visual: '' })
+  }
+
+  map2data(room: string, shard: string | null): RoomMap2Data | null {
+    return this.roomMap2.get(`${room}/${shard}`) ?? null
+  }
+
+  subscribeMap2(room: string, shard: string | null): Subscription {
+    const mapKey = `${room}/${shard}`
+    const channel = shard ? `roomMap2:${shard}/${room}` : `roomMap2:${room}`
+
+    const count = this.roomMap2SubCount.get(mapKey) ?? 0
+    this.roomMap2SubCount.set(mapKey, count + 1)
+    this.logger.log('subscribeMap2', room, shard, `(refs: ${count + 1})`)
+
+    const socketSub = this.socket.subscribe(channel)
+    const listenerSub = this.socket.on(channel, (data) => {
+      const map2 = data as RoomMap2Data
+      this.roomMap2.set(mapKey, map2)
+      this.emit('room:map2update', { room, shard, data: map2 })
+    })
+
+    return {
+      dispose: () => {
+        socketSub.dispose()
+        listenerSub.dispose()
+        const remaining = (this.roomMap2SubCount.get(mapKey) ?? 1) - 1
+        if (remaining <= 0) {
+          this.logger.log('unsubscribeMap2', room, shard, '(last ref)')
+          this.roomMap2SubCount.delete(mapKey)
+          this.roomMap2.delete(mapKey)
+        } else {
+          this.logger.log('unsubscribeMap2', room, shard, `(refs: ${remaining})`)
+          this.roomMap2SubCount.set(mapKey, remaining)
+        }
+      },
+    }
   }
 
   subscribe(room: string, shard: string | null): Subscription {

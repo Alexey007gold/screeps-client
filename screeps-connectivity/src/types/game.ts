@@ -1,3 +1,15 @@
+export interface RoomMap2Data {
+  w: [number, number][]    // player-built walls / ramparts
+  r: [number, number][]    // roads
+  pb: [number, number][]   // power banks / power
+  p: [number, number][]    // portals
+  s: [number, number][]    // sources
+  c: [number, number][]    // controllers
+  m: [number, number][]    // minerals
+  k: [number, number][]    // source keeper lairs
+  [userId: string]: [number, number][]  // structures + creeps for that user
+}
+
 export enum TerrainType {
   Plain = 0,
   Wall = 1,

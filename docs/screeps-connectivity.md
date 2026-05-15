@@ -375,6 +375,16 @@ roomStore.fetchObjects(room: string, shard: string | null): Promise<void>
 Fetches the current room object snapshot via HTTP and stores it in memory. Does not start a live subscription.
 
 ```ts
+roomStore.subscribeMap2(room: string, shard: string | null): Subscription
+```
+Opens a WebSocket subscription for the low-detail `roomMap2` channel. Delivers one `room:map2update` event per tick with object positions grouped by type and user. Uses the same ref-counting as `subscribe()`. Pass `null` for shard on private servers.
+
+```ts
+roomStore.map2data(room: string, shard: string | null): RoomMap2Data | null
+```
+Synchronous getter for the last received `roomMap2` snapshot. Returns `null` if `subscribeMap2` has not been called or no data has arrived yet.
+
+```ts
 roomStore.subscribe(room: string, shard: string | null): Subscription
 ```
 Opens a WebSocket subscription for live room updates. Manages ref-counting internally — the socket subscription is only sent once per unique room/shard and only removed when the last subscriber disposes.
@@ -387,6 +397,7 @@ The first WebSocket message for a room is the full object state; subsequent mess
 |---|---|---|
 | `room:update` | `{ room, shard, gameTime, objects: RoomObjectMap, diff: RoomObjectDiff }` | Each WebSocket tick for a subscribed room |
 | `room:terrainavailable` | `{ room, shard, terrain: RoomTerrain }` | After terrain is fetched from HTTP (not from cache) |
+| `room:map2update` | `{ room, shard, data: RoomMap2Data }` | Each tick for a subscribed `roomMap2` channel |
 
 **`objects` vs `diff`**: `objects` is the fully merged state — every object in the room with all its current fields, suitable for rendering. `diff` contains only what the server sent this tick: partial objects with only changed fields, and `null` for deleted objects. Use `objects` to draw the room; use `diff` to detect per-tick events (actions, deaths, spawns) without comparing previous and current state.
 
@@ -808,6 +819,42 @@ class RoomTerrain {
 
 enum TerrainType { Plain = 0, Wall = 1, Swamp = 2 }
 ```
+
+### `RoomMap2Data`
+
+Low-detail map snapshot delivered by the `roomMap2` WebSocket channel each tick. All 8 fixed keys are always present (empty array when nothing is present). Keys beyond the 8 known ones are user IDs.
+
+```ts
+interface RoomMap2Data {
+  w:  [number, number][]   // player-built walls / ramparts
+  r:  [number, number][]   // roads
+  pb: [number, number][]   // power banks / power
+  p:  [number, number][]   // portals
+  s:  [number, number][]   // sources
+  c:  [number, number][]   // controllers
+  m:  [number, number][]   // minerals
+  k:  [number, number][]   // source keeper lairs
+  [userId: string]: [number, number][]  // structures + creeps for that user
+}
+```
+
+Each `[number, number]` is `[x, y]`. Channel name: `roomMap2:{shard}/{room}` (sharded) or `roomMap2:{room}` (private server).
+
+**Example — map overview layer**:
+```ts
+const sub = client.stores.room.subscribeMap2('E9N3', 'shard0')
+client.stores.room.on('room:map2update', ({ room, data }) => {
+  renderRoads(room, data.r)
+  renderSources(room, data.s)
+  for (const [userId, positions] of Object.entries(data)) {
+    if (!['w','r','pb','p','s','c','m','k'].includes(userId)) {
+      renderUserPresence(room, userId, positions)
+    }
+  }
+})
+```
+
+---
 
 ### `RoomObject` / `RoomObjectMap` / `RoomObjectDiff`
 
