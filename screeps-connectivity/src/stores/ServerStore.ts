@@ -80,6 +80,7 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
     const { width, height } = size
 
     // Start with W/N-only assumption (most common for private servers)
+    // width/height = total rooms in that axis; W-only → all rooms are west of E0
     let minX = -width, maxX = -1, minY = -height, maxY = -1
 
     // Probe the four quadrant-origin rooms to detect which quadrants actually exist.
@@ -90,8 +91,16 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
         { rooms: ['W0N0', 'E0N0', 'W0S0', 'E0S0'], statName: 'owner0', ...params }
       )
       const stats = probe.stats ?? {}
-      if ('E0N0' in stats || 'E0S0' in stats) maxX = width - 1   // E quadrant exists
-      if ('W0S0' in stats || 'E0S0' in stats) maxY = height - 1  // S quadrant exists
+      if ('E0N0' in stats || 'E0S0' in stats) {
+        // E quadrant exists: width spans both W and E sides, split evenly
+        minX = -Math.ceil(width / 2)
+        maxX = Math.floor(width / 2) - 1
+      }
+      if ('W0S0' in stats || 'E0S0' in stats) {
+        // S quadrant exists: height spans both N and S sides, split evenly
+        minY = -Math.ceil(height / 2)
+        maxY = Math.floor(height / 2) - 1
+      }
     } catch {
       // Probe failed — keep W/N defaults
     }
