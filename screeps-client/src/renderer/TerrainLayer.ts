@@ -27,7 +27,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
 
       // Top-Left Quadrant
       if (center) {
-        if (!top && !left) {
+        if (!top && !left && y > 0 && x > 0) {
           g.moveTo(cx, y * T)
           g.arc(cx, cy, R, -Math.PI / 2, Math.PI, true)
           g.lineTo(cx, cy)
@@ -48,7 +48,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
 
       // Top-Right Quadrant
       if (center) {
-        if (!top && !right) {
+        if (!top && !right && y > 0 && x < 49) {
           g.moveTo(cx, y * T)
           g.arc(cx, cy, R, -Math.PI / 2, 0, false)
           g.lineTo(cx, cy)
@@ -69,7 +69,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
 
       // Bottom-Left Quadrant
       if (center) {
-        if (!bottom && !left) {
+        if (!bottom && !left && y < 49 && x > 0) {
           g.moveTo(x * T, cy)
           g.arc(cx, cy, R, Math.PI, Math.PI / 2, true)
           g.lineTo(cx, cy)
@@ -90,7 +90,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
 
       // Bottom-Right Quadrant
       if (center) {
-        if (!bottom && !right) {
+        if (!bottom && !right && y < 49 && x < 49) {
           g.moveTo(cx, y * T + T)
           g.arc(cx, cy, R, Math.PI / 2, 0, true)
           g.lineTo(cx, cy)
