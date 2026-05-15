@@ -37,16 +37,33 @@ export function MapViewer(props: MapViewerProps) {
     return !!coord && isRoomInWorld(coord.x, coord.y, bounds)
   }
 
-  // Latest mapStats data for info box lookups — written async, read in hover handler
-  let latestStats: Record<string, { own?: { user: string; level: number }; mineral?: string; density?: number }> = {}
+  const STATS_TTL_MS = 60_000
+
+  interface StatsCacheEntry {
+    ts: number
+    own?: { user: string; level: number }
+    mineral?: string
+    density?: number
+  }
+
+  // Per-room stats cache with TTL — survives viewport changes, cleared on client/shard change
+  const statsCache = new Map<string, StatsCacheEntry>()
   let latestUsers: Record<string, { username: string }> = {}
 
   const buildRoomInfo = (room: string): RoomInfo => {
-    const stat = latestStats[room]
+    const stat = statsCache.get(room)
     const ownerId = stat?.own?.user
     const owner = ownerId ? (latestUsers[ownerId]?.username ?? ownerId) : null
     return { room, owner, mineral: stat?.mineral ?? null, density: stat?.density ?? null }
   }
+
+  // Invalidate cache when connection or shard changes
+  createEffect(() => {
+    client()
+    props.shard
+    statsCache.clear()
+    latestUsers = {}
+  })
 
   onMount(() => {
     if (!canvasRef) return
@@ -162,60 +179,86 @@ export function MapViewer(props: MapViewerProps) {
     if (!c || rooms.length === 0) return
 
     const me = userInfo()?._id
+    const visibleSet = new Set(rooms)
+    const now = Date.now()
 
-    c.stores.room.terrainBulk(rooms, shard)
-      .then((terrainMap) => {
-        for (const [room, terrain] of terrainMap) {
-          renderer?.setRoomTerrain(room, terrain)
-        }
-      })
-      .catch((err) => console.error('[map] terrain fetch failed:', err))
-
-    c.http.game.mapStats(rooms, 'owner0', shard ?? undefined)
-      .then((res) => {
-        latestUsers = res.users
-        const newStats: typeof latestStats = {}
-        for (const [room, stat] of Object.entries(res.stats)) {
-          let mineral: string | undefined
-          let density: number | undefined
-          for (let i = 0; i < 3; i++) {
-            const mineralKey = `minerals${i}` as `minerals${number}`
-            const mineralData = stat[mineralKey]
-            if (mineralData) {
-              mineral = mineralData.type
-              density = mineralData.density
-              break
-            }
+    // Only fetch terrain for rooms not yet in the renderer (cache hit for known rooms)
+    const newRooms = rooms.filter((r) => !renderer?.hasRoom(r))
+    if (newRooms.length > 0) {
+      c.stores.room.terrainBulk(newRooms, shard)
+        .then((terrainMap) => {
+          for (const [room, terrain] of terrainMap) {
+            if (visibleSet.has(room)) renderer?.setRoomTerrain(room, terrain)
           }
-          newStats[room] = { own: stat.own, mineral, density }
-          const owned = !!(stat.own && stat.own.user !== me)
-          renderer?.setRoomOwned(room, owned)
-        }
-        latestStats = newStats
-        // Refresh selected room info now that stats are loaded
-        const sel = selectedRoom()
-        if (sel && newStats[sel]) {
-          props.onSelectedRoomChanged?.(buildRoomInfo(sel))
-        }
-      })
-      .catch((err) => console.error('[map] mapStats failed:', err))
-
-    // Reconcile map2 subscriptions
-    const activeKeys = new Set(rooms.map((r) => `${r}/${shard}`))
-
-    for (const [key, sub] of map2Subs) {
-      if (!activeKeys.has(key)) {
-        sub.dispose()
-        map2Subs.delete(key)
-      }
+        })
+        .catch((err) => console.error('[map] terrain fetch failed:', err))
     }
 
+    // Apply cached ownership immediately so the overlay is correct before the HTTP round-trip
     for (const room of rooms) {
-      const key = `${room}/${shard}`
-      if (!map2Subs.has(key)) {
-        map2Subs.set(key, c.stores.room.subscribeMap2(room, shard))
+      const cached = statsCache.get(room)
+      if (cached) {
+        renderer?.setRoomOwned(room, !!(cached.own && cached.own.user !== me))
       }
     }
+
+    // Only request rooms whose cache entry is missing or older than TTL
+    const staleRooms = rooms.filter((r) => {
+      const cached = statsCache.get(r)
+      return !cached || now - cached.ts > STATS_TTL_MS
+    })
+
+    if (staleRooms.length > 0) {
+      c.http.game.mapStats(staleRooms, 'owner0', shard ?? undefined)
+        .then((res) => {
+          latestUsers = { ...latestUsers, ...res.users }
+          for (const [room, stat] of Object.entries(res.stats)) {
+            let mineral: string | undefined
+            let density: number | undefined
+            for (let i = 0; i < 3; i++) {
+              const mineralKey = `minerals${i}` as `minerals${number}`
+              const mineralData = stat[mineralKey]
+              if (mineralData) { mineral = mineralData.type; density = mineralData.density; break }
+            }
+            statsCache.set(room, { ts: now, own: stat.own, mineral, density })
+            const owned = !!(stat.own && stat.own.user !== me)
+            if (visibleSet.has(room)) renderer?.setRoomOwned(room, owned)
+          }
+          // Mark rooms with no server entry as fetched (empty → not owned)
+          for (const room of staleRooms) {
+            if (!res.stats[room]) statsCache.set(room, { ts: now })
+          }
+          const sel = selectedRoom()
+          if (sel && staleRooms.includes(sel)) {
+            props.onSelectedRoomChanged?.(buildRoomInfo(sel))
+          }
+        })
+        .catch((err) => console.error('[map] mapStats failed:', err))
+    }
+
+    // Reconcile map2 subscriptions — drop all when too many rooms are visible
+    const MAP2_ROOM_LIMIT = 50
+    if (rooms.length > MAP2_ROOM_LIMIT) {
+      for (const [, sub] of map2Subs) sub.dispose()
+      map2Subs.clear()
+    } else {
+      const activeKeys = new Set(rooms.map((r) => `${r}/${shard}`))
+      for (const [key, sub] of map2Subs) {
+        if (!activeKeys.has(key)) {
+          sub.dispose()
+          map2Subs.delete(key)
+        }
+      }
+      for (const room of rooms) {
+        const key = `${room}/${shard}`
+        if (!map2Subs.has(key)) {
+          map2Subs.set(key, c.stores.room.subscribeMap2(room, shard))
+        }
+      }
+    }
+
+    // Remove containers for rooms that left the viewport to cap memory usage
+    renderer?.clearInvisibleRooms(visibleSet)
   })
 
   // Sync room name label visibility when the setting changes

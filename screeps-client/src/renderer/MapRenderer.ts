@@ -36,8 +36,8 @@ export interface MapRendererCallbacks {
 export class MapRenderer {
   readonly app: Application
   private world!: Container
-  private boundsGraphics!: Graphics
-  private selectionGraphics!: Graphics
+  private boundsGraphics: Graphics | null = null
+  private selectionGraphics: Graphics | null = null
   private readonly rooms = new Map<string, RoomEntry>()
   private readonly callbacks: MapRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
@@ -235,11 +235,12 @@ export class MapRenderer {
     g.clear()
     if (owned) {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
-      g.fill({ color: 0xff0000, alpha: 0.35 })
+      g.fill({ color: 0x990000, alpha: 0.18 })
     }
   }
 
   setSelectedRoom(room: string | null): void {
+    if (!this.selectionGraphics) return
     this.selectionGraphics.clear()
     // Keep on top of all room containers
     this.world.removeChild(this.selectionGraphics)
@@ -254,6 +255,7 @@ export class MapRenderer {
   }
 
   setBounds(minX: number, maxX: number, minY: number, maxY: number): void {
+    if (!this.boundsGraphics) return
     this.boundsGraphics.clear()
     const x = minX * MAP_ROOM_SIZE
     const y = minY * MAP_ROOM_SIZE
@@ -265,7 +267,7 @@ export class MapRenderer {
   }
 
   clearBounds(): void {
-    this.boundsGraphics.clear()
+    this.boundsGraphics?.clear()
   }
 
   setShowRoomNames(show: boolean): void {
@@ -275,12 +277,22 @@ export class MapRenderer {
     }
   }
 
+  hasRoom(roomName: string): boolean {
+    return this.rooms.has(roomName)
+  }
+
   clearRoom(roomName: string): void {
     const entry = this.rooms.get(roomName)
     if (!entry) return
     this.world.removeChild(entry.container)
     entry.container.destroy({ children: true })
     this.rooms.delete(roomName)
+  }
+
+  clearInvisibleRooms(visibleSet: ReadonlySet<string>): void {
+    for (const name of [...this.rooms.keys()]) {
+      if (!visibleSet.has(name)) this.clearRoom(name)
+    }
   }
 
   destroy(): void {
@@ -319,8 +331,9 @@ export class MapRenderer {
 
     const nameLabel = new Text({
       text: roomName,
-      style: { fontSize: 9, fill: 0x8b949e, fontFamily: 'ui-monospace, monospace' },
+      style: { fontSize: 36, fill: 0x8b949e, fontFamily: 'ui-monospace, monospace' },
     })
+    nameLabel.scale.set(0.25)
     nameLabel.x = 2
     nameLabel.y = 2
     nameLabel.visible = this.showRoomNames
@@ -328,8 +341,10 @@ export class MapRenderer {
 
     this.world.addChild(container)
     // Keep selection overlay on top of room containers
-    this.world.removeChild(this.selectionGraphics)
-    this.world.addChild(this.selectionGraphics)
+    if (this.selectionGraphics) {
+      this.world.removeChild(this.selectionGraphics)
+      this.world.addChild(this.selectionGraphics)
+    }
 
     const entry: RoomEntry = { container, terrainGraphics, map2Graphics, ownerOverlay, nameLabel }
     this.rooms.set(roomName, entry)

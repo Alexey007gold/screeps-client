@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
+import { createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 
 const log = import.meta.env.DEV
   ? (...args: unknown[]) => console.log('[room]', ...args)
@@ -26,6 +26,7 @@ export function RoomViewer(props: RoomViewerProps) {
   let objLayer: ObjectLayer | null = null
   let animLayer: ActionAnimationLayer | null = null
   let visualLayer: VisualLayer | null = null
+  let terrainLayerRef: ReturnType<typeof createTerrainLayer> | null = null
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<RoomTerrain | null>(null)
   const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff } | null>(null)
@@ -87,14 +88,17 @@ export function RoomViewer(props: RoomViewerProps) {
     })
   })
 
-  // Reset renderer and setup navigation when room or renderer changes
+  // Clear and reset when renderer or room changes (worldBounds intentionally NOT tracked here
+  // — it arriving after login must not re-clear the scene and lose the terrain layer)
   createEffect(() => {
     const r = renderer()
     if (!r) return
 
-    const room = props.room
-    const shard = props.shard
+    props.room
+    props.shard
 
+    terrainLayerRef?.destroy()
+    terrainLayerRef = null
     r.clear()
     r.resetView()
     objLayer?.destroy()
@@ -104,6 +108,23 @@ export function RoomViewer(props: RoomViewerProps) {
     visualLayer?.destroy()
     visualLayer = null
 
+    // Apply terrain immediately if it arrived before this clear ran
+    const t = untrack(terrain)
+    if (t) {
+      terrainLayerRef = createTerrainLayer(t)
+      r.world.addChildAt(terrainLayerRef, 0)
+      r.bringNavOverlayToTop()
+    }
+  })
+
+  // Setup navigation zones — separate effect so worldBounds updates only re-wire
+  // nav callbacks without triggering a full scene clear
+  createEffect(() => {
+    const r = renderer()
+    if (!r) return
+
+    const room = props.room
+    const shard = props.shard
     const coord = parseRoomName(room)
 
     if (coord && props.onNavigate) {
@@ -137,14 +158,14 @@ export function RoomViewer(props: RoomViewerProps) {
     }
   })
 
-  // Render terrain when it arrives
+  // Apply terrain when it changes; skip if the clear-effect already applied it
   createEffect(() => {
     const r = renderer()
     const t = terrain()
     if (!r || !t) return
-
-    const layer = createTerrainLayer(t)
-    r.world.addChildAt(layer, 0)
+    if (terrainLayerRef?.parent) return  // already in scene (clear-effect handled it)
+    terrainLayerRef = createTerrainLayer(t)
+    r.world.addChildAt(terrainLayerRef, 0)
     r.bringNavOverlayToTop()
   })
 
