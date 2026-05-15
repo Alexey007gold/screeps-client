@@ -52,6 +52,51 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     return terrain
   }
 
+  async terrainBulk(rooms: string[], shard: string | null): Promise<Map<string, RoomTerrain>> {
+    const result = new Map<string, RoomTerrain>()
+    const needPersistentCheck: string[] = []
+
+    for (const room of rooms) {
+      const cached = this.cache.get<RoomTerrain>(`terrain/${shard}/${room}`)
+      if (cached) {
+        result.set(room, cached)
+      } else {
+        needPersistentCheck.push(room)
+      }
+    }
+
+    if (needPersistentCheck.length === 0) return result
+
+    const needFetch: string[] = []
+    await Promise.all(needPersistentCheck.map(async (room) => {
+      const key = `terrain/${shard}/${room}`
+      const persisted = await this.cache.getPersistent(key)
+      if (persisted) {
+        const terrain = new RoomTerrain(persisted)
+        this.cache.set(key, terrain)
+        result.set(room, terrain)
+      } else {
+        needFetch.push(room)
+      }
+    }))
+
+    if (needFetch.length === 0) return result
+
+    this.logger.log('terrainBulk', `fetching ${needFetch.length} rooms`, shard)
+    const res = await this.http.game.roomsTerrain(needFetch, shard ?? undefined)
+
+    await Promise.all(res.rooms.map(async (entry) => {
+      const terrain = RoomTerrain.fromEncodedString(entry.terrain)
+      const key = `terrain/${shard}/${entry.room}`
+      this.cache.set(key, terrain)
+      await this.cache.setPersistent(key, terrain.raw)
+      this.emit('room:terrainavailable', { room: entry.room, shard, terrain })
+      result.set(entry.room, terrain)
+    }))
+
+    return result
+  }
+
   objects(room: string, shard: string | null): RoomObjectMap | null {
     return this.roomObjects.get(`${room}/${shard}`) ?? null
   }

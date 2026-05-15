@@ -55,8 +55,17 @@ export class Cache {
     await this.storage.delete(`${this.namespace}/${key}`)
   }
 
+  clearMemory(): void {
+    this.memory.clear()
+  }
+
   async clearPersistent(): Promise<void> {
     if (!this.storage) return
     await this.storage.clear()
+  }
+
+  async clearAll(): Promise<void> {
+    this.clearMemory()
+    await this.clearPersistent()
   }
 }

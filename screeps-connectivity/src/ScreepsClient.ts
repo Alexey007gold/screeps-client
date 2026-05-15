@@ -65,4 +65,9 @@ export class ScreepsClient {
     this.logger.log('[screeps:client] disconnect')
     this.socket.disconnect()
   }
+
+  async clearCache(): Promise<void> {
+    this.logger.log('[screeps:client] clearCache')
+    await this.cache.clearAll()
+  }
 }

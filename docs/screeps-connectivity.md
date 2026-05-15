@@ -121,6 +121,13 @@ client.disconnect(): void
 ```
 Closes the WebSocket immediately. Does not reconnect.
 
+```ts
+client.clearCache(): Promise<void>
+```
+Clears all cached data for this server — both the in-memory cache (user info, server version, terrain, etc.) and the persistent storage (IndexedDB / file). Subsequent reads will re-fetch from the network. Useful after a server wipe, during development, or to free storage space.
+
+> The cache is namespaced by server hostname, so calling this on one `ScreepsClient` instance does not affect data cached for other servers.
+
 ### Properties
 
 | Property | Type | Description |
@@ -341,6 +348,23 @@ roomStore.terrain(room: string, shard: string | null): Promise<RoomTerrain>
 Fetches and caches terrain for a room. Check order: memory cache → persistent storage → HTTP. Emits `room:terrainavailable` on first network fetch. Pass `null` for shard on private servers.
 
 ```ts
+roomStore.terrainBulk(rooms: string[], shard: string | null): Promise<Map<string, RoomTerrain>>
+```
+Fetches terrain for multiple rooms efficiently, using the same three-tier cache as `terrain()`. Only rooms missing from both memory and persistent storage are fetched from the server — in a single bulk HTTP request. Emits `room:terrainavailable` for each room fetched from HTTP.
+
+Returns a `Map<roomName, RoomTerrain>`. Rooms that could not be resolved (not returned by the server) will be absent from the map.
+
+```ts
+// Load terrain for an 11×11 overview area around a room
+const roomNames = getNeighbourRooms('E5N5', radius: 5)
+const terrains = await client.stores.room.terrainBulk(roomNames, 'shard0')
+
+for (const [room, terrain] of terrains) {
+  renderMinimap(room, terrain)
+}
+```
+
+```ts
 roomStore.objects(room: string, shard: string | null): RoomObjectMap | null
 ```
 Synchronous getter for the current in-memory object map. Returns `null` if the room has not been subscribed or fetched yet.
@@ -464,7 +488,8 @@ http.game.roomStatus(room, shard?): Promise<{ ok, status, novice? }>
 http.game.roomOverview(room, interval?, shard?): Promise<unknown>
 http.game.time(shard?): Promise<{ ok, time }>
 http.game.worldSize(shard?): Promise<unknown>
-http.game.mapStats(rooms, statName, shard?): Promise<unknown>
+http.game.mapStats(rooms, statName, shard?): Promise<ApiMapStatsResponse>
+http.game.roomsTerrain(rooms, shard?): Promise<ApiGameRoomsResponse>
 http.game.market.ordersIndex(shard?): Promise<unknown>
 http.game.market.myOrders(): Promise<unknown>
 http.game.market.orders(resourceType, shard?): Promise<unknown>
@@ -473,6 +498,88 @@ http.game.shards.info(): Promise<ApiShardsInfoResponse>
 ```
 
 Default shard is `'shard0'` for all endpoints that accept one.
+
+#### `mapStats` detail
+
+Fetches bulk room metadata for a list of rooms in a single POST request. Useful for map overlays that need ownership, room status, or mineral data across many rooms at once.
+
+```ts
+const result = await client.http.game.mapStats(
+  ['W1N1', 'W1N2', 'E5N3'],
+  'owner0',   // statName
+  'shard0',   // optional, default 'shard0'
+)
+```
+
+**Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rooms` | `string[]` | Room names to query. Can be arbitrarily large. |
+| `statName` | `string` | Stat category. Common values: `'owner0'` (ownership + minerals), `'claim0'` (claim info) |
+| `shard` | `string` | Shard name. Defaults to `'shard0'`. |
+
+**Response shape** (`ApiMapStatsResponse`)
+
+```ts
+interface ApiMapStatsResponse {
+  ok: number
+  gameTime: number
+  stats: Record<string, ApiMapStatsRoomStat>   // keyed by room name
+  statsMax: Record<string, unknown>
+  users: Record<string, {                       // keyed by user _id
+    _id: string
+    username: string
+    badge: ApiMapStatsBadge
+  }>
+}
+
+interface ApiMapStatsRoomStat {
+  status: string           // 'normal' | 'out of borders' | 'novice' | 'respawn'
+  novice: number | null    // timestamp when novice protection expires, or null
+  respawnArea: number | null
+  openTime: number | null
+  own?: { user: string; level: number }         // present when room is owned
+  minerals0?: { type: string; density: number } // primary mineral deposit
+}
+```
+
+Room stat entries with `status: 'out of borders'` are outside the playable map boundary. The `users` map contains profile data for every user referenced by `own.user` across all returned room stats — resolved in a single response so no follow-up requests are needed.
+
+#### `roomsTerrain` detail
+
+Fetches digit-encoded terrain strings for multiple rooms in a single POST request. More efficient than calling `roomTerrain` per room when loading a map overview.
+
+```ts
+const result = await client.http.game.roomsTerrain(
+  ['W6N0', 'W6S0'],
+  'shard0',  // optional, default 'shard0'
+)
+```
+
+**Parameters**
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rooms` | `string[]` | Room names to fetch terrain for. |
+| `shard` | `string` | Shard name. Defaults to `'shard0'`. |
+
+**Response shape** (`ApiGameRoomsResponse`)
+
+```ts
+interface ApiGameRoomsResponse {
+  ok: number
+  rooms: Array<{
+    _id: string    // internal room document ID
+    room: string   // room name (e.g. 'W6N0')
+    terrain: string // 2500-char string, one digit per tile: '0'=plain '1'=wall '2'=swamp '3'=swamp+wall
+  }>
+}
+```
+
+The terrain string is always digit-encoded (`encoded=true` is sent automatically). Each character maps to a tile at index `y * 50 + x`. To decode it into a `RoomTerrain`, pass it to `RoomTerrain.fromEncodedString(terrain.terrain)`.
+
+> **Note**: `shard` and `encoded` are sent as URL query parameters; `rooms` is the POST body. The library handles this split automatically.
 
 ### `client.http.user`
 

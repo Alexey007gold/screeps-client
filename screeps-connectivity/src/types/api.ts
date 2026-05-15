@@ -86,3 +86,38 @@ export interface ApiLeaderboardSeasonsResponse {
   ok: number
   seasons: Array<{ _id: string; name: string; date: string }>
 }
+
+export interface ApiMapStatsRoomStat {
+  status: string
+  novice: number | null
+  respawnArea: number | null
+  openTime: number | null
+  own?: { user: string; level: number }
+  [mineral: `minerals${number}`]: { type: string; density: number } | undefined
+}
+
+export interface ApiMapStatsBadge {
+  type: number | { path1: string; path2: string }
+  color1: string
+  color2: string
+  color3: string
+  param?: number
+  flip: boolean
+}
+
+export interface ApiGameRoomsResponse {
+  ok: number
+  rooms: Array<{
+    _id: string
+    room: string
+    terrain: string
+  }>
+}
+
+export interface ApiMapStatsResponse {
+  ok: number
+  gameTime: number
+  stats: Record<string, ApiMapStatsRoomStat>
+  statsMax: Record<string, unknown>
+  users: Record<string, { _id: string; username: string; badge: ApiMapStatsBadge }>
+}
