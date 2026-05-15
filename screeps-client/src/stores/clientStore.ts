@@ -55,7 +55,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds, setWorldBounds }
 
 export async function connect(opts: {
   url: string

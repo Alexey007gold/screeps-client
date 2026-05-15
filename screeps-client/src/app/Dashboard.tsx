@@ -342,6 +342,8 @@ export function Dashboard() {
                     onNavigateToRoom={(r) => handleNavigate(r, shard())}
                     onHoveredRoomChanged={setHoveredRoomInfo}
                     onSelectedRoomChanged={setSelectedRoomInfo}
+                    onZoomChanged={setMapZoom}
+                    onSubscriptionStateChanged={setMapSubsActive}
                   />
                 }
               >

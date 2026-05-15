@@ -78,6 +78,7 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
       'GET', '/api/game/world-size', params
     )
     const { width, height } = size
+    console.log(`[ServerStore] worldInfo shard=${shard ?? 'none'} — raw size: ${width}x${height}`)
 
     // Start with W/N-only assumption (most common for private servers)
     // width/height = total rooms in that axis; W-only → all rooms are west of E0
@@ -91,6 +92,8 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
         { rooms: ['W0N0', 'E0N0', 'W0S0', 'E0S0'], statName: 'owner0', ...params }
       )
       const stats = probe.stats ?? {}
+      const found = (['W0N0', 'E0N0', 'W0S0', 'E0S0'] as const).filter(r => r in stats)
+      console.log(`[ServerStore] worldInfo corner probe — found: [${found.length ? found.join(', ') : 'none'}]`)
       if ('E0N0' in stats || 'E0S0' in stats) {
         // E quadrant exists: width spans both W and E sides, split evenly
         minX = -Math.ceil(width / 2)
@@ -101,10 +104,11 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
         minY = -Math.ceil(height / 2)
         maxY = Math.floor(height / 2) - 1
       }
-    } catch {
-      // Probe failed — keep W/N defaults
+    } catch (e) {
+      console.log(`[ServerStore] worldInfo corner probe failed — keeping W/N defaults:`, e)
     }
 
+    console.log(`[ServerStore] worldInfo computed bounds — x: [${minX}, ${maxX}]  y: [${minY}, ${maxY}]`)
     const info: WorldInfo = { shard: shard ?? null, width, height, minX, maxX, minY, maxY }
     this.cache.set(cacheKey, info, 10 * 60_000)
     return info

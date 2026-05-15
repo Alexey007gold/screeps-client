@@ -45,7 +45,6 @@ export function StatsBar(props: StatsBarProps) {
         display: 'flex',
         gap: '16px',
         padding: '6px 16px',
-        'border-bottom': '1px solid #30363d',
         'font-size': '12px',
         color: '#8b949e',
         'align-items': 'center',

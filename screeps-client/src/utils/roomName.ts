@@ -6,6 +6,7 @@ export interface RoomCoord {
 }
 
 export function isRoomInWorld(x: number, y: number, bounds: WorldInfo): boolean {
+  if (isNaN(bounds.minX) || isNaN(bounds.maxX) || isNaN(bounds.minY) || isNaN(bounds.maxY)) return true
   return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY
 }
 

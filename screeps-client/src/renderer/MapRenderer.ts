@@ -9,16 +9,19 @@ import {
 export const MAP_TILE_SIZE = 3
 export const MAP_ROOM_SIZE = MAP_TILE_SIZE * 50  // 150px per room
 
-// Terrain is baked once to a small GPU texture — one quad per room instead of ~2500 triangles
-const TERRAIN_CACHE_SIZE = 128
+// Terrain baked to a GPU texture — two LOD tiers to avoid upscaling blur.
+// LOD 0 (zoom < 1): zoomed out, many rooms, small texture fine
+// LOD 1 (zoom ≥ 1): zoomed in, crisp at native and above
+const LOD_TEXTURE_SIZES = [128, 512] as const
+const LOD_ZOOM_THRESHOLD = 1
 // Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
 const CLEAR_PADDING = 50
 // Above this room count the visible-rooms callback fires with an empty list — too zoomed out to load usefully
-const MAX_VISIBLE_ROOMS = 1000
+const MAX_VISIBLE_ROOMS = 5000
 // Wait this long after the last viewport change before firing onVisibleRoomsChanged
-const VISIBLE_DEBOUNCE_MS = 10
+const VISIBLE_DEBOUNCE_MS = 5
 
-const MIN_ZOOM = 0.3
+const MIN_ZOOM = 0.2
 const MAX_ZOOM = 5
 
 const COLOR_SOURCE     = OBJ_GOLD    // sources
@@ -31,6 +34,8 @@ const MAP2_FIXED_KEYS  = new Set(['w', 'r', 'pb', 'p', 's', 'c', 'm', 'k'])
 interface RoomEntry {
   container: Container
   terrainSprite: Sprite
+  texLo: RenderTexture | null  // LOD 0
+  texHi: RenderTexture | null  // LOD 1
   map2Graphics: Graphics
   ownerOverlay: Graphics
   nameLabel: Text
@@ -50,10 +55,12 @@ export class MapRenderer {
   private selectionGraphics: Graphics | null = null
   private readonly rooms = new Map<string, RoomEntry>()
   private readonly terrainBaked = new Set<string>()
+  private readonly terrainData  = new Map<string, Uint8Array>()  // raw bytes kept until texHi is baked
   private readonly callbacks: MapRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
   private _destroyed = false
   private showRoomNames = false
+  private worldBoundsSet: { minX: number; maxX: number; minY: number; maxY: number } | null = null
   private lastVisibleBounds: { rxMin: number; rxMax: number; ryMin: number; ryMax: number } | null = null
 
   private animTargetX = 0
@@ -149,44 +156,71 @@ export class MapRenderer {
 
   setRoomTerrain(roomName: string, terrain: RoomTerrain): void {
     const entry = this.getOrCreate(roomName)
-    const MT = MAP_TILE_SIZE
+    const raw = terrain.raw
 
+    if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
+    if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
+    entry.texHi = null
+
+    entry.texLo = this.bakeTex(raw, LOD_TEXTURE_SIZES[0])
+
+    if (this.getLOD() === 1) {
+      // Already zoomed in — bake hi-res immediately so it's ready
+      entry.texHi = this.bakeTex(raw, LOD_TEXTURE_SIZES[1])
+      entry.terrainSprite.texture = entry.texHi
+    } else {
+      // Zoomed out — keep raw bytes for lazy hi-res bake if user zooms in later
+      this.terrainData.set(roomName, raw)
+      entry.terrainSprite.texture = entry.texLo
+    }
+
+    entry.terrainSprite.width  = MAP_ROOM_SIZE
+    entry.terrainSprite.height = MAP_ROOM_SIZE
+    this.terrainBaked.add(roomName)
+  }
+
+  private getLOD(): number {
+    return this.zoom < LOD_ZOOM_THRESHOLD ? 0 : 1
+  }
+
+  // Bake terrain raw bytes to a RenderTexture at the given size.
+  private bakeTex(raw: Uint8Array, size: number): RenderTexture {
+    const MT = MAP_TILE_SIZE
     const g = new Graphics()
     g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
     g.fill(TERRAIN_PLAIN)
-
     let hasWalls = false
     for (let i = 0; i < 2500; i++) {
-      if (terrain.raw[i] === 1) {
-        g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT)
-        hasWalls = true
-      }
+      if (raw[i] === 1) { g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT); hasWalls = true }
     }
     if (hasWalls) g.fill(TERRAIN_WALL)
-
     let hasSwamp = false
     for (let i = 0; i < 2500; i++) {
-      if (terrain.raw[i] === 2) {
-        g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT)
-        hasSwamp = true
-      }
+      if (raw[i] === 2) { g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT); hasSwamp = true }
     }
     if (hasSwamp) g.fill(TERRAIN_SWAMP)
+    const rt = RenderTexture.create({ width: size, height: size })
+    g.scale.set(size / MAP_ROOM_SIZE)
+    this.app.renderer.render({ container: g, target: rt })
+    g.destroy({ context: true })
+    return rt
+  }
 
-    // Bake to a small GPU texture — replaces per-frame geometry with a single quad
-    const rt = RenderTexture.create({ width: TERRAIN_CACHE_SIZE, height: TERRAIN_CACHE_SIZE })
-    const temp = new Container()
-    temp.addChild(g)
-    temp.scale.set(TERRAIN_CACHE_SIZE / MAP_ROOM_SIZE)
-    this.app.renderer.render({ container: temp, target: rt })
-    temp.destroy({ children: true, context: true })
-
-    const oldTex = entry.terrainSprite.texture
-    entry.terrainSprite.texture = rt
-    entry.terrainSprite.width = MAP_ROOM_SIZE
-    entry.terrainSprite.height = MAP_ROOM_SIZE
-    if (this.terrainBaked.has(roomName) && oldTex !== Texture.EMPTY && !oldTex.destroyed) oldTex.destroy()
-    this.terrainBaked.add(roomName)
+  private applyLOD(): void {
+    const hi = this.getLOD() === 1
+    for (const [roomName, entry] of this.rooms) {
+      if (!this.terrainBaked.has(roomName)) continue
+      if (hi && !entry.texHi) {
+        // First time at LOD 1 for this room — bake hi-res now and free raw bytes
+        const raw = this.terrainData.get(roomName)
+        if (raw) {
+          entry.texHi = this.bakeTex(raw, LOD_TEXTURE_SIZES[1])
+          this.terrainData.delete(roomName)
+        }
+      }
+      const tex = hi ? entry.texHi : entry.texLo
+      if (tex && !tex.destroyed) entry.terrainSprite.texture = tex
+    }
   }
 
   setRoomMap2(roomName: string, data: RoomMap2Data): void {
@@ -257,6 +291,16 @@ export class MapRenderer {
     if (hasUserObjs) g.fill(COLOR_USER)
   }
 
+  clearRoomMap2(roomName: string): void {
+    this.rooms.get(roomName)?.map2Graphics.clear()
+  }
+
+  clearAllMap2(): void {
+    for (const entry of this.rooms.values()) {
+      entry.map2Graphics.clear()
+    }
+  }
+
   setRoomOwned(roomName: string, owned: boolean): void {
     const entry = this.getOrCreate(roomName)
     const g = entry.ownerOverlay
@@ -284,6 +328,7 @@ export class MapRenderer {
 
   setBounds(minX: number, maxX: number, minY: number, maxY: number): void {
     if (!this.boundsGraphics) return
+    this.worldBoundsSet = { minX, maxX, minY, maxY }
     this.boundsGraphics.clear()
     const x = minX * MAP_ROOM_SIZE
     const y = minY * MAP_ROOM_SIZE
@@ -292,17 +337,18 @@ export class MapRenderer {
     // alignment: 0 = outer stroke — extends outward, never overlaps room tiles
     this.boundsGraphics.rect(x, y, w, h)
     this.boundsGraphics.stroke({ color: TERRAIN_BORDER, width: 6, alignment: 0 })
+    this.updateAllNameLabels()
   }
 
   clearBounds(): void {
+    this.worldBoundsSet = null
     this.boundsGraphics?.clear()
+    this.updateAllNameLabels()
   }
 
   setShowRoomNames(show: boolean): void {
     this.showRoomNames = show
-    for (const entry of this.rooms.values()) {
-      entry.nameLabel.visible = show
-    }
+    this.updateAllNameLabels()
   }
 
   hasRoom(roomName: string): boolean {
@@ -312,9 +358,10 @@ export class MapRenderer {
   clearRoom(roomName: string): void {
     const entry = this.rooms.get(roomName)
     if (!entry) return
-    const tex = entry.terrainSprite.texture
-    if (this.terrainBaked.has(roomName) && tex !== Texture.EMPTY && !tex.destroyed) tex.destroy()
+    if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
+    if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
     this.terrainBaked.delete(roomName)
+    this.terrainData.delete(roomName)
     this.world.removeChild(entry.container)
     entry.container.destroy({ children: true, context: true })
     this.rooms.delete(roomName)
@@ -343,14 +390,13 @@ export class MapRenderer {
       clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = null
     }
-    for (const [name, entry] of this.rooms) {
-      if (this.terrainBaked.has(name)) {
-        const tex = entry.terrainSprite.texture
-        if (tex !== Texture.EMPTY && !tex.destroyed) tex.destroy()
-      }
+    for (const [, entry] of this.rooms) {
+      if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
+      if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
     }
     this.rooms.clear()
     this.terrainBaked.clear()
+    this.terrainData.clear()
     try {
       this.app.destroy(false, { children: true, texture: true, context: true })
     } catch (e) {
@@ -386,7 +432,7 @@ export class MapRenderer {
     nameLabel.scale.set(0.25)
     nameLabel.x = 2
     nameLabel.y = 2
-    nameLabel.visible = this.showRoomNames
+    nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
     container.addChild(nameLabel)
 
     this.world.addChild(container)
@@ -396,9 +442,25 @@ export class MapRenderer {
       this.world.addChild(this.selectionGraphics)
     }
 
-    const entry: RoomEntry = { container, terrainSprite, map2Graphics, ownerOverlay, nameLabel }
+    const entry: RoomEntry = { container, terrainSprite, texLo: null, texHi: null, map2Graphics, ownerOverlay, nameLabel }
     this.rooms.set(roomName, entry)
     return entry
+  }
+
+  private nameLabelShouldShow(rx: number, ry: number): boolean {
+    if (!this.showRoomNames) return false
+    if (this.zoom < LOD_ZOOM_THRESHOLD) return false
+    const b = this.worldBoundsSet
+    if (b && (rx < b.minX || rx > b.maxX || ry < b.minY || ry > b.maxY)) return false
+    return true
+  }
+
+  private updateAllNameLabels(): void {
+    for (const [name, entry] of this.rooms) {
+      const coord = parseRoomName(name)
+      if (!coord) continue
+      entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
+    }
   }
 
   private setupInteraction(): void {
@@ -444,9 +506,13 @@ export class MapRenderer {
       const next   = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor))
       const wx     = (e.offsetX - this.world.x) / scale
       const wy     = (e.offsetY - this.world.y) / scale
+      const prevLOD = this.getLOD()
+      const prevZoomAboveThreshold = this.zoom >= LOD_ZOOM_THRESHOLD
       this.world.scale.set(next)
       this.world.x = e.offsetX - wx * next
       this.world.y = e.offsetY - wy * next
+      if (this.getLOD() !== prevLOD) this.applyLOD()
+      if ((next >= LOD_ZOOM_THRESHOLD) !== prevZoomAboveThreshold) this.updateAllNameLabels()
       this.callbacks.onZoomChanged?.(next)
     }, { passive: false })
   }

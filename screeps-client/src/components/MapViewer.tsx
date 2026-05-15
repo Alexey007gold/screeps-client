@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MapRenderer } from '~/renderer/MapRenderer.js'
-import { client, userInfo, worldBounds } from '~/stores/clientStore.js'
+import { client, userInfo, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
 import { showMapRoomNames } from '~/stores/settingsStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import type { Subscription } from 'screeps-connectivity'
@@ -27,8 +27,10 @@ export function MapViewer(props: MapViewerProps) {
   let renderer: MapRenderer | null = null
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
+  const [zoom, setZoom] = createSignal(1)
   const [selectedRoom, setSelectedRoom] = createSignal<string | null>(props.originRoom ?? null)
   let lastSubsActive: boolean | null = null
+  let lastRoomsEmpty: boolean | null = null
 
   // key = `${room}/${shard}` so shard changes invalidate existing subs
   const map2Subs = new Map<string, Subscription>()
@@ -104,13 +106,27 @@ export function MapViewer(props: MapViewerProps) {
           props.onHoveredRoomChanged?.(room ? buildRoomInfo(room) : null)
         },
         onRoomClick: (room) => {
-          if (canNavigateTo(room)) props.onNavigateToRoom(room)
+          // Defer navigation out of the PixiJS event handler. Calling onNavigateToRoom
+          // synchronously triggers SolidJS to unmount this component and destroy the
+          // renderer — while still inside PixiJS's _onPointerUp pipeline — causing
+          // EventSystem.setCursor to crash on a null domElement.
+          if (canNavigateTo(room)) setTimeout(() => props.onNavigateToRoom(room), 0)
         },
         onVisibleRoomsChanged: (rooms) => {
+          const isEmpty = rooms.length === 0
+          if (lastRoomsEmpty !== isEmpty) {
+            lastRoomsEmpty = isEmpty
+            if (isEmpty) {
+              console.log('[map] zoom out — too many rooms visible, terrain loading paused')
+            } else {
+              console.log(`[map] zoom in — terrain loading active, ${rooms.length} rooms visible`)
+            }
+          }
           setVisibleRooms(rooms)
         },
-        onZoomChanged: (zoom) => {
-          props.onZoomChanged?.(zoom)
+        onZoomChanged: (z) => {
+          setZoom(z)
+          props.onZoomChanged?.(z)
         },
       })
 
@@ -269,12 +285,13 @@ export function MapViewer(props: MapViewerProps) {
         .catch((err) => console.error('[map] mapStats failed:', err))
     }
 
-    // Reconcile map2 subscriptions — drop all when too many rooms are visible
-    const MAP2_ROOM_LIMIT = 50
-    const subsActive = rooms.length <= MAP2_ROOM_LIMIT
+    // Reconcile map2 subscriptions — drop all when too many rooms visible or zoomed out
+    const MAP2_ROOM_LIMIT = 5000
+    const subsActive = rooms.length > 0 && rooms.length <= MAP2_ROOM_LIMIT && zoom() >= 0.4
     if (subsActive !== lastSubsActive) {
       lastSubsActive = subsActive
       props.onSubscriptionStateChanged?.(subsActive)
+      if (!subsActive) renderer?.clearAllMap2()
     }
     if (!subsActive) {
       for (const [, sub] of map2Subs) sub.dispose()
@@ -285,6 +302,7 @@ export function MapViewer(props: MapViewerProps) {
         if (!activeKeys.has(key)) {
           sub.dispose()
           map2Subs.delete(key)
+          renderer?.clearRoomMap2(key.split('/')[0])
         }
       }
       for (const room of rooms) {
@@ -304,11 +322,30 @@ export function MapViewer(props: MapViewerProps) {
     renderer?.setShowRoomNames(showMapRoomNames())
   })
 
+  // Re-fetch world bounds with the correct shard whenever client or shard changes.
+  // clientStore fetches without shard on connect which gives NaN bounds on multi-shard servers.
+  createEffect(() => {
+    const c = client()
+    const shard = props.shard
+    if (!c) return
+    c.stores.server.worldInfo(shard ?? undefined).then((info) => {
+      console.log(`[map] worldInfo(shard=${shard ?? 'none'}) — x: [${info.minX}, ${info.maxX}]  y: [${info.minY}, ${info.maxY}]`)
+      setWorldBounds(info)
+    }).catch((e) => {
+      console.log(`[map] worldInfo(shard=${shard ?? 'none'}) failed:`, e)
+    })
+  })
+
   // Draw world bounds border when worldBounds signal updates (renderer already ready at this point)
   createEffect(() => {
     const bounds = worldBounds()
-    if (!bounds) renderer?.clearBounds()
-    else renderer?.setBounds(bounds.minX, bounds.maxX, bounds.minY, bounds.maxY)
+    if (!bounds) {
+      renderer?.clearBounds()
+      console.log(`[map] worldBounds — none (shard: ${props.shard ?? 'none'})`)
+    } else {
+      renderer?.setBounds(bounds.minX, bounds.maxX, bounds.minY, bounds.maxY)
+      console.log(`[map] worldBounds applied — shard: ${props.shard ?? 'none'}  x: [${bounds.minX}, ${bounds.maxX}]  y: [${bounds.minY}, ${bounds.maxY}]  (fetched for shard: ${bounds.shard ?? 'none'})`)
+    }
   })
 
   // Single map2 update listener — re-wired if client reconnects
