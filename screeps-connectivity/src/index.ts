@@ -27,6 +27,7 @@ export type {
   ConsoleMessage,
   ServerVersion,
   ShardInfo,
+  WorldInfo,
   Badge,
   VisualStyle,
   RoomVisualEntry,

@@ -18,6 +18,7 @@ TypeScript library for connecting to Screeps servers. Handles HTTP, WebSocket, a
 - [Storage](#storage)
 - [Logging](#logging)
 - [Types Reference](#types-reference)
+  - [WorldInfo](#worldinfo)
 
 ---
 
@@ -310,6 +311,31 @@ Fetches the list of active shards. Cached for 5 minutes. Emits `server:shards` o
 serverStore.refreshShards(): Promise<ShardInfo[]>
 ```
 Busts the cache and re-fetches.
+
+```ts
+serverStore.worldInfo(shard?: string): Promise<WorldInfo>
+```
+Fetches and caches world size and coordinate bounds for a shard. Cached for 10 minutes per shard.
+
+Internally makes two requests:
+1. `GET /api/game/world-size` — retrieves `width` and `height`.
+2. `POST /api/game/map-stats` for the four quadrant-origin rooms (`W0N0`, `E0N0`, `W0S0`, `E0S0`) — determines which quadrants actually contain rooms, from which `minX`/`maxX`/`minY`/`maxY` are computed.
+
+The resulting `WorldInfo` can be used to validate room coordinates before making requests or triggering navigation. If `shard` is omitted the request is sent without a shard parameter (correct for single-shard private servers).
+
+```ts
+const info = await client.stores.server.worldInfo()
+// Private server example: { width: 11, height: 11, minX: -11, maxX: -1, minY: -11, maxY: -1 }
+
+function roomExists(x: number, y: number): boolean {
+  return x >= info.minX && x <= info.maxX && y >= info.minY && y <= info.maxY
+}
+```
+
+```ts
+serverStore.invalidateWorldInfo(shard?: string): void
+```
+Removes the cached `WorldInfo` for the given shard so the next `worldInfo()` call re-fetches. Use after a server map reset.
 
 #### Events
 
@@ -807,6 +833,34 @@ interface ShardInfo {
   tick: number
 }
 ```
+
+### `WorldInfo`
+
+Describes the playable area of a shard. Coordinates use the internal system where `W0 = x = -1`, `E0 = x = 0`, `N0 = y = -1`, `S0 = y = 0` — matching the output of a `parseRoomName` helper that avoids the `-0 === 0` ambiguity.
+
+```ts
+interface WorldInfo {
+  shard: string | null   // shard name, or null if not applicable (private server)
+  width: number          // raw value from /api/game/world-size
+  height: number
+  minX: number           // smallest valid x coordinate (inclusive)
+  maxX: number           // largest  valid x coordinate (inclusive)
+  minY: number
+  maxY: number
+}
+```
+
+**Coordinate system note** — the numeric coordinates are produced by the offset convention where `W(n) → -(n+1)` and `E(n) → n`, so that W0 and E0 never collide at zero:
+
+| Room | x | Room | y |
+|------|---|------|---|
+| W0   | −1 | N0  | −1 |
+| W1   | −2 | N1  | −2 |
+| W10  | −11 | N10 | −11 |
+| E0   |  0 | S0  |  0 |
+| E9   |  9 | S9  |  9 |
+
+For a private server that only occupies the W/N quadrant (the most common setup), `minX = −width`, `maxX = −1`, `minY = −height`, `maxY = −1`.
 
 ### `RoomTerrain`
 

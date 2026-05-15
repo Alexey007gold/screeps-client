@@ -1,7 +1,7 @@
 import { TypedStore } from './TypedStore.js'
 import type { Logger } from '../logger.js'
 import type { ServerStoreEvents } from '../types/events.js'
-import type { ServerVersion, ShardInfo } from '../types/game.js'
+import type { ServerVersion, ShardInfo, WorldInfo } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
@@ -63,5 +63,45 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
   async refreshShards(): Promise<ShardInfo[]> {
     this.cache.delete('server/shards')
     return this.shards()
+  }
+
+  async worldInfo(shard?: string): Promise<WorldInfo> {
+    const shardKey = shard ?? 'default'
+    const cacheKey = `server/world/${shardKey}`
+    const cached = this.cache.get<WorldInfo>(cacheKey)
+    if (cached) return cached
+
+    const params: Record<string, string> = {}
+    if (shard) params.shard = shard
+
+    const size = await this.http.request<{ ok: number; width: number; height: number }>(
+      'GET', '/api/game/world-size', params
+    )
+    const { width, height } = size
+
+    // Start with W/N-only assumption (most common for private servers)
+    let minX = -width, maxX = -1, minY = -height, maxY = -1
+
+    // Probe the four quadrant-origin rooms to detect which quadrants actually exist.
+    // mapStats only returns entries for rooms that exist on the server.
+    try {
+      const probe = await this.http.request<{ ok: number; stats: Record<string, unknown> }>(
+        'POST', '/api/game/map-stats',
+        { rooms: ['W0N0', 'E0N0', 'W0S0', 'E0S0'], statName: 'owner0', ...params }
+      )
+      const stats = probe.stats ?? {}
+      if ('E0N0' in stats || 'E0S0' in stats) maxX = width - 1   // E quadrant exists
+      if ('W0S0' in stats || 'E0S0' in stats) maxY = height - 1  // S quadrant exists
+    } catch {
+      // Probe failed — keep W/N defaults
+    }
+
+    const info: WorldInfo = { shard: shard ?? null, width, height, minX, maxX, minY, maxY }
+    this.cache.set(cacheKey, info, 10 * 60_000)
+    return info
+  }
+
+  invalidateWorldInfo(shard?: string): void {
+    this.cache.delete(`server/world/${shard ?? 'default'}`)
   }
 }

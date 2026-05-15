@@ -100,6 +100,18 @@ export interface ShardInfo {
   tick: number
 }
 
+export interface WorldInfo {
+  shard: string | null
+  width: number
+  height: number
+  // Inclusive coordinate bounds of valid rooms.
+  // Uses the internal system where W0 = x = -1, E0 = x = 0, N0 = y = -1, S0 = y = 0.
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+
 export interface VisualStyle {
   opacity?: number
   fill?: string
