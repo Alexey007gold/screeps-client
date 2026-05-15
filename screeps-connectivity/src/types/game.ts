@@ -87,3 +87,25 @@ export interface ShardInfo {
   users: number
   tick: number
 }
+
+export interface VisualStyle {
+  opacity?: number
+  fill?: string
+  stroke?: string
+  strokeWidth?: number
+  color?: string
+  backgroundColor?: string
+  backgroundPadding?: number
+  align?: 'center' | 'left' | 'right'
+  lineStyle?: 'dashed' | 'dotted' | 'solid'
+  width?: number
+  radius?: number
+  font?: string | number
+}
+
+export type RoomVisualEntry =
+  | { t: 't'; x: number; y: number; text: string; s: VisualStyle }
+  | { t: 'c'; x: number; y: number; s: VisualStyle }
+  | { t: 'r'; x: number; y: number; w: number; h: number; s: VisualStyle }
+  | { t: 'p'; points: [number, number][]; s: VisualStyle }
+  | { t: 'l'; x1: number; y1: number; x2: number; y2: number; s: VisualStyle }

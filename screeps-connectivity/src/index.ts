@@ -27,6 +27,8 @@ export type {
   ServerVersion,
   ShardInfo,
   Badge,
+  VisualStyle,
+  RoomVisualEntry,
 } from './types/game.js'
 export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents } from './types/events.js'
 
