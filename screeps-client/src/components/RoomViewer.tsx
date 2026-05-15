@@ -9,6 +9,7 @@ import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration } from '~/stores/clientStore.js'
+import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
@@ -154,7 +155,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const { objects: objs, diff } = state
 
     if (!objLayer) {
-      objLayer = new ObjectLayer(r.app.ticker)
+      objLayer = new ObjectLayer(r.app.ticker, showCreepLabels())
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)
       r.bringNavOverlayToTop()
@@ -260,6 +261,11 @@ export function RoomViewer(props: RoomViewerProps) {
   createEffect(() => {
     const raw = visualState()
     visualLayer?.update(raw)
+  })
+
+  // Sync creep label visibility when the setting changes
+  createEffect(() => {
+    objLayer?.setShowLabels(showCreepLabels())
   })
 
   return (

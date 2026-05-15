@@ -1,12 +1,14 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
-import { RoomNavigator } from '~/components/RoomNavigator.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { MapViewer } from '~/components/MapViewer.js'
+import type { RoomInfo } from '~/components/MapViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
+import { SettingsPanel } from '~/components/SettingsPanel.js'
 import { disconnect, isGuest } from '~/stores/clientStore.js'
+import { widescreenMode } from '~/stores/settingsStore.js'
 
 import { parseRoomName } from '~/utils/roomName.js'
 
@@ -39,10 +41,15 @@ export function Dashboard() {
   const [shard, setShard] = createSignal<string | null>(urlState.shard ?? localStorage.getItem('screeps:shard'))
   const [mapMode, setMapMode] = createSignal(parseMapUrl() !== null)
 
-  const [sidebarWidth, setSidebarWidth] = createSignal(260)
-  const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(260)
-  const [consoleHeight, setConsoleHeight] = createSignal(220)
-  const [consolePrevHeight, setConsolePrevHeight] = createSignal(220)
+  const [showSettings, setShowSettings] = createSignal(false)
+  const [mapOriginRoom, setMapOriginRoom] = createSignal<string | undefined>(undefined)
+  const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
+  const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
+
+  const [sidebarWidth, setSidebarWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
+  const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
+  const [consoleHeight, setConsoleHeight] = createSignal(Number(localStorage.getItem('screeps:consoleHeight')) || 220)
+  const [consolePrevHeight, setConsolePrevHeight] = createSignal(Number(localStorage.getItem('screeps:consoleHeight')) || 220)
   const [sidebarDragging, setSidebarDragging] = createSignal(false)
   const [consoleDragging, setConsoleDragging] = createSignal(false)
 
@@ -80,6 +87,7 @@ export function Dashboard() {
 
     const onUp = () => {
       setSidebarDragging(false)
+      localStorage.setItem('screeps:sidebarWidth', String(sidebarWidth()))
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -101,6 +109,7 @@ export function Dashboard() {
 
     const onUp = () => {
       setConsoleDragging(false)
+      localStorage.setItem('screeps:consoleHeight', String(consoleHeight()))
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -113,19 +122,28 @@ export function Dashboard() {
     setRoom(r)
     setShard(s)
     setMapMode(false)
+    setHoveredRoomInfo(null)
+    setSelectedRoomInfo(null)
     localStorage.setItem('screeps:room', r)
     if (s) localStorage.setItem('screeps:shard', s)
     else localStorage.removeItem('screeps:shard')
     history.pushState(null, '', buildRoomUrl(r, s))
   }
 
+  const openMap = (originRoom: string) => {
+    setMapOriginRoom(originRoom)
+    setMapMode(true)
+    history.pushState(null, '', buildMapUrl(shard()))
+  }
+
   const toggleMap = () => {
     if (mapMode()) {
       setMapMode(false)
+      setHoveredRoomInfo(null)
+      setSelectedRoomInfo(null)
       history.pushState(null, '', buildRoomUrl(room(), shard()))
     } else {
-      setMapMode(true)
-      history.pushState(null, '', buildMapUrl(shard()))
+      openMap(room())
     }
   }
 
@@ -151,6 +169,17 @@ export function Dashboard() {
     }
     window.addEventListener('popstate', onPopState)
     onCleanup(() => window.removeEventListener('popstate', onPopState))
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName ?? ''
+      const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+      if (e.key === 'm' && !mapMode()) {
+        openMap(room())
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown))
   })
 
   return (
@@ -171,11 +200,6 @@ export function Dashboard() {
           <StatsBar />
         </Show>
         <div style={{ flex: 1 }} />
-        <RoomNavigator
-          onNavigate={handleNavigate}
-          currentRoom={room()}
-          currentShard={shard()}
-        />
         <button
           onClick={toggleMap}
           style={{
@@ -190,6 +214,21 @@ export function Dashboard() {
           }}
         >
           {mapMode() ? 'Room View' : 'Map'}
+        </button>
+        <button
+          onClick={() => setShowSettings((v) => !v)}
+          style={{
+            padding: '6px 14px',
+            'border-radius': '4px',
+            border: `1px solid ${showSettings() ? '#388bfd' : '#30363d'}`,
+            background: showSettings() ? '#1f3158' : '#21262d',
+            color: showSettings() ? '#58a6ff' : '#c9d1d9',
+            'font-size': '13px',
+            cursor: 'pointer',
+            margin: '0 4px',
+          }}
+        >
+          Settings
         </button>
         <button
           onClick={disconnect}
@@ -208,96 +247,143 @@ export function Dashboard() {
         </button>
       </div>
 
-      {/* Main body */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Center: canvas + bottom console */}
-        <div
-          style={{
-            display: 'flex',
-            'flex-direction': 'column',
-            flex: 1,
-            overflow: 'hidden',
-          }}
-        >
-          {/* Canvas */}
-          <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-            <Show
-              when={!mapMode()}
-              fallback={
-                <MapViewer
-                  shard={shard()}
-                  onNavigateToRoom={(r) => handleNavigate(r, shard())}
+      {/* Main body — layout depends on widescreenMode setting */}
+      <Show
+        when={widescreenMode()}
+        fallback={
+          /* Normal mode: console spans full width below canvas+sidebar */
+          <div style={{ display: 'flex', 'flex-direction': 'column', flex: 1, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+              {/* Canvas */}
+              <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                <Show when={showSettings()}>
+                  <SettingsPanel onClose={() => setShowSettings(false)} />
+                </Show>
+                <Show
+                  when={!mapMode()}
+                  fallback={
+                    <MapViewer
+                      shard={shard()}
+                      originRoom={mapOriginRoom()}
+                      onNavigateToRoom={(r) => handleNavigate(r, shard())}
+                      onHoveredRoomChanged={setHoveredRoomInfo}
+                      onSelectedRoomChanged={setSelectedRoomInfo}
+                    />
+                  }
+                >
+                  <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+                </Show>
+              </div>
+              {/* Sidebar */}
+              <div
+                style={{
+                  width: `${sidebarWidth()}px`,
+                  'border-left': '1px solid #30363d',
+                  transition: sidebarDragging() ? 'none' : 'width 0.15s ease',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  onPointerDown={startSidebarDrag}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', cursor: 'col-resize', 'z-index': 10, background: '#21262d' }}
                 />
-              }
-            >
-              <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+                <Sidebar
+                  isCollapsed={sidebarCollapsed()}
+                  onToggle={toggleSidebar}
+                  mapMode={mapMode()}
+                  hoveredRoomInfo={hoveredRoomInfo()}
+                  selectedRoomInfo={selectedRoomInfo()}
+                />
+              </div>
+            </div>
+            {/* Console — full width */}
+            <Show when={!isGuest()}>
+              <div
+                style={{
+                  height: `${consoleHeight()}px`,
+                  'border-top': '1px solid #30363d',
+                  transition: consoleDragging() ? 'none' : 'height 0.15s ease',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  onPointerDown={startConsoleDrag}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', cursor: 'row-resize', 'z-index': 10, background: '#21262d' }}
+                />
+                <ConsolePanel shard={shard()} isCollapsed={consoleCollapsed()} onToggle={toggleConsole} />
+              </div>
             </Show>
           </div>
-
-          {/* Bottom Console */}
-          <Show when={!isGuest()}>
-            <div
-              style={{
-                height: `${consoleHeight()}px`,
-                'border-top': '1px solid #30363d',
-                transition: consoleDragging() ? 'none' : 'height 0.15s ease',
-                overflow: 'hidden',
-                position: 'relative',
-              }}
-            >
-              {/* Drag handle */}
-              <div
-                onPointerDown={startConsoleDrag}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '4px',
-                  cursor: 'row-resize',
-                  'z-index': 10,
-                  background: '#21262d',
-                }}
-              />
-              <ConsolePanel
-                shard={shard()}
-                isCollapsed={consoleCollapsed()}
-                onToggle={toggleConsole}
-              />
+        }
+      >
+        {/* Widescreen mode: sidebar spans full height, console below canvas only */}
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', 'flex-direction': 'column', flex: 1, overflow: 'hidden' }}>
+            {/* Canvas */}
+            <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+              <Show when={showSettings()}>
+                <SettingsPanel onClose={() => setShowSettings(false)} />
+              </Show>
+              <Show
+                when={!mapMode()}
+                fallback={
+                  <MapViewer
+                    shard={shard()}
+                    originRoom={mapOriginRoom()}
+                    onNavigateToRoom={(r) => handleNavigate(r, shard())}
+                    onHoveredRoomChanged={setHoveredRoomInfo}
+                    onSelectedRoomChanged={setSelectedRoomInfo}
+                  />
+                }
+              >
+                <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+              </Show>
             </div>
-          </Show>
-        </div>
-
-        {/* Right Sidebar */}
-        <div
-          style={{
-            width: `${sidebarWidth()}px`,
-            'border-left': '1px solid #30363d',
-            transition: sidebarDragging() ? 'none' : 'width 0.15s ease',
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
-          {/* Drag handle */}
+            {/* Console — limited to canvas column width */}
+            <Show when={!isGuest()}>
+              <div
+                style={{
+                  height: `${consoleHeight()}px`,
+                  'border-top': '1px solid #30363d',
+                  transition: consoleDragging() ? 'none' : 'height 0.15s ease',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  onPointerDown={startConsoleDrag}
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', cursor: 'row-resize', 'z-index': 10, background: '#21262d' }}
+                />
+                <ConsolePanel shard={shard()} isCollapsed={consoleCollapsed()} onToggle={toggleConsole} />
+              </div>
+            </Show>
+          </div>
+          {/* Sidebar — full height */}
           <div
-            onPointerDown={startSidebarDrag}
             style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '4px',
-              height: '100%',
-              cursor: 'col-resize',
-              'z-index': 10,
-              background: '#21262d',
+              width: `${sidebarWidth()}px`,
+              'border-left': '1px solid #30363d',
+              transition: sidebarDragging() ? 'none' : 'width 0.15s ease',
+              overflow: 'hidden',
+              position: 'relative',
             }}
-          />
-          <Sidebar
-            isCollapsed={sidebarCollapsed()}
-            onToggle={toggleSidebar}
-          />
+          >
+            <div
+              onPointerDown={startSidebarDrag}
+              style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', cursor: 'col-resize', 'z-index': 10, background: '#21262d' }}
+            />
+            <Sidebar
+              isCollapsed={sidebarCollapsed()}
+              onToggle={toggleSidebar}
+              mapMode={mapMode()}
+              hoveredRoomInfo={hoveredRoomInfo()}
+              selectedRoomInfo={selectedRoomInfo()}
+            />
+          </div>
         </div>
-      </div>
+      </Show>
     </div>
   )
 }

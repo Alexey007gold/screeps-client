@@ -1,25 +1,23 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MapRenderer } from '~/renderer/MapRenderer.js'
 import { client, userInfo } from '~/stores/clientStore.js'
-import { parseRoomName } from '~/utils/roomName.js'
+import { showMapRoomNames } from '~/stores/settingsStore.js'
+import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import type { Subscription } from 'screeps-connectivity'
 
-interface MapViewerProps {
-  shard: string | null
-  onNavigateToRoom: (room: string) => void
-}
-
-interface TooltipState {
+export interface RoomInfo {
   room: string
   owner: string | null
   mineral: string | null
   density: number | null
-  x: number
-  y: number
 }
 
-function densityLabel(density: number): string {
-  return (['Low', 'Medium', 'High', 'Ultra'] as const)[density - 1] ?? String(density)
+interface MapViewerProps {
+  shard: string | null
+  originRoom?: string
+  onNavigateToRoom: (room: string) => void
+  onHoveredRoomChanged?: (info: RoomInfo | null) => void
+  onSelectedRoomChanged?: (info: RoomInfo | null) => void
 }
 
 export function MapViewer(props: MapViewerProps) {
@@ -27,48 +25,113 @@ export function MapViewer(props: MapViewerProps) {
   let renderer: MapRenderer | null = null
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
-  const [tooltip, setTooltip] = createSignal<TooltipState | null>(null)
+  const [selectedRoom, setSelectedRoom] = createSignal<string | null>(props.originRoom ?? null)
 
   // key = `${room}/${shard}` so shard changes invalidate existing subs
   const map2Subs = new Map<string, Subscription>()
 
-  // Latest mapStats data for tooltip lookups — written async, read in hover handler
+  // Latest mapStats data for info box lookups — written async, read in hover handler
   let latestStats: Record<string, { own?: { user: string; level: number }; mineral?: string; density?: number }> = {}
   let latestUsers: Record<string, { username: string }> = {}
 
-  onMount(async () => {
+  const buildRoomInfo = (room: string): RoomInfo => {
+    const stat = latestStats[room]
+    const ownerId = stat?.own?.user
+    const owner = ownerId ? (latestUsers[ownerId]?.username ?? ownerId) : null
+    return { room, owner, mineral: stat?.mineral ?? null, density: stat?.density ?? null }
+  }
+
+  onMount(() => {
     if (!canvasRef) return
 
-    renderer = new MapRenderer({
-      onRoomHover: (room, sx, sy) => {
-        if (!room) { setTooltip(null); return }
-        const stat = latestStats[room]
-        const ownerId = stat?.own?.user
-        const owner = ownerId ? (latestUsers[ownerId]?.username ?? ownerId) : null
-        setTooltip({
-          room,
-          owner,
-          mineral: stat?.mineral ?? null,
-          density: stat?.density ?? null,
-          x: sx,
-          y: sy,
-        })
-      },
-      onRoomClick: (room) => {
-        props.onNavigateToRoom(room)
-      },
-      onVisibleRoomsChanged: (rooms) => {
-        setVisibleRooms(rooms)
-      },
+    let keyDownHandler: ((e: KeyboardEvent) => void) | null = null
+    onCleanup(() => {
+      if (keyDownHandler) window.removeEventListener('keydown', keyDownHandler)
     })
 
-    await renderer.init(canvasRef)
+    ;(async () => {
+      renderer = new MapRenderer({
+        onRoomHover: (room) => {
+          props.onHoveredRoomChanged?.(room ? buildRoomInfo(room) : null)
+        },
+        onRoomClick: (room) => {
+          props.onNavigateToRoom(room)
+        },
+        onVisibleRoomsChanged: (rooms) => {
+          setVisibleRooms(rooms)
+        },
+      })
 
-    const lastRoom = localStorage.getItem('screeps:room')
-    if (lastRoom) {
-      const coord = parseRoomName(lastRoom)
-      if (coord) renderer.centerOn(coord.x, coord.y)
-    }
+      await renderer.init(canvasRef!)
+      if (!renderer) return
+
+      if (props.originRoom) {
+        const coord = parseRoomName(props.originRoom)
+        if (coord) renderer.centerOn(coord.x, coord.y)
+        renderer.setSelectedRoom(props.originRoom)
+        props.onSelectedRoomChanged?.(buildRoomInfo(props.originRoom))
+      } else {
+        const c = client()
+        if (c) {
+          try {
+            const res = await c.http.user.worldStartRoom(props.shard ?? 'shard0') as { room?: string | string[] }
+            if (!renderer) return
+            const roomName = Array.isArray(res?.room) ? res.room[0] : res?.room
+            if (typeof roomName === 'string') {
+              const coord = parseRoomName(roomName)
+              if (coord) renderer.centerOn(coord.x, coord.y)
+            }
+          } catch (err) {
+            console.error('[map] worldStartRoom failed:', err)
+          }
+        }
+      }
+
+      if (!renderer) return
+
+      const moveSelection = (rx: number, ry: number) => {
+        const name = formatRoomName(rx, ry)
+        setSelectedRoom(name)
+        renderer?.setSelectedRoom(name)
+        renderer?.centerOn(rx, ry, true)
+        props.onSelectedRoomChanged?.(buildRoomInfo(name))
+        props.onHoveredRoomChanged?.(buildRoomInfo(name))
+      }
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        const tag = (e.target as HTMLElement | null)?.tagName ?? ''
+        const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+
+        const cur = selectedRoom()
+        const coord = cur ? parseRoomName(cur) : null
+
+        switch (e.key) {
+          case 'ArrowLeft':
+            e.preventDefault()
+            if (coord) moveSelection(coord.x - 1, coord.y)
+            break
+          case 'ArrowRight':
+            e.preventDefault()
+            if (coord) moveSelection(coord.x + 1, coord.y)
+            break
+          case 'ArrowUp':
+            e.preventDefault()
+            if (coord) moveSelection(coord.x, coord.y - 1)
+            break
+          case 'ArrowDown':
+            e.preventDefault()
+            if (coord) moveSelection(coord.x, coord.y + 1)
+            break
+          case 'm':
+            if (cur) props.onNavigateToRoom(cur)
+            break
+        }
+      }
+
+      window.addEventListener('keydown', onKeyDown)
+      keyDownHandler = onKeyDown
+    })()
   })
 
   onCleanup(() => {
@@ -116,6 +179,11 @@ export function MapViewer(props: MapViewerProps) {
           renderer?.setRoomOwned(room, owned)
         }
         latestStats = newStats
+        // Refresh selected room info now that stats are loaded
+        const sel = selectedRoom()
+        if (sel && newStats[sel]) {
+          props.onSelectedRoomChanged?.(buildRoomInfo(sel))
+        }
       })
       .catch((err) => console.error('[map] mapStats failed:', err))
 
@@ -137,6 +205,11 @@ export function MapViewer(props: MapViewerProps) {
     }
   })
 
+  // Sync room name label visibility when the setting changes
+  createEffect(() => {
+    renderer?.setShowRoomNames(showMapRoomNames())
+  })
+
   // Single map2 update listener — re-wired if client reconnects
   createEffect(() => {
     const c = client()
@@ -153,33 +226,6 @@ export function MapViewer(props: MapViewerProps) {
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <canvas ref={canvasRef} style={{ display: 'block' }} />
-      <Show when={tooltip()}>
-        {(t) => (
-          <div
-            style={{
-              position: 'absolute',
-              left: `${t().x + 12}px`,
-              top: `${t().y + 12}px`,
-              padding: '8px 10px',
-              background: 'rgba(13, 17, 23, 0.92)',
-              border: '1px solid #30363d',
-              'border-radius': '4px',
-              'font-size': '12px',
-              color: '#c9d1d9',
-              'pointer-events': 'none',
-              'z-index': 10,
-              'white-space': 'nowrap',
-            }}
-          >
-            <div style={{ 'font-weight': 600, 'margin-bottom': '4px' }}>{t().room}</div>
-            <div>Owner: {t().owner ?? 'None'}</div>
-            <Show when={t().mineral}>
-              <div>Mineral: {t().mineral}</div>
-              <div>Density: {densityLabel(t().density ?? 0)}</div>
-            </Show>
-          </div>
-        )}
-      </Show>
     </div>
   )
 }

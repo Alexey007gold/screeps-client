@@ -140,7 +140,7 @@ function updateExtensionFill(visual: Container, radius: number): void {
   }
 }
 
-function createObjectVisual(obj: RoomObject): Container {
+function createObjectVisual(obj: RoomObject, showLabel = true): Container {
   const container = new Container()
   const g = new Graphics()
   const color = getObjectColor(obj.type)
@@ -317,15 +317,14 @@ function createObjectVisual(obj: RoomObject): Container {
     const FONT_SCALE = 8 / FONT_SIZE
     const label = new Text({
       text: obj.name as string,
-      style: {
-        fontSize: FONT_SIZE,
-        fill: 0xffffff,
-      },
+      style: { fontSize: FONT_SIZE, fill: 0xffffff },
     })
     label.scale.set(FONT_SCALE)
     label.anchor.set(0.5, 1)
     label.x = cx
     label.y = -2
+    label.visible = showLabel
+    ;(container as ContainerWithTarget).__nameLabel = label
     container.addChild(label)
   }
 
@@ -345,6 +344,7 @@ type ContainerWithTarget = Container & {
   __creepFillGraphics?: Graphics
   __creepUsed?: number
   __creepCapacity?: number
+  __nameLabel?: Text
 }
 
 interface ExtAnimation {
@@ -370,8 +370,10 @@ export class ObjectLayer {
   private extAnimations = new Map<string, ExtAnimation>()
   private creepFillAnimations = new Map<string, ExtAnimation>()
   private readonly EXT_ANIM_DURATION = 300
+  private showLabels: boolean
 
-  constructor(ticker?: Ticker) {
+  constructor(ticker?: Ticker, showLabels = true) {
+    this.showLabels = showLabels
     this.container = new Container()
     this.container.sortableChildren = true
     this.roadGraphics = new Graphics()
@@ -480,7 +482,7 @@ export class ObjectLayer {
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
-            const visual: ContainerWithTarget = createObjectVisual(obj)
+            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
             this.objects.set(id, visual)
@@ -538,7 +540,7 @@ export class ObjectLayer {
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)
         if (!existing) {
-          const visual: ContainerWithTarget = createObjectVisual(obj)
+          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels)
           visual.__tileX = obj.x
           visual.__tileY = obj.y
           this.objects.set(id, visual)
@@ -677,6 +679,13 @@ export class ObjectLayer {
       }
     }
     return result
+  }
+
+  setShowLabels(show: boolean): void {
+    this.showLabels = show
+    for (const visual of this.objects.values()) {
+      if (visual.__nameLabel) visual.__nameLabel.visible = show
+    }
   }
 
   /** Return the live PixiJS container for an object by id, if present. */

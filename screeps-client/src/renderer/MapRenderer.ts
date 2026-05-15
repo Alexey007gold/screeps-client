@@ -1,4 +1,4 @@
-import { Application, Container, Graphics } from 'pixi.js'
+import { Application, Container, Graphics, Text } from 'pixi.js'
 import type { RoomTerrain, RoomMap2Data } from 'screeps-connectivity'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import {
@@ -24,10 +24,11 @@ interface RoomEntry {
   terrainGraphics: Graphics
   map2Graphics: Graphics
   ownerOverlay: Graphics
+  nameLabel: Text
 }
 
 export interface MapRendererCallbacks {
-  onRoomHover: (room: string | null, screenX: number, screenY: number) => void
+  onRoomHover: (room: string | null) => void
   onRoomClick: (room: string) => void
   onVisibleRoomsChanged: (rooms: string[]) => void
 }
@@ -35,8 +36,16 @@ export interface MapRendererCallbacks {
 export class MapRenderer {
   readonly app: Application
   private world!: Container
+  private selectionGraphics!: Graphics
   private readonly rooms = new Map<string, RoomEntry>()
   private readonly callbacks: MapRendererCallbacks
+  private resizeObserver: ResizeObserver | null = null
+  private _destroyed = false
+  private showRoomNames = false
+
+  private animTargetX = 0
+  private animTargetY = 0
+  private isAnimating = false
 
   private isDragging = false
   private hasDragged = false
@@ -52,29 +61,69 @@ export class MapRenderer {
   }
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
+    const container = canvas.parentElement ?? canvas
+    const { width, height } = container.getBoundingClientRect()
+
     await this.app.init({
       canvas,
-      resizeTo: canvas.parentElement ?? canvas,
+      width,
+      height,
       background: TERRAIN_WALL,
       antialias: false,
       preference: 'webgl',
     })
+
+    this.resizeObserver = new ResizeObserver((entries) => {
+      const { width: newW, height: newH } = entries[0].contentRect
+      const oldW = this.app.screen.width
+      const oldH = this.app.screen.height
+      this.app.renderer.resize(newW, newH)
+      this.world.x += (newW - oldW) / 2
+      this.world.y += (newH - oldH) / 2
+    })
+    this.resizeObserver.observe(container)
 
     this.world = new Container()
     this.app.stage.addChild(this.world)
     this.app.stage.eventMode = 'static'
     this.app.stage.hitArea = this.app.screen
 
+    this.selectionGraphics = new Graphics()
+    this.world.addChild(this.selectionGraphics)
+
     this.setupInteraction()
-    this.app.ticker.add(() => this.checkVisibleRooms())
+    this.app.ticker.add(() => {
+      if (this.isAnimating) {
+        const dx = this.animTargetX - this.world.x
+        const dy = this.animTargetY - this.world.y
+        if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+          this.world.x = this.animTargetX
+          this.world.y = this.animTargetY
+          this.isAnimating = false
+        } else {
+          this.world.x += dx * 0.2
+          this.world.y += dy * 0.2
+        }
+      }
+      this.checkVisibleRooms()
+    })
   }
 
-  centerOn(rx: number, ry: number): void {
+  centerOn(rx: number, ry: number, animated = false): void {
     const cx = rx * MAP_ROOM_SIZE + MAP_ROOM_SIZE / 2
     const cy = ry * MAP_ROOM_SIZE + MAP_ROOM_SIZE / 2
     const scale = this.world.scale.x
-    this.world.x = this.app.screen.width  / 2 - cx * scale
-    this.world.y = this.app.screen.height / 2 - cy * scale
+    const destX = this.app.screen.width  / 2 - cx * scale
+    const destY = this.app.screen.height / 2 - cy * scale
+    if (animated) {
+      this.animTargetX = destX
+      this.animTargetY = destY
+      this.isAnimating = true
+    } else {
+      this.isAnimating = false
+      this.world.x = destX
+      this.world.y = destY
+    }
   }
 
   setRoomTerrain(roomName: string, terrain: RoomTerrain): void {
@@ -186,6 +235,27 @@ export class MapRenderer {
     }
   }
 
+  setSelectedRoom(room: string | null): void {
+    this.selectionGraphics.clear()
+    // Keep on top of all room containers
+    this.world.removeChild(this.selectionGraphics)
+    this.world.addChild(this.selectionGraphics)
+    if (!room) return
+    const coord = parseRoomName(room)
+    if (!coord) return
+    const x = coord.x * MAP_ROOM_SIZE
+    const y = coord.y * MAP_ROOM_SIZE
+    this.selectionGraphics.rect(x + 1, y + 1, MAP_ROOM_SIZE - 2, MAP_ROOM_SIZE - 2)
+    this.selectionGraphics.stroke({ color: 0xffffff, width: 2 })
+  }
+
+  setShowRoomNames(show: boolean): void {
+    this.showRoomNames = show
+    for (const entry of this.rooms.values()) {
+      entry.nameLabel.visible = show
+    }
+  }
+
   clearRoom(roomName: string): void {
     const entry = this.rooms.get(roomName)
     if (!entry) return
@@ -195,8 +265,16 @@ export class MapRenderer {
   }
 
   destroy(): void {
+    if (this._destroyed) return
+    this._destroyed = true
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
     this.rooms.clear()
-    this.app.destroy(false, { children: true, texture: true })
+    try {
+      this.app.destroy(false, { children: true, texture: true })
+    } catch (e) {
+      console.warn('[MapRenderer] destroy error (ignored):', e)
+    }
   }
 
   // ── Private ──────────────────────────────────────────────────────────────
@@ -220,9 +298,21 @@ export class MapRenderer {
     container.addChild(map2Graphics)
     container.addChild(ownerOverlay)
 
-    this.world.addChild(container)
+    const nameLabel = new Text({
+      text: roomName,
+      style: { fontSize: 9, fill: 0x8b949e, fontFamily: 'ui-monospace, monospace' },
+    })
+    nameLabel.x = 2
+    nameLabel.y = 2
+    nameLabel.visible = this.showRoomNames
+    container.addChild(nameLabel)
 
-    const entry: RoomEntry = { container, terrainGraphics, map2Graphics, ownerOverlay }
+    this.world.addChild(container)
+    // Keep selection overlay on top of room containers
+    this.world.removeChild(this.selectionGraphics)
+    this.world.addChild(this.selectionGraphics)
+
+    const entry: RoomEntry = { container, terrainGraphics, map2Graphics, ownerOverlay, nameLabel }
     this.rooms.set(roomName, entry)
     return entry
   }
@@ -260,7 +350,7 @@ export class MapRenderer {
 
     stage.on('pointerleave', () => {
       this.isDragging = false
-      this.callbacks.onRoomHover(null, 0, 0)
+      this.callbacks.onRoomHover(null)
     })
 
     this.app.canvas.addEventListener('wheel', (e) => {
@@ -286,7 +376,7 @@ export class MapRenderer {
   }
 
   private emitHover(sx: number, sy: number): void {
-    this.callbacks.onRoomHover(this.screenToRoom(sx, sy), sx, sy)
+    this.callbacks.onRoomHover(this.screenToRoom(sx, sy))
   }
 
   private checkVisibleRooms(): void {
