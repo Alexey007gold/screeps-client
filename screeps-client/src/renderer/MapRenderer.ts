@@ -115,51 +115,59 @@ export class MapRenderer {
     g.clear()
 
     // Roads — same color as TERRAIN_ROAD, small rect
-    for (const [x, y] of data.r) {
+    const roads = data.r ?? []
+    for (const [x, y] of roads) {
       g.rect(x * MT, y * MT, MT, MT)
     }
-    if (data.r.length) g.fill(TERRAIN_ROAD)
+    if (roads.length) g.fill(TERRAIN_ROAD)
 
     // Player-built walls / ramparts
-    for (const [x, y] of data.w) {
+    const walls = data.w ?? []
+    for (const [x, y] of walls) {
       g.rect(x * MT + 0.5, y * MT + 0.5, MT - 1, MT - 1)
     }
-    if (data.w.length) g.fill(0x447744)
+    if (walls.length) g.fill(0x447744)
 
     // Sources — gold dot
-    for (const [x, y] of data.s) {
+    const sources = data.s ?? []
+    for (const [x, y] of sources) {
       g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.5)
     }
-    if (data.s.length) g.fill(COLOR_SOURCE)
+    if (sources.length) g.fill(COLOR_SOURCE)
 
     // Controllers — blue dot
-    for (const [x, y] of data.c) {
+    const controllers = data.c ?? []
+    for (const [x, y] of controllers) {
       g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
     }
-    if (data.c.length) g.fill(COLOR_CONTROLLER)
+    if (controllers.length) g.fill(COLOR_CONTROLLER)
 
     // Minerals — cyan dot
-    for (const [x, y] of data.m) {
+    const minerals = data.m ?? []
+    for (const [x, y] of minerals) {
       g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
     }
-    if (data.m.length) g.fill(COLOR_MINERAL)
+    if (minerals.length) g.fill(COLOR_MINERAL)
 
     // Keeper lairs — orange dot
-    for (const [x, y] of data.k) {
+    const keepers = data.k ?? []
+    for (const [x, y] of keepers) {
       g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
     }
-    if (data.k.length) g.fill(COLOR_KEEPER)
+    if (keepers.length) g.fill(COLOR_KEEPER)
 
     // Power banks — orange dot (smaller)
-    for (const [x, y] of data.pb) {
+    const powerBanks = data.pb ?? []
+    for (const [x, y] of powerBanks) {
       g.circle((x + 0.5) * MT, (y + 0.5) * MT, 1.5)
     }
-    if (data.pb.length) g.fill(OBJ_ORANGE)
+    if (powerBanks.length) g.fill(OBJ_ORANGE)
 
     // User objects — batched by user colour (all users same colour for now)
     let hasUserObjs = false
     for (const [key, positions] of Object.entries(data)) {
       if (MAP2_FIXED_KEYS.has(key)) continue
+      if (!Array.isArray(positions)) continue
       for (const [x, y] of positions) {
         g.circle((x + 0.5) * MT, (y + 0.5) * MT, 1.0)
         hasUserObjs = true
