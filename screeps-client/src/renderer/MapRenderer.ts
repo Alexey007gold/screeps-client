@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text } from 'pixi.js'
+import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js'
 import type { RoomTerrain, RoomMap2Data } from 'screeps-connectivity'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import {
@@ -9,7 +9,16 @@ import {
 export const MAP_TILE_SIZE = 3
 export const MAP_ROOM_SIZE = MAP_TILE_SIZE * 50  // 150px per room
 
-const MIN_ZOOM = 0.15
+// Terrain is baked once to a small GPU texture — one quad per room instead of ~2500 triangles
+const TERRAIN_CACHE_SIZE = 128
+// Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
+const CLEAR_PADDING = 50
+// Above this room count the visible-rooms callback fires with an empty list — too zoomed out to load usefully
+const MAX_VISIBLE_ROOMS = 1000
+// Wait this long after the last viewport change before firing onVisibleRoomsChanged
+const VISIBLE_DEBOUNCE_MS = 10
+
+const MIN_ZOOM = 0.3
 const MAX_ZOOM = 5
 
 const COLOR_SOURCE     = OBJ_GOLD    // sources
@@ -21,7 +30,7 @@ const MAP2_FIXED_KEYS  = new Set(['w', 'r', 'pb', 'p', 's', 'c', 'm', 'k'])
 
 interface RoomEntry {
   container: Container
-  terrainGraphics: Graphics
+  terrainSprite: Sprite
   map2Graphics: Graphics
   ownerOverlay: Graphics
   nameLabel: Text
@@ -40,10 +49,12 @@ export class MapRenderer {
   private boundsGraphics: Graphics | null = null
   private selectionGraphics: Graphics | null = null
   private readonly rooms = new Map<string, RoomEntry>()
+  private readonly terrainBaked = new Set<string>()
   private readonly callbacks: MapRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
   private _destroyed = false
   private showRoomNames = false
+  private lastVisibleBounds: { rxMin: number; rxMax: number; ryMin: number; ryMax: number } | null = null
 
   private animTargetX = 0
   private animTargetY = 0
@@ -56,6 +67,7 @@ export class MapRenderer {
   private dragWorldX = 0
   private dragWorldY = 0
   private lastVisibleKey = ''
+  private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
@@ -137,15 +149,12 @@ export class MapRenderer {
 
   setRoomTerrain(roomName: string, terrain: RoomTerrain): void {
     const entry = this.getOrCreate(roomName)
-    const g = entry.terrainGraphics
-    g.clear()
     const MT = MAP_TILE_SIZE
 
-    // Fill entire room background as plain
+    const g = new Graphics()
     g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
     g.fill(TERRAIN_PLAIN)
 
-    // Batch all wall tiles into one fill call
     let hasWalls = false
     for (let i = 0; i < 2500; i++) {
       if (terrain.raw[i] === 1) {
@@ -155,7 +164,6 @@ export class MapRenderer {
     }
     if (hasWalls) g.fill(TERRAIN_WALL)
 
-    // Batch all swamp tiles
     let hasSwamp = false
     for (let i = 0; i < 2500; i++) {
       if (terrain.raw[i] === 2) {
@@ -164,6 +172,21 @@ export class MapRenderer {
       }
     }
     if (hasSwamp) g.fill(TERRAIN_SWAMP)
+
+    // Bake to a small GPU texture — replaces per-frame geometry with a single quad
+    const rt = RenderTexture.create({ width: TERRAIN_CACHE_SIZE, height: TERRAIN_CACHE_SIZE })
+    const temp = new Container()
+    temp.addChild(g)
+    temp.scale.set(TERRAIN_CACHE_SIZE / MAP_ROOM_SIZE)
+    this.app.renderer.render({ container: temp, target: rt })
+    temp.destroy({ children: true, context: true })
+
+    const oldTex = entry.terrainSprite.texture
+    entry.terrainSprite.texture = rt
+    entry.terrainSprite.width = MAP_ROOM_SIZE
+    entry.terrainSprite.height = MAP_ROOM_SIZE
+    if (this.terrainBaked.has(roomName) && oldTex !== Texture.EMPTY && !oldTex.destroyed) oldTex.destroy()
+    this.terrainBaked.add(roomName)
   }
 
   setRoomMap2(roomName: string, data: RoomMap2Data): void {
@@ -283,20 +306,31 @@ export class MapRenderer {
   }
 
   hasRoom(roomName: string): boolean {
-    return this.rooms.has(roomName)
+    return this.terrainBaked.has(roomName)
   }
 
   clearRoom(roomName: string): void {
     const entry = this.rooms.get(roomName)
     if (!entry) return
+    const tex = entry.terrainSprite.texture
+    if (this.terrainBaked.has(roomName) && tex !== Texture.EMPTY && !tex.destroyed) tex.destroy()
+    this.terrainBaked.delete(roomName)
     this.world.removeChild(entry.container)
-    entry.container.destroy({ children: true })
+    entry.container.destroy({ children: true, context: true })
     this.rooms.delete(roomName)
   }
 
   clearInvisibleRooms(visibleSet: ReadonlySet<string>): void {
+    const b = this.lastVisibleBounds
     for (const name of [...this.rooms.keys()]) {
-      if (!visibleSet.has(name)) this.clearRoom(name)
+      if (visibleSet.has(name)) continue
+      if (b) {
+        const coord = parseRoomName(name)
+        if (coord &&
+            coord.x >= b.rxMin - CLEAR_PADDING && coord.x <= b.rxMax + CLEAR_PADDING &&
+            coord.y >= b.ryMin - CLEAR_PADDING && coord.y <= b.ryMax + CLEAR_PADDING) continue
+      }
+      this.clearRoom(name)
     }
   }
 
@@ -305,9 +339,20 @@ export class MapRenderer {
     this._destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    if (this.visibleDebounceTimer !== null) {
+      clearTimeout(this.visibleDebounceTimer)
+      this.visibleDebounceTimer = null
+    }
+    for (const [name, entry] of this.rooms) {
+      if (this.terrainBaked.has(name)) {
+        const tex = entry.terrainSprite.texture
+        if (tex !== Texture.EMPTY && !tex.destroyed) tex.destroy()
+      }
+    }
     this.rooms.clear()
+    this.terrainBaked.clear()
     try {
-      this.app.destroy(false, { children: true, texture: true })
+      this.app.destroy(false, { children: true, texture: true, context: true })
     } catch (e) {
       console.warn('[MapRenderer] destroy error (ignored):', e)
     }
@@ -327,10 +372,10 @@ export class MapRenderer {
     container.y = coord.y * MAP_ROOM_SIZE
     container.cullable = true
 
-    const terrainGraphics = new Graphics()
-    const map2Graphics    = new Graphics()
-    const ownerOverlay    = new Graphics()
-    container.addChild(terrainGraphics)
+    const terrainSprite = new Sprite(Texture.EMPTY)
+    const map2Graphics  = new Graphics()
+    const ownerOverlay  = new Graphics()
+    container.addChild(terrainSprite)
     container.addChild(map2Graphics)
     container.addChild(ownerOverlay)
 
@@ -351,7 +396,7 @@ export class MapRenderer {
       this.world.addChild(this.selectionGraphics)
     }
 
-    const entry: RoomEntry = { container, terrainGraphics, map2Graphics, ownerOverlay, nameLabel }
+    const entry: RoomEntry = { container, terrainSprite, map2Graphics, ownerOverlay, nameLabel }
     this.rooms.set(roomName, entry)
     return entry
   }
@@ -430,6 +475,7 @@ export class MapRenderer {
     const rxMax = Math.ceil (right  / MAP_ROOM_SIZE)
     const ryMin = Math.floor(top    / MAP_ROOM_SIZE) - 1
     const ryMax = Math.ceil (bottom / MAP_ROOM_SIZE)
+    this.lastVisibleBounds = { rxMin, rxMax, ryMin, ryMax }
 
     const visible: string[] = []
     for (let rx = rxMin; rx <= rxMax; rx++) {
@@ -439,10 +485,15 @@ export class MapRenderer {
       }
     }
 
+    const toReport = visible.length > MAX_VISIBLE_ROOMS ? [] : visible
     const key = `${rxMin},${ryMin},${rxMax},${ryMax}`
     if (key !== this.lastVisibleKey) {
       this.lastVisibleKey = key
-      this.callbacks.onVisibleRoomsChanged(visible)
+      if (this.visibleDebounceTimer !== null) clearTimeout(this.visibleDebounceTimer)
+      this.visibleDebounceTimer = setTimeout(() => {
+        this.visibleDebounceTimer = null
+        this.callbacks.onVisibleRoomsChanged(toReport)
+      }, VISIBLE_DEBOUNCE_MS)
     }
   }
 }

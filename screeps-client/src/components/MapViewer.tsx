@@ -53,6 +53,28 @@ export function MapViewer(props: MapViewerProps) {
   const statsCache = new Map<string, StatsCacheEntry>()
   let latestUsers: Record<string, { username: string }> = {}
 
+  // Terrain is fetched progressively in small batches, sorted center-out
+  const TERRAIN_BATCH_SIZE = 20
+  const TERRAIN_BATCH_MS = 50
+  let terrainQueue: string[] = []
+  let terrainTimer: ReturnType<typeof setTimeout> | null = null
+
+  const drainTerrain = () => {
+    terrainTimer = null
+    const c = client()
+    if (!c || !renderer) return
+    const vis = new Set(visibleRooms())
+    terrainQueue = terrainQueue.filter(r => vis.has(r) && !renderer!.hasRoom(r))
+    if (terrainQueue.length === 0) return
+    const batch = terrainQueue.splice(0, TERRAIN_BATCH_SIZE)
+    c.stores.room.terrainBulk(batch, props.shard)
+      .then(terrainMap => {
+        for (const [room, terrain] of terrainMap) renderer?.setRoomTerrain(room, terrain)
+      })
+      .catch(err => console.error('[map] terrain fetch failed:', err))
+      .finally(() => { if (terrainQueue.length > 0) terrainTimer = setTimeout(drainTerrain, TERRAIN_BATCH_MS) })
+  }
+
   const buildRoomInfo = (room: string): RoomInfo => {
     const stat = statsCache.get(room)
     const ownerId = stat?.own?.user
@@ -172,6 +194,8 @@ export function MapViewer(props: MapViewerProps) {
   })
 
   onCleanup(() => {
+    if (terrainTimer !== null) { clearTimeout(terrainTimer); terrainTimer = null }
+    terrainQueue = []
     for (const sub of map2Subs.values()) sub.dispose()
     map2Subs.clear()
     renderer?.destroy()
@@ -189,16 +213,18 @@ export function MapViewer(props: MapViewerProps) {
     const visibleSet = new Set(rooms)
     const now = Date.now()
 
-    // Only fetch terrain for rooms not yet in the renderer (cache hit for known rooms)
-    const newRooms = rooms.filter((r) => !renderer?.hasRoom(r))
+    // Queue new rooms for progressive terrain loading, sorted center-out
+    const newRooms = rooms.filter(r => !renderer?.hasRoom(r))
     if (newRooms.length > 0) {
-      c.stores.room.terrainBulk(newRooms, shard)
-        .then((terrainMap) => {
-          for (const [room, terrain] of terrainMap) {
-            if (visibleSet.has(room)) renderer?.setRoomTerrain(room, terrain)
-          }
-        })
-        .catch((err) => console.error('[map] terrain fetch failed:', err))
+      const cx = rooms.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / rooms.length
+      const cy = rooms.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / rooms.length
+      terrainQueue = newRooms.slice().sort((a, b) => {
+        const ca = parseRoomName(a), cb = parseRoomName(b)
+        const da = ca ? Math.abs(ca.x - cx) + Math.abs(ca.y - cy) : 999
+        const db = cb ? Math.abs(cb.x - cx) + Math.abs(cb.y - cy) : 999
+        return da - db
+      })
+      if (terrainTimer === null) terrainTimer = setTimeout(drainTerrain, 0)
     }
 
     // Apply cached ownership immediately so the overlay is correct before the HTTP round-trip
