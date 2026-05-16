@@ -305,6 +305,7 @@ export function MapViewer(props: MapViewerProps) {
   // Sync room name label visibility when the setting changes
   createEffect(() => {
     renderer?.setShowRoomNames(showMapRoomNames())
+    if (renderer) renderer.currentShard = props.shard ?? 'shard0'
   })
 
   // Re-fetch world bounds with the correct shard whenever client or shard changes.

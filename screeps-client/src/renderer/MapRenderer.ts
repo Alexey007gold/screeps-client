@@ -1,8 +1,10 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js'
-import type { RoomTerrain, RoomMap2Data } from 'screeps-connectivity'
+import type { RoomMap2Data } from 'screeps-connectivity'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
+import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, imageBitmapToBlob } from './terrainCache.js'
+import TerrainWorker from './terrain.worker.ts?worker'
 import {
-  TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD, TERRAIN_BORDER,
+  TERRAIN_WALL, TERRAIN_ROAD, TERRAIN_BORDER,
   OBJ_GOLD, OBJ_BLUE, OBJ_CYAN, OBJ_ORANGE,
 } from '~/renderer/colors.js'
 
@@ -12,12 +14,13 @@ export const MAP_ROOM_SIZE = MAP_TILE_SIZE * 50  // 150px per room
 // Terrain baked to a GPU texture — two LOD tiers to avoid upscaling blur.
 // LOD 0 (zoom < 1): zoomed out, many rooms, small texture fine
 // LOD 1 (zoom ≥ 1): zoomed in, crisp at native and above
-const LOD_TEXTURE_SIZES = [128, 512] as const
+// LOD_TEXTURE_SIZES moved to worker
 const LOD_ZOOM_THRESHOLD = 1
 // Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
 const CLEAR_PADDING = 50
 // Above this room count the visible-rooms callback fires with an empty list — too zoomed out to load usefully
 const MAX_VISIBLE_ROOMS = 5000
+const POOL_SIZE = 2600 // max visible rooms plus padding
 // Wait this long after the last viewport change before firing onVisibleRoomsChanged
 const VISIBLE_DEBOUNCE_MS = 5
 
@@ -53,9 +56,14 @@ export class MapRenderer {
   private world!: Container
   private boundsGraphics: Graphics | null = null
   private selectionGraphics: Graphics | null = null
-  private readonly rooms = new Map<string, RoomEntry>()
+  private readonly activeRooms = new Map<string, RoomEntry>()
+  private readonly roomPool: RoomEntry[] = []
   private readonly terrainBaked = new Set<string>()
   private readonly terrainData  = new Map<string, Uint8Array>()  // raw bytes kept until texHi is baked
+  private worker: Worker
+  private pendingBakes = new Map<number, { roomName: string, lod: number, resolve: (bmp: ImageBitmap) => void, reject: (err: unknown) => void }>()
+  private nextBakeId = 0
+  public currentShard: string = 'shard0'
   private readonly callbacks: MapRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
   private _destroyed = false
@@ -79,6 +87,15 @@ export class MapRenderer {
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
     this.callbacks = callbacks
+    this.worker = new TerrainWorker()
+    this.worker.onmessage = (e) => {
+      const { id, bitmap } = e.data
+      const pending = this.pendingBakes.get(id)
+      if (pending) {
+        this.pendingBakes.delete(id)
+        pending.resolve(bitmap)
+      }
+    }
   }
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
@@ -154,24 +171,67 @@ export class MapRenderer {
     }
   }
 
-  setRoomTerrain(roomName: string, terrain: RoomTerrain): void {
+
+  private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array): Promise<ImageBitmap | null> {
+    const shard = this.currentShard
+    try {
+      // Check Cache API first
+      const cachedBlob = await getTerrainCacheBlob(shard, roomName, lod)
+      if (cachedBlob) {
+        return await blobToImageBitmap(cachedBlob)
+      }
+
+      // Cache miss -> use Web Worker
+      const id = this.nextBakeId++
+      const promise = new Promise<ImageBitmap>((resolve, reject) => {
+        this.pendingBakes.set(id, { roomName, lod, resolve, reject })
+      })
+      this.worker.postMessage({ id, roomName, lod, raw })
+
+      const bitmap = await promise
+
+      // Save to Cache API asynchronously (don't block)
+      imageBitmapToBlob(bitmap).then(blob => {
+        saveTerrainCacheBlob(shard, roomName, lod, blob)
+      }).catch(err => console.warn('Failed to save to terrainCache:', err))
+
+      return bitmap
+    } catch (e) {
+      console.warn('Error getting terrain bitmap:', e)
+      return null
+    }
+  }
+
+  async setRoomTerrain(roomName: string, terrain: { raw: Uint8Array }): Promise<void> {
     const entry = this.getOrCreate(roomName)
     const raw = terrain.raw
 
-    if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
-    if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
-    entry.texHi = null
+    const lod = this.getLOD()
 
-    entry.texLo = this.bakeTex(raw, LOD_TEXTURE_SIZES[0])
-
-    if (this.getLOD() === 1) {
-      // Already zoomed in — bake hi-res immediately so it's ready
-      entry.texHi = this.bakeTex(raw, LOD_TEXTURE_SIZES[1])
-      entry.terrainSprite.texture = entry.texHi
-    } else {
-      // Zoomed out — keep raw bytes for lazy hi-res bake if user zooms in later
+    // Zoomed out - keep raw bytes for lazy hi-res bake if user zooms in later
+    if (lod === 0) {
       this.terrainData.set(roomName, raw)
-      entry.terrainSprite.texture = entry.texLo
+    }
+
+    const bitmap = await this.getTerrainBitmap(roomName, lod, raw)
+    if (!bitmap) return
+
+    // Re-check if room was cleared while we were waiting
+    if (!this.activeRooms.has(roomName)) {
+      bitmap.close()
+      return
+    }
+
+    const tex = Texture.from(bitmap)
+
+    if (lod === 0) {
+      if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
+      entry.texLo = tex as unknown as RenderTexture
+      if (this.getLOD() === 0) if (entry.texLo) entry.terrainSprite.texture = entry.texLo
+    } else {
+      if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
+      entry.texHi = tex as unknown as RenderTexture
+      if (this.getLOD() === 1) if (entry.texHi) entry.terrainSprite.texture = entry.texHi
     }
 
     entry.terrainSprite.width  = MAP_ROOM_SIZE
@@ -179,51 +239,48 @@ export class MapRenderer {
     this.terrainBaked.add(roomName)
   }
 
+
   private getLOD(): number {
     return this.zoom < LOD_ZOOM_THRESHOLD ? 0 : 1
   }
 
-  // Bake terrain raw bytes to a RenderTexture at the given size.
-  private bakeTex(raw: Uint8Array, size: number): RenderTexture {
-    const MT = MAP_TILE_SIZE
-    const g = new Graphics()
-    g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
-    g.fill(TERRAIN_PLAIN)
-    let hasWalls = false
-    for (let i = 0; i < 2500; i++) {
-      if (raw[i] === 1) { g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT); hasWalls = true }
-    }
-    if (hasWalls) g.fill(TERRAIN_WALL)
-    let hasSwamp = false
-    for (let i = 0; i < 2500; i++) {
-      if (raw[i] === 2) { g.rect((i % 50) * MT, Math.floor(i / 50) * MT, MT, MT); hasSwamp = true }
-    }
-    if (hasSwamp) g.fill(TERRAIN_SWAMP)
-    const rt = RenderTexture.create({ width: size, height: size })
-    g.scale.set(size / MAP_ROOM_SIZE)
-    this.app.renderer.render({ container: g, target: rt })
-    g.destroy({ context: true })
-    return rt
-  }
 
-  private applyLOD(): void {
+  private async applyLOD(): Promise<void> {
     const hi = this.getLOD() === 1
-    for (const [roomName, entry] of this.rooms) {
+
+    const tasks = []
+
+    for (const [roomName, entry] of this.activeRooms) {
       if (!this.terrainBaked.has(roomName)) continue
+
       if (hi && !entry.texHi) {
-        // First time at LOD 1 for this room — bake hi-res now and free raw bytes
+        // First time at LOD 1 for this room
         const raw = this.terrainData.get(roomName)
         if (raw) {
-          entry.texHi = this.bakeTex(raw, LOD_TEXTURE_SIZES[1])
           this.terrainData.delete(roomName)
+          tasks.push(
+            this.getTerrainBitmap(roomName, 1, raw).then((bitmap) => {
+              if (bitmap && this.activeRooms.has(roomName)) {
+                entry.texHi = Texture.from(bitmap) as unknown as RenderTexture
+                if (this.getLOD() === 1) entry.terrainSprite.texture = entry.texHi
+              } else if (bitmap) {
+                bitmap.close()
+              }
+            })
+          )
         }
+      } else {
+        const tex = hi ? entry.texHi : entry.texLo
+        if (tex && !tex.destroyed) entry.terrainSprite.texture = tex
       }
-      const tex = hi ? entry.texHi : entry.texLo
-      if (tex && !tex.destroyed) entry.terrainSprite.texture = tex
     }
+
+    await Promise.all(tasks)
   }
 
-  setRoomMap2(roomName: string, data: RoomMap2Data, source: 'cache' | 'live' = 'live'): void {
+
+
+  setRoomMap2(roomName: string, data: Partial<RoomMap2Data>, source: 'cache' | 'live' = 'live'): void {
     const entry = this.getOrCreate(roomName)
     const g = entry.map2Graphics
     g.alpha = source === 'cache' ? 0.6 : 1.0
@@ -281,7 +338,7 @@ export class MapRenderer {
 
     // User objects — batched by user colour (all users same colour for now)
     let hasUserObjs = false
-    for (const [key, positions] of Object.entries(data)) {
+    for (const [key, positions] of Object.entries(data as Record<string, [number, number][]>)) {
       if (MAP2_FIXED_KEYS.has(key)) continue
       if (!Array.isArray(positions)) continue
       for (const [x, y] of positions) {
@@ -293,11 +350,11 @@ export class MapRenderer {
   }
 
   clearRoomMap2(roomName: string): void {
-    this.rooms.get(roomName)?.map2Graphics.clear()
+    this.activeRooms.get(roomName)?.map2Graphics.clear()
   }
 
   clearAllMap2(): void {
-    for (const entry of this.rooms.values()) {
+    for (const entry of this.activeRooms.values()) {
       entry.map2Graphics.clear()
     }
   }
@@ -356,21 +413,36 @@ export class MapRenderer {
     return this.terrainBaked.has(roomName)
   }
 
+
   clearRoom(roomName: string): void {
-    const entry = this.rooms.get(roomName)
+    const entry = this.activeRooms.get(roomName)
     if (!entry) return
-    if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
-    if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
+    if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
+    if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
+    entry.texLo = null
+    entry.texHi = null
+    entry.terrainSprite.texture = Texture.EMPTY
+    entry.map2Graphics.clear()
+    entry.ownerOverlay.clear()
+    entry.container.visible = false
+
     this.terrainBaked.delete(roomName)
     this.terrainData.delete(roomName)
-    this.world.removeChild(entry.container)
-    entry.container.destroy({ children: true, context: true })
-    this.rooms.delete(roomName)
+    this.activeRooms.delete(roomName)
+
+    // Return to pool if not too big, else destroy
+    if (this.roomPool.length < POOL_SIZE) {
+      this.roomPool.push(entry)
+    } else {
+      this.world.removeChild(entry.container)
+      entry.container.destroy({ children: true, context: true })
+    }
   }
+
 
   clearInvisibleRooms(visibleSet: ReadonlySet<string>): void {
     const b = this.lastVisibleBounds
-    for (const name of [...this.rooms.keys()]) {
+    for (const name of [...this.activeRooms.keys()]) {
       if (visibleSet.has(name)) continue
       if (b) {
         const coord = parseRoomName(name)
@@ -391,13 +463,20 @@ export class MapRenderer {
       clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = null
     }
-    for (const [, entry] of this.rooms) {
-      if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy()
-      if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy()
+    for (const [, entry] of this.activeRooms) {
+      if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
+      if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     }
-    this.rooms.clear()
+    this.activeRooms.clear()
+    for (const entry of this.roomPool) {
+      if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
+      if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
+    }
+    this.roomPool.length = 0
     this.terrainBaked.clear()
     this.terrainData.clear()
+    this.worker.terminate()
+    this.pendingBakes.clear()
     try {
       this.app.destroy(false, { children: true, texture: true, context: true })
     } catch (e) {
@@ -407,46 +486,58 @@ export class MapRenderer {
 
   // ── Private ──────────────────────────────────────────────────────────────
 
+
   private getOrCreate(roomName: string): RoomEntry {
-    const existing = this.rooms.get(roomName)
+    const existing = this.activeRooms.get(roomName)
     if (existing) return existing
 
     const coord = parseRoomName(roomName)
     if (!coord) throw new Error(`MapRenderer: invalid room "${roomName}"`)
 
-    const container = new Container()
-    container.x = coord.x * MAP_ROOM_SIZE
-    container.y = coord.y * MAP_ROOM_SIZE
-    container.cullable = true
+    let entry: RoomEntry
+    if (this.roomPool.length > 0) {
+      entry = this.roomPool.pop()!
+    } else {
+      const container = new Container()
+      container.cullable = true
 
-    const terrainSprite = new Sprite(Texture.EMPTY)
-    const map2Graphics  = new Graphics()
-    const ownerOverlay  = new Graphics()
-    container.addChild(terrainSprite)
-    container.addChild(map2Graphics)
-    container.addChild(ownerOverlay)
+      const terrainSprite = new Sprite(Texture.EMPTY)
+      const map2Graphics  = new Graphics()
+      const ownerOverlay  = new Graphics()
+      container.addChild(terrainSprite)
+      container.addChild(map2Graphics)
+      container.addChild(ownerOverlay)
 
-    const nameLabel = new Text({
-      text: roomName,
-      style: { fontSize: 36, fill: 0x8b949e, fontFamily: 'ui-monospace, monospace' },
-    })
-    nameLabel.scale.set(0.25)
-    nameLabel.x = 2
-    nameLabel.y = 2
-    nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
-    container.addChild(nameLabel)
+      const nameLabel = new Text({
+        text: '',
+        style: { fontSize: 36, fill: 0x8b949e, fontFamily: 'ui-monospace, monospace' },
+      })
+      nameLabel.scale.set(0.25)
+      nameLabel.x = 2
+      nameLabel.y = 2
+      container.addChild(nameLabel)
 
-    this.world.addChild(container)
-    // Keep selection overlay on top of room containers
+      this.world.addChild(container)
+
+      entry = { container, terrainSprite, texLo: null, texHi: null, map2Graphics, ownerOverlay, nameLabel }
+    }
+
+    entry.container.x = coord.x * MAP_ROOM_SIZE
+    entry.container.y = coord.y * MAP_ROOM_SIZE
+    entry.container.visible = true
+    entry.nameLabel.text = roomName
+    entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
+
+    // Keep selection overlay on top
     if (this.selectionGraphics) {
       this.world.removeChild(this.selectionGraphics)
       this.world.addChild(this.selectionGraphics)
     }
 
-    const entry: RoomEntry = { container, terrainSprite, texLo: null, texHi: null, map2Graphics, ownerOverlay, nameLabel }
-    this.rooms.set(roomName, entry)
+    this.activeRooms.set(roomName, entry)
     return entry
   }
+
 
   private nameLabelShouldShow(rx: number, ry: number): boolean {
     if (!this.showRoomNames) return false
@@ -457,7 +548,7 @@ export class MapRenderer {
   }
 
   private updateAllNameLabels(): void {
-    for (const [name, entry] of this.rooms) {
+    for (const [name, entry] of this.activeRooms) {
       const coord = parseRoomName(name)
       if (!coord) continue
       entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
