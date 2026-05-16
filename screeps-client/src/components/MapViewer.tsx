@@ -102,11 +102,17 @@ export function MapViewer(props: MapViewerProps) {
           props.onHoveredRoomChanged?.(room ? buildRoomInfo(room) : null)
         },
         onRoomClick: (room) => {
-          // Defer navigation out of the PixiJS event handler. Calling onNavigateToRoom
-          // synchronously triggers SolidJS to unmount this component and destroy the
-          // renderer — while still inside PixiJS's _onPointerUp pipeline — causing
-          // EventSystem.setCursor to crash on a null domElement.
-          if (canNavigateTo(room)) setTimeout(() => props.onNavigateToRoom(room), 0)
+          if (selectedRoom() !== room) {
+            setSelectedRoom(room)
+            renderer?.setSelectedRoom(room)
+            props.onSelectedRoomChanged?.(buildRoomInfo(room))
+          } else {
+            // Defer navigation out of the PixiJS event handler. Calling onNavigateToRoom
+            // synchronously triggers SolidJS to unmount this component and destroy the
+            // renderer — while still inside PixiJS's _onPointerUp pipeline — causing
+            // EventSystem.setCursor to crash on a null domElement.
+            if (canNavigateTo(room)) setTimeout(() => props.onNavigateToRoom(room), 0)
+          }
         },
         onVisibleRoomsChanged: (rooms) => {
           const isEmpty = rooms.length === 0
