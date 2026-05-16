@@ -7,7 +7,7 @@ import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
 import { SettingsPanel } from '~/components/SettingsPanel.js'
-import { disconnect, isGuest } from '~/stores/clientStore.js'
+import { client, disconnect, isGuest } from '~/stores/clientStore.js'
 import { widescreenMode } from '~/stores/settingsStore.js'
 
 import { parseRoomName } from '~/utils/roomName.js'
@@ -47,6 +47,8 @@ export function Dashboard() {
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
   const [mapZoom, setMapZoom] = createSignal<number | null>(null)
   const [mapSubsActive, setMapSubsActive] = createSignal<boolean | null>(null)
+  const [canBack, setCanBack] = createSignal(false)
+  const [canForward, setCanForward] = createSignal(false)
 
   const [sidebarWidth, setSidebarWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
   const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
@@ -121,15 +123,7 @@ export function Dashboard() {
   }
 
   const handleNavigate = (r: string, s: string | null) => {
-    setRoom(r)
-    setShard(s)
-    setMapMode(false)
-    setHoveredRoomInfo(null)
-    setSelectedRoomInfo(null)
-    localStorage.setItem('screeps:room', r)
-    if (s) localStorage.setItem('screeps:shard', s)
-    else localStorage.removeItem('screeps:shard')
-    history.pushState(null, '', buildRoomUrl(r, s))
+    client()?.stores.navigation.navigateTo(r, s)
   }
 
   const openMap = (originRoom: string) => {
@@ -172,6 +166,25 @@ export function Dashboard() {
     window.addEventListener('popstate', onPopState)
     onCleanup(() => window.removeEventListener('popstate', onPopState))
 
+    const nav = client()?.stores.navigation
+    if (nav) {
+      const navSub = nav.on('navigation:change', (state) => {
+        if (state.room === null) return
+        setRoom(state.room)
+        setShard(state.shard)
+        setMapMode(false)
+        setHoveredRoomInfo(null)
+        setSelectedRoomInfo(null)
+        setCanBack(nav.canBack())
+        setCanForward(nav.canForward())
+        localStorage.setItem('screeps:room', state.room)
+        if (state.shard) localStorage.setItem('screeps:shard', state.shard)
+        else localStorage.removeItem('screeps:shard')
+        history.pushState(null, '', buildRoomUrl(state.room, state.shard))
+      })
+      onCleanup(() => navSub.dispose())
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName ?? ''
       const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
@@ -205,6 +218,38 @@ export function Dashboard() {
           />
         </Show>
         <div style={{ flex: 1 }} />
+        <button
+          disabled={!canBack()}
+          onClick={() => client()?.stores.navigation.back()}
+          style={{
+            padding: '6px 10px',
+            'border-radius': '4px',
+            border: '1px solid #30363d',
+            background: '#21262d',
+            color: canBack() ? '#c9d1d9' : '#484f58',
+            'font-size': '14px',
+            cursor: canBack() ? 'pointer' : 'default',
+            margin: '0 2px',
+          }}
+        >
+          ←
+        </button>
+        <button
+          disabled={!canForward()}
+          onClick={() => client()?.stores.navigation.forward()}
+          style={{
+            padding: '6px 10px',
+            'border-radius': '4px',
+            border: '1px solid #30363d',
+            background: '#21262d',
+            color: canForward() ? '#c9d1d9' : '#484f58',
+            'font-size': '14px',
+            cursor: canForward() ? 'pointer' : 'default',
+            margin: '0 2px',
+          }}
+        >
+          →
+        </button>
         <button
           onClick={toggleMap}
           style={{

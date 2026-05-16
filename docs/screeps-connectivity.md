@@ -13,12 +13,16 @@ TypeScript library for connecting to Screeps servers. Handles HTTP, WebSocket, a
   - [UserStore](#userstore)
   - [ServerStore](#serverstore)
   - [RoomStore](#roomstore)
+  - [MapStore](#mapstore)
+  - [NavigationStore](#navigationstore)
 - [Subscriptions](#subscriptions)
 - [HTTP Endpoints](#http-endpoints)
 - [Storage](#storage)
 - [Logging](#logging)
 - [Types Reference](#types-reference)
   - [WorldInfo](#worldinfo)
+  - [Map2Subscription](#map2subscription)
+  - [NavigationState](#navigationstate)
 
 ---
 
@@ -83,7 +87,10 @@ ScreepsClient          — facade, wires everything together
   │    └─ endpoints/   — auth · game · user · leaderboard · experimental
   └─ SocketClient      — WebSocket lifecycle, exponential-backoff reconnect, sub ref-counting
        └─ MessageParser — plain-text commands and JSON-array messages, gzip via DecompressionStream
-DataStores             — RoomStore · UserStore · ServerStore (extend TypedStore → EventTarget)
+DataStores             — RoomStore · UserStore · ServerStore · MapStore · NavigationStore
+                         (all extend TypedStore → EventTarget)
+  └─ MapStore          — roomMap2 subscriptions, FIFO waitlist, diff detection, reconnect
+       └─ Map2Storage  — two-tier memory+IndexedDB cache, LRU eviction (max 10 000 rooms)
 Cache                  — two-tier: in-memory Map + optional StorageAdapter, namespaced by server
 StorageAdapter         — binary interface (Uint8Array): IndexedDBStorage · FileStorage · NullStorage
 ```
@@ -109,6 +116,8 @@ const client = new ScreepsClient(opts: ScreepsClientOptions)
 | `storage` | `StorageAdapter \| null` | — | Persistent storage for terrain/cache. `null` disables persistence. |
 | `WebSocket` | `typeof WebSocket` | — | Custom WebSocket constructor for Node 18/20 compatibility |
 | `debug` | `boolean \| LogFn` | — | Enable debug logging (see [Logging](#logging)) |
+| `map2.maxSubscriptions` | `number` | — | Max simultaneous `roomMap2` WebSocket channels (default `500`). Excess rooms are queued on a FIFO waitlist and promoted as slots free. |
+| `map2.maxCacheEntries` | `number` | — | Max rooms to keep in the `Map2Storage` LRU cache (default `10000`). |
 
 ### Methods
 
@@ -139,6 +148,8 @@ Clears all cached data for this server — both the in-memory cache (user info, 
 | `stores.user` | `UserStore` | User data and live subscriptions |
 | `stores.server` | `ServerStore` | Server metadata |
 | `stores.room` | `RoomStore` | Room terrain and live object updates |
+| `stores.map` | `MapStore` | `roomMap2` subscriptions, diff detection, persistent cache |
+| `stores.navigation` | `NavigationStore` | Bounded room navigation history with back/forward |
 
 ---
 
@@ -401,16 +412,6 @@ roomStore.fetchObjects(room: string, shard: string | null): Promise<void>
 Fetches the current room object snapshot via HTTP and stores it in memory. Does not start a live subscription.
 
 ```ts
-roomStore.subscribeMap2(room: string, shard: string | null): Subscription
-```
-Opens a WebSocket subscription for the low-detail `roomMap2` channel. Delivers one `room:map2update` event per tick with object positions grouped by type and user. Uses the same ref-counting as `subscribe()`. Pass `null` for shard on private servers.
-
-```ts
-roomStore.map2data(room: string, shard: string | null): RoomMap2Data | null
-```
-Synchronous getter for the last received `roomMap2` snapshot. Returns `null` if `subscribeMap2` has not been called or no data has arrived yet.
-
-```ts
 roomStore.subscribe(room: string, shard: string | null): Subscription
 ```
 Opens a WebSocket subscription for live room updates. Manages ref-counting internally — the socket subscription is only sent once per unique room/shard and only removed when the last subscriber disposes.
@@ -423,7 +424,8 @@ The first WebSocket message for a room is the full object state; subsequent mess
 |---|---|---|
 | `room:update` | `{ room, shard, gameTime, objects: RoomObjectMap, diff: RoomObjectDiff }` | Each WebSocket tick for a subscribed room |
 | `room:terrainavailable` | `{ room, shard, terrain: RoomTerrain }` | After terrain is fetched from HTTP (not from cache) |
-| `room:map2update` | `{ room, shard, data: RoomMap2Data }` | Each tick for a subscribed `roomMap2` channel |
+
+> **Note**: `room:map2update` has moved to [`MapStore`](#mapstore). Use `client.stores.map.on('room:map2update', ...)` instead.
 
 **`objects` vs `diff`**: `objects` is the fully merged state — every object in the room with all its current fields, suitable for rendering. `diff` contains only what the server sent this tick: partial objects with only changed fields, and `null` for deleted objects. Use `objects` to draw the room; use `diff` to detect per-tick events (actions, deaths, spawns) without comparing previous and current state.
 
@@ -465,6 +467,148 @@ group.add(client.stores.room.on('room:update', ({ gameTime, objects, diff }) => 
 
 // Cleanup when navigating away
 group.dispose()
+```
+
+---
+
+### MapStore
+
+`client.stores.map`
+
+Owns all `roomMap2` WebSocket subscriptions with ref-counting, a FIFO waitlist when the subscription limit is reached, diff detection (no duplicate events for unchanged data), and a two-tier persistent cache (memory + IndexedDB, LRU-evicted).
+
+Configure via `ScreepsClientOptions.map2`:
+
+```ts
+const client = new ScreepsClient({
+  // ...
+  map2: {
+    maxSubscriptions: 500,   // default
+    maxCacheEntries: 10000,  // default
+  },
+})
+```
+
+#### Methods
+
+```ts
+mapStore.subscribeMap2(room: string, shard: string | null): Map2Subscription
+```
+Opens a `roomMap2` subscription for the given room. If the slot limit is not reached the subscription is immediately **active**; otherwise it is **pending** on a FIFO waitlist and promoted automatically as slots free. Multiple calls for the same room/shard share one WebSocket channel (ref-counted). Pass `null` for shard on private servers.
+
+Returns a `Map2Subscription` with:
+
+| Member | Description |
+|---|---|
+| `status()` | `'active'` — slot is open, receiving live data; `'pending'` — on waitlist |
+| `cachedData()` | Last known `RoomMap2Data` from memory (sync, may be `null`) |
+| `onStatusChange(handler)` | Register a callback fired when `pending → active`. Returns a disposable. |
+| `dispose()` | Release the ref. Last ref closes the socket channel and promotes the next waitlist entry. Idempotent. |
+
+```ts
+mapStore.map2data(room: string, shard: string | null): RoomMap2Data | null
+```
+Synchronous getter for the last known data for a room. Does not open a subscription.
+
+#### Events
+
+| Event | Payload | When |
+|---|---|---|
+| `room:map2update` | `{ room, shard, data: RoomMap2Data, source: 'live' \| 'cache' }` | New data arrives (live from WS or emitted from cache on subscribe). Only fires when data actually changed (diff detection). |
+| `room:map2state` | `{ room, shard, status: 'active' \| 'pending' }` | A room's subscription status changes — including on reconnect. |
+
+`source: 'cache'` is emitted asynchronously after subscribe when cached data exists but no live update has arrived yet. Use it to render a visually distinct "stale" state.
+
+#### Reconnect behaviour
+
+On WebSocket reconnect, `SocketClient` replays all `subscribe` commands automatically. `MapStore` re-emits `room:map2state` for every active and pending room so consumers can refresh their UI state without re-subscribing.
+
+**Example**:
+```ts
+const group = new SubscriptionGroup()
+
+// Subscribe all viewport rooms
+for (const room of viewportRooms) {
+  const sub = client.stores.map.subscribeMap2(room, 'shard0')
+  group.add(sub)
+  console.log(room, sub.status())  // 'active' or 'pending'
+}
+
+// Render on every data change
+group.add(client.stores.map.on('room:map2update', ({ room, data, source }) => {
+  renderMapLayer(room, data)
+  if (source === 'cache') setAlpha(room, 0.6)  // visually indicate stale data
+}))
+
+// React to status promotions
+group.add(client.stores.map.on('room:map2state', ({ room, status }) => {
+  setRoomBadge(room, status)
+}))
+
+// Cleanup
+group.dispose()
+```
+
+---
+
+### NavigationStore
+
+`client.stores.navigation`
+
+Maintains an in-application bounded navigation history — independent of the browser URL — so back/forward buttons can reflect `canBack()` / `canForward()` state without parsing the browser's history stack.
+
+History is bounded to 50 entries by default. Navigating after going back truncates all forward entries.
+
+#### Methods
+
+```ts
+navigationStore.navigateTo(room: string, shard: string | null): void
+```
+Appends a new entry to the history and emits `navigation:change`.
+
+```ts
+navigationStore.back(): boolean
+```
+Moves one entry back. Returns `false` (no-op) if already at the beginning. Emits `navigation:change` on success.
+
+```ts
+navigationStore.forward(): boolean
+```
+Moves one entry forward. Returns `false` (no-op) if at the end. Emits `navigation:change` on success.
+
+```ts
+navigationStore.canBack(): boolean
+navigationStore.canForward(): boolean
+```
+Synchronous state queries — use to enable/disable UI buttons.
+
+```ts
+navigationStore.current(): NavigationState
+```
+Returns a snapshot of the current navigation state. The returned `history` array is a copy — mutations do not affect the store.
+
+#### Events
+
+| Event | Payload | When |
+|---|---|---|
+| `navigation:change` | `NavigationState` | After any `navigateTo`, `back`, or `forward` call |
+
+**Example**:
+```ts
+// Wire back/forward buttons
+backBtn.disabled = !client.stores.navigation.canBack()
+fwdBtn.disabled  = !client.stores.navigation.canForward()
+
+client.stores.navigation.on('navigation:change', (state) => {
+  if (state.room) renderRoom(state.room, state.shard)
+  backBtn.disabled = !client.stores.navigation.canBack()
+  fwdBtn.disabled  = !client.stores.navigation.canForward()
+})
+
+// Navigate
+client.stores.navigation.navigateTo('W7N7', 'shard0')
+backBtn.onclick = () => client.stores.navigation.back()
+fwdBtn.onclick  = () => client.stores.navigation.forward()
 ```
 
 ---
@@ -896,8 +1040,8 @@ Each `[number, number]` is `[x, y]`. Channel name: `roomMap2:{shard}/{room}` (sh
 
 **Example — map overview layer**:
 ```ts
-const sub = client.stores.room.subscribeMap2('E9N3', 'shard0')
-client.stores.room.on('room:map2update', ({ room, data }) => {
+const sub = client.stores.map.subscribeMap2('E9N3', 'shard0')
+client.stores.map.on('room:map2update', ({ room, data, source }) => {
   renderRoads(room, data.r)
   renderSources(room, data.s)
   for (const [userId, positions] of Object.entries(data)) {
@@ -905,10 +1049,44 @@ client.stores.room.on('room:map2update', ({ room, data }) => {
       renderUserPresence(room, userId, positions)
     }
   }
+  if (source === 'cache') dimOverlay(room)  // data is from persistent cache
 })
+// later:
+sub.dispose()
 ```
 
 ---
+
+### `Map2Subscription`
+
+Returned by `mapStore.subscribeMap2()`. Extends `Subscription`.
+
+```ts
+interface Map2Subscription extends Subscription {
+  /** 'active' = receiving live WS data; 'pending' = on waitlist */
+  readonly status: () => Map2SubscriptionStatus
+  /** Last known data from memory cache (sync). */
+  readonly cachedData: () => RoomMap2Data | null
+  /** Register a handler called when status changes (pending → active). Returns a disposable. */
+  onStatusChange(handler: (status: Map2SubscriptionStatus) => void): Subscription
+  dispose(): void
+}
+
+type Map2SubscriptionStatus = 'active' | 'pending'
+```
+
+### `NavigationState`
+
+Snapshot returned by `navigationStore.current()` and carried in `navigation:change` events.
+
+```ts
+interface NavigationState {
+  room: string | null    // current room name, or null if no navigation has occurred
+  shard: string | null   // current shard
+  index: number          // cursor position in history (0-based, -1 before first navigate)
+  history: Array<{ room: string; shard: string | null }>  // copy — mutations have no effect
+}
+```
 
 ### `RoomObject` / `RoomObjectMap` / `RoomObjectDiff`
 

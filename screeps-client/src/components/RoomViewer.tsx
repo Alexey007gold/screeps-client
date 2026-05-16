@@ -12,6 +12,7 @@ import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBound
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
+import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { SubscriptionGroup } from 'screeps-connectivity'
 
@@ -133,21 +134,11 @@ export function RoomViewer(props: RoomViewerProps) {
       const canNavigate = (tx: number, ty: number) =>
         !bounds || isRoomInWorld(tx, ty, bounds)
 
-      const onKeyDown = (e: KeyboardEvent) => {
-        const tag = (e.target as HTMLElement | null)?.tagName ?? ''
-        const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
-
-        switch (e.key) {
-          case 'ArrowLeft':  { e.preventDefault(); const tx = coord.x - 1; if (canNavigate(tx, coord.y)) nav(formatRoomName(tx, coord.y), shard); break }
-          case 'ArrowRight': { e.preventDefault(); const tx = coord.x + 1; if (canNavigate(tx, coord.y)) nav(formatRoomName(tx, coord.y), shard); break }
-          case 'ArrowUp':    { e.preventDefault(); const ty = coord.y - 1; if (canNavigate(coord.x, ty)) nav(formatRoomName(coord.x, ty), shard); break }
-          case 'ArrowDown':  { e.preventDefault(); const ty = coord.y + 1; if (canNavigate(coord.x, ty)) nav(formatRoomName(coord.x, ty), shard); break }
-        }
-      }
-
-      window.addEventListener('keydown', onKeyDown)
-      onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+      useRoomNavigationKeys({
+        currentRoom: () => props.room,
+        worldBounds,
+        onMove: (rx, ry) => nav(formatRoomName(rx, ry), shard),
+      })
 
       r.setupNavigationZones({
         west:  canNavigate(coord.x - 1, coord.y) ? () => nav(formatRoomName(coord.x - 1, coord.y), shard) : undefined,

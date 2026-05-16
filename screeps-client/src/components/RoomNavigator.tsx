@@ -1,5 +1,6 @@
 import { createEffect, createSignal, Show } from 'solid-js'
-import { isPrivateServer } from '~/stores/clientStore.js'
+import { isPrivateServer, worldBounds } from '~/stores/clientStore.js'
+import { parseRoomName, isRoomInWorld } from '~/utils/roomName.js'
 
 interface RoomNavigatorProps {
   onNavigate: (room: string, shard: string | null) => void
@@ -10,12 +11,17 @@ interface RoomNavigatorProps {
 export function RoomNavigator(props: RoomNavigatorProps) {
   const [room, setRoom] = createSignal('W1N1')
   const [shard, setShard] = createSignal('shard0')
+  const [roomValid, setRoomValid] = createSignal<boolean | null>(null)
+
+  createEffect(() => { setRoom(props.currentRoom ?? 'W1N1') })
+  createEffect(() => { setShard(props.currentShard ?? 'shard0') })
 
   createEffect(() => {
-    setRoom(props.currentRoom ?? 'W1N1')
-  })
-  createEffect(() => {
-    setShard(props.currentShard ?? 'shard0')
+    const r = room()
+    const bounds = worldBounds()
+    if (!bounds) { setRoomValid(null); return }
+    const coord = parseRoomName(r)
+    setRoomValid(!!coord && isRoomInWorld(coord.x, coord.y, bounds))
   })
 
   const handleSubmit = (e: Event) => {
@@ -42,12 +48,15 @@ export function RoomNavigator(props: RoomNavigatorProps) {
           width: '80px',
           padding: '6px 8px',
           'border-radius': '4px',
-          border: '1px solid #30363d',
+          border: `1px solid ${roomValid() === false ? '#f85149' : '#30363d'}`,
           background: '#0d1117',
           color: '#c9d1d9',
           'font-size': '13px',
         }}
       />
+      <Show when={roomValid() === false}>
+        <span style={{ 'font-size': '11px', color: '#f85149' }}>out of bounds</span>
+      </Show>
       <Show when={!isPrivateServer()}>
         <span style={{ 'font-size': '12px', color: '#8b949e' }}>Shard</span>
         <input

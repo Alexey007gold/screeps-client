@@ -39,6 +39,7 @@ describe('ScreepsClient', () => {
     expect(client.stores.room).toBeDefined()
     expect(client.stores.user).toBeDefined()
     expect(client.stores.server).toBeDefined()
+    expect(client.stores.map).toBeDefined()
   })
 
   it('connect() authenticates then opens WebSocket', async () => {

@@ -3,7 +3,8 @@ import { MapRenderer } from '~/renderer/MapRenderer.js'
 import { client, userInfo, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
 import { showMapRoomNames } from '~/stores/settingsStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
-import type { Subscription } from 'screeps-connectivity'
+import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
+import type { Map2Subscription } from 'screeps-connectivity'
 
 export interface RoomInfo {
   room: string
@@ -33,7 +34,7 @@ export function MapViewer(props: MapViewerProps) {
   let lastRoomsEmpty: boolean | null = null
 
   // key = `${room}/${shard}` so shard changes invalidate existing subs
-  const map2Subs = new Map<string, Subscription>()
+  const map2Subs = new Map<string, Map2Subscription>()
 
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
@@ -95,11 +96,6 @@ export function MapViewer(props: MapViewerProps) {
   onMount(() => {
     if (!canvasRef) return
 
-    let keyDownHandler: ((e: KeyboardEvent) => void) | null = null
-    onCleanup(() => {
-      if (keyDownHandler) window.removeEventListener('keydown', keyDownHandler)
-    })
-
     ;(async () => {
       renderer = new MapRenderer({
         onRoomHover: (room) => {
@@ -160,52 +156,6 @@ export function MapViewer(props: MapViewerProps) {
       }
 
       if (!renderer) return
-
-      const moveSelection = (rx: number, ry: number) => {
-        const name = formatRoomName(rx, ry)
-        setSelectedRoom(name)
-        renderer?.setSelectedRoom(name)
-        renderer?.centerOn(rx, ry, true)
-        props.onSelectedRoomChanged?.(buildRoomInfo(name))
-        props.onHoveredRoomChanged?.(buildRoomInfo(name))
-      }
-
-      const onKeyDown = (e: KeyboardEvent) => {
-        const tag = (e.target as HTMLElement | null)?.tagName ?? ''
-        const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
-
-        const cur = selectedRoom()
-        const coord = cur ? parseRoomName(cur) : null
-
-        const bounds = worldBounds()
-        const inBounds = (nx: number, ny: number) => !bounds || isRoomInWorld(nx, ny, bounds)
-
-        switch (e.key) {
-          case 'ArrowLeft':
-            e.preventDefault()
-            if (coord && inBounds(coord.x - 1, coord.y)) moveSelection(coord.x - 1, coord.y)
-            break
-          case 'ArrowRight':
-            e.preventDefault()
-            if (coord && inBounds(coord.x + 1, coord.y)) moveSelection(coord.x + 1, coord.y)
-            break
-          case 'ArrowUp':
-            e.preventDefault()
-            if (coord && inBounds(coord.x, coord.y - 1)) moveSelection(coord.x, coord.y - 1)
-            break
-          case 'ArrowDown':
-            e.preventDefault()
-            if (coord && inBounds(coord.x, coord.y + 1)) moveSelection(coord.x, coord.y + 1)
-            break
-          case 'm':
-            if (cur && canNavigateTo(cur)) props.onNavigateToRoom(cur)
-            break
-        }
-      }
-
-      window.addEventListener('keydown', onKeyDown)
-      keyDownHandler = onKeyDown
     })()
   })
 
@@ -216,6 +166,36 @@ export function MapViewer(props: MapViewerProps) {
     map2Subs.clear()
     renderer?.destroy()
     renderer = null
+  })
+
+  // Arrow key navigation (moves map selection) + 'm' to enter room view
+  createEffect(() => {
+    const moveSelection = (rx: number, ry: number) => {
+      const name = formatRoomName(rx, ry)
+      setSelectedRoom(name)
+      renderer?.setSelectedRoom(name)
+      renderer?.centerOn(rx, ry, true)
+      props.onSelectedRoomChanged?.(buildRoomInfo(name))
+      props.onHoveredRoomChanged?.(buildRoomInfo(name))
+    }
+
+    useRoomNavigationKeys({
+      currentRoom: selectedRoom,
+      worldBounds,
+      onMove: moveSelection,
+    })
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName ?? ''
+      const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+      if (e.key === 'm') {
+        const cur = selectedRoom()
+        if (cur && canNavigateTo(cur)) props.onNavigateToRoom(cur)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown))
   })
 
   // Fetch terrain + stats, manage map2 subscriptions when visible rooms or shard change
@@ -285,9 +265,8 @@ export function MapViewer(props: MapViewerProps) {
         .catch((err) => console.error('[map] mapStats failed:', err))
     }
 
-    // Reconcile map2 subscriptions — drop all when too many rooms visible or zoomed out
-    const MAP2_ROOM_LIMIT = 5000
-    const subsActive = rooms.length > 0 && rooms.length <= MAP2_ROOM_LIMIT && zoom() >= 0.4
+    // Reconcile map2 subscriptions — drop all when zoomed out (MapStore handles per-room limits)
+    const subsActive = rooms.length > 0 && zoom() >= 0.4
     if (subsActive !== lastSubsActive) {
       lastSubsActive = subsActive
       props.onSubscriptionStateChanged?.(subsActive)
@@ -308,7 +287,7 @@ export function MapViewer(props: MapViewerProps) {
       for (const room of rooms) {
         const key = `${room}/${shard}`
         if (!map2Subs.has(key)) {
-          map2Subs.set(key, c.stores.room.subscribeMap2(room, shard))
+          map2Subs.set(key, c.stores.map.subscribeMap2(room, shard))
         }
       }
     }
@@ -353,9 +332,9 @@ export function MapViewer(props: MapViewerProps) {
     const c = client()
     if (!c) return
 
-    const sub = c.stores.room.on('room:map2update', ({ room, shard, data }) => {
+    const sub = c.stores.map.on('room:map2update', ({ room, shard, data, source }) => {
       if (shard !== props.shard) return
-      renderer?.setRoomMap2(room, data)
+      renderer?.setRoomMap2(room, data, source)
     })
 
     onCleanup(() => sub.dispose())

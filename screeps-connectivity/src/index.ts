@@ -32,10 +32,12 @@ export type {
   VisualStyle,
   RoomVisualEntry,
 } from './types/game.js'
-export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents } from './types/events.js'
+export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus } from './types/events.js'
 
 export type { HttpClient, RateLimitInfo } from './http/HttpClient.js'
 export type { SocketClient } from './socket/SocketClient.js'
 export type { RoomStore } from './stores/RoomStore.js'
 export type { UserStore } from './stores/UserStore.js'
 export type { ServerStore } from './stores/ServerStore.js'
+export type { MapStore, Map2Subscription, MapStoreOptions } from './stores/MapStore.js'
+export type { NavigationStore, NavigationState, NavigationStoreEvents } from './stores/NavigationStore.js'

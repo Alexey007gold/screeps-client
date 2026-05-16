@@ -223,9 +223,10 @@ export class MapRenderer {
     }
   }
 
-  setRoomMap2(roomName: string, data: RoomMap2Data): void {
+  setRoomMap2(roomName: string, data: RoomMap2Data, source: 'cache' | 'live' = 'live'): void {
     const entry = this.getOrCreate(roomName)
     const g = entry.map2Graphics
+    g.alpha = source === 'cache' ? 0.6 : 1.0
     const MT = MAP_TILE_SIZE
     g.clear()
 

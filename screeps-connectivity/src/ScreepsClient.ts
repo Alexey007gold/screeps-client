@@ -4,6 +4,9 @@ import { Cache } from './cache/Cache.js'
 import { RoomStore } from './stores/RoomStore.js'
 import { UserStore } from './stores/UserStore.js'
 import { ServerStore } from './stores/ServerStore.js'
+import { MapStore } from './stores/MapStore.js'
+import { NavigationStore } from './stores/NavigationStore.js'
+import { Map2Storage } from './cache/Map2Storage.js'
 import { Logger } from './logger.js'
 import type { LogFn } from './logger.js'
 import type { AuthStrategy } from './http/auth/AuthStrategy.js'
@@ -17,6 +20,10 @@ export interface ScreepsClientOptions {
   storage?: StorageAdapter | null
   WebSocket?: WsConstructor
   debug?: boolean | LogFn
+  map2?: {
+    maxSubscriptions?: number
+    maxCacheEntries?: number
+  }
 }
 
 export class ScreepsClient {
@@ -26,6 +33,8 @@ export class ScreepsClient {
     readonly room: RoomStore
     readonly user: UserStore
     readonly server: ServerStore
+    readonly map: MapStore
+    readonly navigation: NavigationStore
   }
   private readonly cache: Cache
   private readonly logger: Logger
@@ -42,10 +51,17 @@ export class ScreepsClient {
     this.cache = new Cache(namespace, opts.storage ?? null)
     this.http = new HttpClient({ url: opts.url, auth: opts.auth, logger: this.logger.child('http') })
     this.socket = new SocketClient({ url: opts.url, WebSocket: opts.WebSocket, logger: this.logger.child('socket') })
+    const map2Storage = new Map2Storage({
+      adapter: opts.storage ?? null,
+      namespace,
+      maxEntries: opts.map2?.maxCacheEntries ?? 10000,
+    })
     this.stores = {
       room: new RoomStore(this.http, this.socket, this.cache, this.logger.child('room')),
       user: new UserStore(this.http, this.socket, this.cache, this.logger.child('user')),
       server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server')),
+      map: new MapStore(this.socket, map2Storage, { maxSubscriptions: opts.map2?.maxSubscriptions ?? 500 }, this.logger.child('map')),
+      navigation: new NavigationStore(50, this.logger.child('navigation')),
     }
   }
 
