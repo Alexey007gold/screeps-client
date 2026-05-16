@@ -57,7 +57,7 @@ export function MapViewer(props: MapViewerProps) {
   }
 
   // Terrain is fetched progressively in batches, sorted center-out
-  const TERRAIN_BATCH_SIZE = 100
+  const TERRAIN_BATCH_SIZE = 200
   const TERRAIN_BATCH_MS = 0
   let terrainQueue: string[] = []
   let terrainTimer: ReturnType<typeof setTimeout> | null = null

@@ -37,7 +37,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.fill(color)
         }
       } else {
-        if (top && left) {
+        if (top && left && terrain.get(x - 1, y - 1) === targetType) {
           g.moveTo(cx, y * T)
           g.lineTo(x * T, y * T)
           g.lineTo(x * T, cy)
@@ -58,7 +58,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.fill(color)
         }
       } else {
-        if (top && right) {
+        if (top && right && terrain.get(x + 1, y - 1) === targetType) {
           g.moveTo(cx, y * T)
           g.lineTo(x * T + T, y * T)
           g.lineTo(x * T + T, cy)
@@ -79,7 +79,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.fill(color)
         }
       } else {
-        if (bottom && left) {
+        if (bottom && left && terrain.get(x - 1, y + 1) === targetType) {
           g.moveTo(x * T, cy)
           g.lineTo(x * T, y * T + T)
           g.lineTo(cx, y * T + T)
@@ -100,7 +100,7 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.fill(color)
         }
       } else {
-        if (bottom && right) {
+        if (bottom && right && terrain.get(x + 1, y + 1) === targetType) {
           g.moveTo(cx, y * T + T)
           g.lineTo(x * T + T, y * T + T)
           g.lineTo(x * T + T, cy)
