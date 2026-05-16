@@ -1,3 +1,4 @@
+import { JSX } from 'solid-js'
 import {
   widescreenMode, setWidescreenMode,
   showCreepLabels, setShowCreepLabels,
@@ -62,7 +63,7 @@ function Toggle(props: ToggleProps) {
   )
 }
 
-function Section(props: { title: string; children: unknown }) {
+function Section(props: { title: string; children: JSX.Element }) {
   return (
     <div style={{ 'margin-bottom': '24px' }}>
       <div

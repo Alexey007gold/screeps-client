@@ -5,7 +5,7 @@ import {
   BODY_PART_COLORS,
   OBJECT_COLORS,
   BG_DEEP, BG_DARK,
-  OBJ_DEFAULT, OBJ_CYAN, OBJ_ROAD, OBJ_GOLD,
+  OBJ_DEFAULT, OBJ_CYAN, OBJ_ROAD, OBJ_GOLD, OBJ_WALL,
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
 } from './colors.js'
@@ -299,8 +299,112 @@ function createObjectVisual(obj: RoomObject, showLabel = true): Container {
       // but we still need the empty container for selection tracking
       break
     }
+    case 'spawn': {
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.fill(OBJ_WALL)
+      g.circle(cx, cy, TILE_SIZE * 0.3)
+      g.fill(color)
+      g.circle(cx, cy, TILE_SIZE * 0.15)
+      g.fill(ENERGY_FILL)
+      break
+    }
+    case 'tower': {
+      // Base
+      g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
+      g.fill(OBJ_WALL)
+      // Turret base
+      g.circle(cx, cy, TILE_SIZE * 0.35)
+      g.fill(color)
+      // Barrel
+      g.rect(cx - TILE_SIZE * 0.1, 1, TILE_SIZE * 0.2, cy - 1)
+      g.fill(0xcccccc)
+      break
+    }
+    case 'storage': {
+      g.roundRect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2, TILE_SIZE * 0.3)
+      g.fill(OBJ_WALL)
+      g.roundRect(3, 3, TILE_SIZE - 6, TILE_SIZE - 6, TILE_SIZE * 0.2)
+      g.stroke({ width: 2, color })
+      break
+    }
+    case 'terminal': {
+      g.poly([
+        cx, 1,
+        TILE_SIZE - 1, cx,
+        cx, TILE_SIZE - 1,
+        1, cx
+      ])
+      g.fill(OBJ_WALL)
+      g.poly([
+        cx, 3,
+        TILE_SIZE - 3, cx,
+        cx, TILE_SIZE - 3,
+        3, cx
+      ])
+      g.stroke({ width: 2, color })
+      break
+    }
+    case 'link': {
+      g.poly([
+        cx, 1,
+        TILE_SIZE - 1, cx,
+        cx, TILE_SIZE - 1,
+        1, cx
+      ])
+      g.fill(OBJ_WALL)
+      g.poly([
+        cx, 4,
+        TILE_SIZE - 4, cx,
+        cx, TILE_SIZE - 4,
+        4, cx
+      ])
+      g.fill(color)
+      break
+    }
+    case 'lab': {
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.fill(OBJ_WALL)
+      g.circle(cx, cy, TILE_SIZE * 0.35)
+      g.fill(0x222222)
+      g.circle(cx, cy, TILE_SIZE * 0.25)
+      g.fill(color)
+      break
+    }
+    case 'container': {
+      g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
+      g.fill(OBJ_WALL)
+      g.rect(4, 4, TILE_SIZE - 8, TILE_SIZE - 8)
+      g.fill(color)
+      break
+    }
+    case 'wall': {
+      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
+      g.fill(BG_DEEP)
+      g.rect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2)
+      g.fill(OBJ_WALL)
+      break
+    }
+    case 'rampart': {
+      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
+      g.fill({ color: color, alpha: 0.3 })
+      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
+      g.stroke({ width: 2, color: color, alpha: 0.5 })
+      break
+    }
+    case 'nuker':
+    case 'observer':
+    case 'powerSpawn':
+    case 'factory':
+    case 'extractor':
+    case 'invaderCore': {
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.fill(OBJ_WALL)
+      g.circle(cx, cy, TILE_SIZE * 0.35)
+      g.stroke({ width: 2, color })
+      break
+    }
     default: {
-      // Structures
+      // Structures (fallback)
       const size = TILE_SIZE - 2
       g.rect(1, 1, size, size)
       g.fill(color)
