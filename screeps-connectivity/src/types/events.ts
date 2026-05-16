@@ -1,4 +1,5 @@
 import type { RoomObjectMap, RoomObjectDiff, RoomTerrain, RoomMap2Data, CpuStats, ConsoleMessage, UserInfo, ShardInfo, ServerVersion } from './game.js'
+import type { MapStatsRoomData } from '../stores/MapStatsStore.js'
 
 export interface RoomStoreEvents {
   'room:update': { room: string; shard: string | null; gameTime: number | undefined; objects: RoomObjectMap; diff: RoomObjectDiff; visual: string }
@@ -25,4 +26,8 @@ export interface ServerStoreEvents {
   'server:error': { error: Error }
   'server:version': ServerVersion
   'server:shards': ShardInfo[]
+}
+
+export interface MapStatsStoreEvents {
+  'mapStats:room': { room: string; shard: string | null; stat: MapStatsRoomData }
 }

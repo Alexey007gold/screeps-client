@@ -18,8 +18,6 @@ export const MAP_ROOM_SIZE = MAP_TILE_SIZE * 50  // 150px per room
 const LOD_ZOOM_THRESHOLD = 1
 // Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
 const CLEAR_PADDING = 50
-// Above this room count the visible-rooms callback fires with an empty list — too zoomed out to load usefully
-const MAX_VISIBLE_ROOMS = 5000
 const POOL_SIZE = 2600 // max visible rooms plus padding
 // Wait this long after the last viewport change before firing onVisibleRoomsChanged
 const VISIBLE_DEBOUNCE_MS = 5
@@ -643,14 +641,13 @@ export class MapRenderer {
       }
     }
 
-    const toReport = visible.length > MAX_VISIBLE_ROOMS ? [] : visible
     const key = `${rxMin},${ryMin},${rxMax},${ryMax}`
     if (key !== this.lastVisibleKey) {
       this.lastVisibleKey = key
       if (this.visibleDebounceTimer !== null) clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = setTimeout(() => {
         this.visibleDebounceTimer = null
-        this.callbacks.onVisibleRoomsChanged(toReport)
+        this.callbacks.onVisibleRoomsChanged(visible)
       }, VISIBLE_DEBOUNCE_MS)
     }
   }

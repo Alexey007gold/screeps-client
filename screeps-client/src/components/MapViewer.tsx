@@ -36,6 +36,9 @@ export function MapViewer(props: MapViewerProps) {
   // key = `${room}/${shard}` so shard changes invalidate existing subs
   const map2Subs = new Map<string, Map2Subscription>()
 
+  // Per-room stats received from the library's mapStats store via events
+  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string }>()
+
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
     if (!bounds) return true // server doesn't provide world-size → allow all
@@ -43,22 +46,19 @@ export function MapViewer(props: MapViewerProps) {
     return !!coord && isRoomInWorld(coord.x, coord.y, bounds)
   }
 
-  const STATS_TTL_MS = 60_000
-
-  interface StatsCacheEntry {
-    ts: number
-    own?: { user: string; level: number }
-    mineral?: string
-    density?: number
+  const buildRoomInfo = (room: string): RoomInfo => {
+    const stat = roomStats.get(room)
+    return {
+      room,
+      owner: stat?.username ?? (stat?.own?.user ? `user:${stat.own.user}` : null),
+      mineral: stat?.mineral ?? null,
+      density: stat?.density ?? null,
+    }
   }
 
-  // Per-room stats cache with TTL — survives viewport changes, cleared on client/shard change
-  const statsCache = new Map<string, StatsCacheEntry>()
-  let latestUsers: Record<string, { username: string }> = {}
-
-  // Terrain is fetched progressively in small batches, sorted center-out
-  const TERRAIN_BATCH_SIZE = 20
-  const TERRAIN_BATCH_MS = 50
+  // Terrain is fetched progressively in batches, sorted center-out
+  const TERRAIN_BATCH_SIZE = 100
+  const TERRAIN_BATCH_MS = 0
   let terrainQueue: string[] = []
   let terrainTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -78,19 +78,11 @@ export function MapViewer(props: MapViewerProps) {
       .finally(() => { if (terrainQueue.length > 0) terrainTimer = setTimeout(drainTerrain, TERRAIN_BATCH_MS) })
   }
 
-  const buildRoomInfo = (room: string): RoomInfo => {
-    const stat = statsCache.get(room)
-    const ownerId = stat?.own?.user
-    const owner = ownerId ? (latestUsers[ownerId]?.username ?? ownerId) : null
-    return { room, owner, mineral: stat?.mineral ?? null, density: stat?.density ?? null }
-  }
-
-  // Invalidate cache when connection or shard changes
+  // Drop local room stats when connection or shard changes
   createEffect(() => {
     client()
     props.shard
-    statsCache.clear()
-    latestUsers = {}
+    roomStats.clear()
   })
 
   onMount(() => {
@@ -213,7 +205,6 @@ export function MapViewer(props: MapViewerProps) {
 
     const me = userInfo()?._id
     const visibleSet = new Set(rooms)
-    const now = Date.now()
 
     // Queue new rooms for progressive terrain loading, sorted center-out
     const newRooms = rooms.filter(r => !renderer?.hasRoom(r))
@@ -229,50 +220,13 @@ export function MapViewer(props: MapViewerProps) {
       if (terrainTimer === null) terrainTimer = setTimeout(drainTerrain, 0)
     }
 
-    // Apply cached ownership immediately so the overlay is correct before the HTTP round-trip
-    for (const room of rooms) {
-      const cached = statsCache.get(room)
-      if (cached) {
-        renderer?.setRoomOwned(room, !!(cached.own && cached.own.user !== me))
-      }
-    }
+    // Queue all visible rooms for a batched mapStats fetch.
+    // The library debounces for 100 ms, then fires per-room events.
+    c.stores.mapStats.request(rooms, 'owner0', shard ?? undefined)
 
-    // Only request rooms whose cache entry is missing or older than TTL
-    const staleRooms = rooms.filter((r) => {
-      const cached = statsCache.get(r)
-      return !cached || now - cached.ts > STATS_TTL_MS
-    })
-
-    if (staleRooms.length > 0) {
-      c.http.game.mapStats(staleRooms, 'owner0', shard ?? undefined)
-        .then((res) => {
-          latestUsers = { ...latestUsers, ...res.users }
-          for (const [room, stat] of Object.entries(res.stats)) {
-            let mineral: string | undefined
-            let density: number | undefined
-            for (let i = 0; i < 3; i++) {
-              const mineralKey = `minerals${i}` as `minerals${number}`
-              const mineralData = stat[mineralKey]
-              if (mineralData) { mineral = mineralData.type; density = mineralData.density; break }
-            }
-            statsCache.set(room, { ts: now, own: stat.own, mineral, density })
-            const owned = !!(stat.own && stat.own.user !== me)
-            if (visibleSet.has(room)) renderer?.setRoomOwned(room, owned)
-          }
-          // Mark rooms with no server entry as fetched (empty → not owned)
-          for (const room of staleRooms) {
-            if (!res.stats[room]) statsCache.set(room, { ts: now })
-          }
-          const sel = selectedRoom()
-          if (sel && staleRooms.includes(sel)) {
-            props.onSelectedRoomChanged?.(buildRoomInfo(sel))
-          }
-        })
-        .catch((err) => console.error('[map] mapStats failed:', err))
-    }
-
-    // Reconcile map2 subscriptions — drop all when zoomed out (MapStore handles per-room limits)
-    const subsActive = rooms.length > 0 && zoom() >= 0.4
+    // Reconcile map2 subscriptions — drop all when zoomed out.
+    // The library (MapStore) handles its own per-server limit via a waitlist.
+    const subsActive = zoom() >= 0.4
     if (subsActive !== lastSubsActive) {
       lastSubsActive = subsActive
       props.onSubscriptionStateChanged?.(subsActive)
@@ -342,6 +296,27 @@ export function MapViewer(props: MapViewerProps) {
     const sub = c.stores.map.on('room:map2update', ({ room, shard, data, source }) => {
       if (shard !== props.shard) return
       renderer?.setRoomMap2(room, data, source)
+    })
+
+    onCleanup(() => sub.dispose())
+  })
+
+  // MapStats update listener — per-room events from the library store
+  createEffect(() => {
+    const c = client()
+    if (!c) return
+
+    const me = userInfo()?._id
+    const visibleSet = new Set(visibleRooms())
+
+    const sub = c.stores.mapStats.on('mapStats:room', ({ room, stat }) => {
+      roomStats.set(room, stat)
+      const owned = !!(stat.own && stat.own.user !== me)
+      if (visibleSet.has(room)) renderer?.setRoomOwned(room, owned)
+      const sel = selectedRoom()
+      if (sel === room) {
+        props.onSelectedRoomChanged?.(buildRoomInfo(room))
+      }
     })
 
     onCleanup(() => sub.dispose())

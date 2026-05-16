@@ -5,6 +5,7 @@ import { RoomStore } from './stores/RoomStore.js'
 import { UserStore } from './stores/UserStore.js'
 import { ServerStore } from './stores/ServerStore.js'
 import { MapStore } from './stores/MapStore.js'
+import { MapStatsStore } from './stores/MapStatsStore.js'
 import { NavigationStore } from './stores/NavigationStore.js'
 import { Map2Storage } from './cache/Map2Storage.js'
 import { Logger } from './logger.js'
@@ -34,6 +35,7 @@ export class ScreepsClient {
     readonly user: UserStore
     readonly server: ServerStore
     readonly map: MapStore
+    readonly mapStats: MapStatsStore
     readonly navigation: NavigationStore
   }
   private readonly cache: Cache
@@ -61,6 +63,7 @@ export class ScreepsClient {
       user: new UserStore(this.http, this.socket, this.cache, this.logger.child('user')),
       server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server')),
       map: new MapStore(this.socket, map2Storage, { maxSubscriptions: opts.map2?.maxSubscriptions ?? 500 }, this.logger.child('map')),
+      mapStats: new MapStatsStore(this.http, 100, this.logger.child('mapStats')),
       navigation: new NavigationStore(50, this.logger.child('navigation')),
     }
   }
