@@ -8,13 +8,15 @@ export default defineConfig({
       '/api': {
         //target: 'https://screeps.w4rl0ck.dev',
       //  target: 'http://localhost:21025',
-        target: 'https://screeps.com',
+        target: 'http://zeta.dafire.de',
+        //target: 'https://screeps.com',
         changeOrigin: true,
       },
       '/socket': {
+        target: 'http://zeta.dafire.de',
        // target: 'https://screeps.w4rl0ck.dev',
         //target: 'http://localhost:21025',
-        target: 'https://screeps.com',
+        //target: 'https://screeps.com',
         changeOrigin: true,
         ws: true,
       },

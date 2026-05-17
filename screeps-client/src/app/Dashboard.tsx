@@ -45,7 +45,8 @@ export function Dashboard() {
   const [mapOriginRoom, setMapOriginRoom] = createSignal<string | undefined>(undefined)
   const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
-  const [mapZoom, setMapZoom] = createSignal<number | null>(null)
+  const savedMapZoom = localStorage.getItem('screeps:mapZoom')
+  const [mapZoom, setMapZoom] = createSignal<number | null>(savedMapZoom ? Number(savedMapZoom) : null)
   const [mapSubsActive, setMapSubsActive] = createSignal<boolean | null>(null)
   const [canBack, setCanBack] = createSignal(false)
   const [canForward, setCanForward] = createSignal(false)
@@ -315,10 +316,14 @@ export function Dashboard() {
                     <MapViewer
                       shard={shard()}
                       originRoom={mapOriginRoom()}
+                      initialZoom={mapZoom() ?? undefined}
                       onNavigateToRoom={(r) => handleNavigate(r, shard())}
                       onHoveredRoomChanged={setHoveredRoomInfo}
                       onSelectedRoomChanged={setSelectedRoomInfo}
-                      onZoomChanged={setMapZoom}
+                      onZoomChanged={(z) => {
+                        setMapZoom(z)
+                        localStorage.setItem('screeps:mapZoom', String(z))
+                      }}
                       onSubscriptionStateChanged={setMapSubsActive}
                     />
                   }
@@ -384,10 +389,14 @@ export function Dashboard() {
                   <MapViewer
                     shard={shard()}
                     originRoom={mapOriginRoom()}
+                    initialZoom={mapZoom() ?? undefined}
                     onNavigateToRoom={(r) => handleNavigate(r, shard())}
                     onHoveredRoomChanged={setHoveredRoomInfo}
                     onSelectedRoomChanged={setSelectedRoomInfo}
-                    onZoomChanged={setMapZoom}
+                    onZoomChanged={(z) => {
+                      setMapZoom(z)
+                      localStorage.setItem('screeps:mapZoom', String(z))
+                    }}
                     onSubscriptionStateChanged={setMapSubsActive}
                   />
                 }
