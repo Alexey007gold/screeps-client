@@ -1,5 +1,6 @@
-import { Container, Graphics, Text, Ticker } from 'pixi.js'
-import type { RoomObject, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
+import { Container, Graphics, Text, Ticker, Sprite } from 'pixi.js'
+import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
+import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { TILE_SIZE } from './RoomRenderer.js'
 import {
   BODY_PART_COLORS,
@@ -47,7 +48,7 @@ function getCreepStore(obj: RoomObject): { used: number; capacity: number } {
 
 function calcCreepFillRadius(used: number, capacity: number): number {
   if (capacity <= 0 || used <= 0) return 0
-  return CREEP_INNER_R * Math.min(1, used / capacity)
+  return CREEP_INNER_R * 0.8 * Math.min(1, used / capacity)
 }
 
 function updateCreepFill(visual: Container, radius: number): void {
@@ -140,7 +141,20 @@ function updateExtensionFill(visual: Container, radius: number): void {
   }
 }
 
-function createObjectVisual(obj: RoomObject, showLabel = true): Container {
+function isForeignCreep(obj: RoomObject, currentUserId?: string): boolean {
+  const creepUser = obj.user
+  if (typeof creepUser !== 'string') return false
+  if (!currentUserId) return false
+  return creepUser !== currentUserId
+}
+
+function createObjectVisual(
+  obj: RoomObject,
+  showLabel = true,
+  currentUserId?: string,
+  badge?: Badge,
+  badgeCache?: BadgeTextureCache,
+): Container {
   const container = new Container()
   const g = new Graphics()
   const color = getObjectColor(obj.type)
@@ -154,6 +168,13 @@ function createObjectVisual(obj: RoomObject, showLabel = true): Container {
       const bodyContainer = new Container()
       bodyContainer.position.set(cx, cy)
       bodyContainer.rotation = -Math.PI / 2
+
+      if (isForeignCreep(obj, currentUserId)) {
+        const borderG = new Graphics()
+        borderG.circle(0, 0, CREEP_OUTER_R + 1.5)
+        borderG.stroke({ width: 3, color: 0xff0000 })
+        bodyContainer.addChild(borderG)
+      }
 
       const bgG = new Graphics()
       bgG.circle(0, 0, CREEP_OUTER_R)
@@ -239,6 +260,23 @@ function createObjectVisual(obj: RoomObject, showLabel = true): Container {
       innerG.circle(0, 0, CREEP_INNER_R)
       innerG.fill(BG_DARK)
       bodyContainer.addChild(innerG)
+
+      // Own-player badge (under the energy fill)
+      const isOwn = !isForeignCreep(obj, currentUserId)
+      if (isOwn && badge && badgeCache) {
+        const badgeSprite = new Sprite()
+        badgeSprite.anchor.set(0.5, 0.5)
+        const size = CREEP_INNER_R * 2
+        badgeSprite.width = size
+        badgeSprite.height = size
+        badgeSprite.rotation = Math.PI / 2
+        bodyContainer.addChild(badgeSprite)
+        badgeCache.getOrCreate(badge).then((texture) => {
+          if (!badgeSprite.destroyed) {
+            badgeSprite.texture = texture
+          }
+        }).catch(() => {})
+      }
 
       // Store fill (animated, updated on store changes)
       const { used, capacity } = getCreepStore(obj)
@@ -449,6 +487,8 @@ type ContainerWithTarget = Container & {
   __creepUsed?: number
   __creepCapacity?: number
   __nameLabel?: Text
+  __creepBorderG?: Graphics
+  __creepBadgeSprite?: Sprite
 }
 
 interface ExtAnimation {
@@ -475,9 +515,14 @@ export class ObjectLayer {
   private creepFillAnimations = new Map<string, ExtAnimation>()
   private readonly EXT_ANIM_DURATION = 300
   private showLabels: boolean
+  private currentUserId?: string
+  private badge?: Badge
+  private badgeCache = new BadgeTextureCache()
 
-  constructor(ticker?: Ticker, showLabels = true) {
+  constructor(ticker?: Ticker, showLabels = true, currentUserId?: string, badge?: Badge) {
     this.showLabels = showLabels
+    this.currentUserId = currentUserId
+    this.badge = badge
     this.container = new Container()
     this.container.sortableChildren = true
     this.roadGraphics = new Graphics()
@@ -586,7 +631,7 @@ export class ObjectLayer {
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
-            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels)
+            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
             this.objects.set(id, visual)
@@ -644,7 +689,7 @@ export class ObjectLayer {
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)
         if (!existing) {
-          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels)
+          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache)
           visual.__tileX = obj.x
           visual.__tileY = obj.y
           this.objects.set(id, visual)
@@ -815,5 +860,6 @@ export class ObjectLayer {
     }
     this.ticker = null
     this.tickerCallback = null
+    this.badgeCache.destroy()
   }
 }

@@ -8,7 +8,7 @@ import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
-import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds } from '~/stores/clientStore.js'
+import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo } from '~/stores/clientStore.js'
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
@@ -169,7 +169,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const { objects: objs, diff } = state
 
     if (!objLayer) {
-      objLayer = new ObjectLayer(r.app.ticker, showCreepLabels())
+      objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge)
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)
       r.bringNavOverlayToTop()

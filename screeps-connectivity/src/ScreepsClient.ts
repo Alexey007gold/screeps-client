@@ -76,8 +76,10 @@ export class ScreepsClient {
     this.logger.log('[screeps:client] connect')
     await this.http.authenticate()
     await this.socket.connect(this.http.token!)
-    void this.stores.user.me()
-    void this.stores.server.version()
+    await Promise.all([
+      this.stores.user.me(),
+      this.stores.server.version(),
+    ])
   }
 
   disconnect(): void {
