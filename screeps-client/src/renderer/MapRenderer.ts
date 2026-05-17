@@ -82,6 +82,7 @@ export class MapRenderer {
   private lastVisibleKey = ''
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private selectedRoom: string | null = null
+  private currentUserId: string | null = null
 
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
@@ -335,17 +336,17 @@ export class MapRenderer {
     }
     if (powerBanks.length) g.fill(OBJ_ORANGE)
 
-    // User objects — batched by user colour (all users same colour for now)
-    let hasUserObjs = false
+    // User objects — blue for current user, red for others
     for (const [key, positions] of Object.entries(data as Record<string, [number, number][]>)) {
       if (MAP2_FIXED_KEYS.has(key)) continue
       if (!Array.isArray(positions)) continue
+      if (positions.length === 0) continue
       for (const [x, y] of positions) {
         g.circle((x + 0.5) * MT, (y + 0.5) * MT, 1.0)
-        hasUserObjs = true
       }
+      const color = key === this.currentUserId ? COLOR_USER : 0xff0000
+      g.fill(color)
     }
-    if (hasUserObjs) g.fill(COLOR_USER)
   }
 
   clearRoomMap2(roomName: string): void {
@@ -366,6 +367,10 @@ export class MapRenderer {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
       g.fill({ color: 0x990000, alpha: 0.18 })
     }
+  }
+
+  setCurrentUser(userId: string | null): void {
+    this.currentUserId = userId
   }
 
   setSelectedRoom(room: string | null): void {

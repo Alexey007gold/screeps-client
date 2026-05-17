@@ -276,6 +276,11 @@ export function MapViewer(props: MapViewerProps) {
     })
   })
 
+  // Sync current user ID to renderer so map2 dots use the right colour
+  createEffect(() => {
+    renderer?.setCurrentUser(userInfo()?._id ?? null)
+  })
+
   // Draw world bounds border when worldBounds signal updates (renderer already ready at this point)
   createEffect(() => {
     const bounds = worldBounds()

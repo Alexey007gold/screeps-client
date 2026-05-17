@@ -17,7 +17,8 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   get cpu(): CpuStats | null { return this._cpu }
   private _userInfo: UserInfo | null = null
   get userInfo(): UserInfo | null { return this._userInfo }
-  private userId: string | null = null
+  private _userId: string | null = null
+  get userId(): string | null { return this._userId }
 
   constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, maxConsoleSize = 100) {
     super(logger)
@@ -33,7 +34,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
     this.logger.log('fetch me')
     const res = await this.http.auth.me()
     const user = res as unknown as UserInfo
-    this.userId = user._id
+    this._userId = user._id
     this._userInfo = user
     this.cache.set('user/me', user, 60_000)
     this.emit('user:me', user)
@@ -54,7 +55,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
 
     const setup = async () => {
       try {
-        const uid = this.userId ?? (await this.me())._id
+        const uid = this._userId ?? (await this.me())._id
         if (disposed) return
         const fullChannel = `user:${uid}/${channel}`
         socketSub = this.socket.subscribe(fullChannel)
