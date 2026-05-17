@@ -98,7 +98,7 @@ describe('badgeToSvg', () => {
     const svg = badgeToSvg(badge)
     expect(svg).toContain('stroke="#000"')
     expect(svg).toContain('r="47.5"')
-    expect(svg).toContain('r="55"')
+    expect(svg).toContain('r="50"')
   })
 
   it('handles badges without path2', () => {

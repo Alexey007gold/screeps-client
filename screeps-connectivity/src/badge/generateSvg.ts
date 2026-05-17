@@ -45,8 +45,8 @@ export function badgeToSvg(badge: Badge): string {
     path2 = badge.type.path2
   }
 
-  // Large radius so badge paths never get clipped.
-  const clipRadius = 55
+  // Clip exactly at the visible circle edge (matches the black border stroke).
+  const clipRadius = 50
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 100 100" shape-rendering="geometricPrecision">`
   svg += `<defs><clipPath id="clip"><circle cx="50" cy="50" r="${clipRadius}"/></clipPath></defs>`
