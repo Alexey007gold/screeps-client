@@ -15,7 +15,7 @@ export interface ApiAuthMeResponse {
   cpu: number
   gcl: number
   credits: number
-  badge: unknown
+  badge: import('./game.js').Badge
   password: boolean
 }
 
@@ -79,7 +79,7 @@ export interface ApiLeaderboardListResponse {
   ok: number
   list: Array<{ _id: string; season: string; user: string; score: number; rank: number }>
   count: number
-  users: Record<string, { _id: string; username: string; badge: unknown; gcl: number }>
+  users: Record<string, { _id: string; username: string; badge: import('./game.js').Badge; gcl: number }>
 }
 
 export interface ApiLeaderboardSeasonsResponse {

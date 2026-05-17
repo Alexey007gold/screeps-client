@@ -1,5 +1,6 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js'
-import type { RoomMap2Data } from 'screeps-connectivity'
+import type { RoomMap2Data, Badge } from 'screeps-connectivity'
+import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, imageBitmapToBlob } from './terrainCache.js'
 import TerrainWorker from './terrain.worker.ts?worker'
@@ -39,6 +40,7 @@ interface RoomEntry {
   texHi: RenderTexture | null  // LOD 1
   map2Graphics: Graphics
   ownerOverlay: Graphics
+  badgeSprite?: Sprite
   nameLabel: Text
 }
 
@@ -85,6 +87,7 @@ export class MapRenderer {
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private selectedRoom: string | null = null
   private currentUserId: string | null = null
+  private readonly badgeCache = new BadgeTextureCache()
 
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
@@ -399,6 +402,47 @@ export class MapRenderer {
     }
   }
 
+  async setRoomBadge(roomName: string, badge?: Badge): Promise<void> {
+    const entry = this.activeRooms.get(roomName)
+    if (!entry) return
+
+    if (!badge) {
+      if (entry.badgeSprite) {
+        entry.container.removeChild(entry.badgeSprite)
+        entry.badgeSprite.destroy()
+        entry.badgeSprite = undefined
+      }
+      return
+    }
+
+    try {
+      // Avoid flicker/reload if the same badge is already shown.
+      // We compare texture references as a fast path.
+      const texture = await this.badgeCache.getOrCreate(badge)
+      if (!this.activeRooms.has(roomName)) return // room was cleared while loading
+
+      if (entry.badgeSprite) {
+        if (entry.badgeSprite.texture === texture) {
+          return
+        }
+        entry.badgeSprite.texture = texture
+      } else {
+        const sprite = new Sprite(texture)
+        sprite.anchor.set(0.5)
+        sprite.x = MAP_ROOM_SIZE / 2
+        sprite.y = MAP_ROOM_SIZE / 2
+        sprite.width = 24
+        sprite.height = 24
+        // Insert before nameLabel so the label stays on top
+        const nameIndex = entry.container.getChildIndex(entry.nameLabel)
+        entry.container.addChildAt(sprite, nameIndex)
+        entry.badgeSprite = sprite
+      }
+    } catch (err) {
+      console.warn('[MapRenderer] failed to load badge for', roomName, err)
+    }
+  }
+
   setCurrentUser(userId: string | null): void {
     this.currentUserId = userId
   }
@@ -487,6 +531,11 @@ export class MapRenderer {
     entry.terrainSprite.texture = Texture.EMPTY
     entry.map2Graphics.clear()
     entry.ownerOverlay.clear()
+    if (entry.badgeSprite) {
+      entry.container.removeChild(entry.badgeSprite)
+      entry.badgeSprite.destroy()
+      entry.badgeSprite = undefined
+    }
     entry.container.visible = false
     this.safeModeRooms.delete(roomName)
 
@@ -542,6 +591,7 @@ export class MapRenderer {
     this.terrainData.clear()
     this.worker.terminate()
     this.pendingBakes.clear()
+    this.badgeCache.destroy()
     try {
       this.app.destroy(false, { children: true, texture: true, context: true })
     } catch (e) {
@@ -592,6 +642,13 @@ export class MapRenderer {
     entry.container.visible = true
     entry.nameLabel.text = roomName
     entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
+
+    // Reset pooled badge sprite so a stale badge from a previous room doesn't leak through
+    if (entry.badgeSprite) {
+      entry.container.removeChild(entry.badgeSprite)
+      entry.badgeSprite.destroy()
+      entry.badgeSprite = undefined
+    }
 
     // Keep overlays on top
     if (this.safeModeGraphics) {

@@ -38,7 +38,11 @@ export function MapViewer(props: MapViewerProps) {
   const map2Subs = new Map<string, Map2Subscription>()
 
   // Per-room stats received from the library's mapStats store via events
-  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean }>()
+  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean; badge?: import('screeps-connectivity').Badge }>()
+
+  // Fast change-detection for badges: roomName → JSON key of last seen badge.
+  // If the key hasn't changed we skip re-rendering the badge entirely.
+  const roomBadgeKeys = new Map<string, string>()
 
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
@@ -324,6 +328,14 @@ export function MapViewer(props: MapViewerProps) {
         renderer?.setRoomOwned(room, owned)
         renderer?.setRoomSafeMode(room, !!stat.safeMode)
       }
+
+      // Badge change-check: cheap string comparison, runs only on event, never per tick.
+      const badgeKey = stat.badge ? JSON.stringify(stat.badge) : ''
+      if (roomBadgeKeys.get(room) !== badgeKey) {
+        roomBadgeKeys.set(room, badgeKey)
+        renderer?.setRoomBadge(room, stat.badge)
+      }
+
       const sel = selectedRoom()
       if (sel === room) {
         props.onSelectedRoomChanged?.(buildRoomInfo(room))

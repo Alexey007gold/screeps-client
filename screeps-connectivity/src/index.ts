@@ -32,6 +32,9 @@ export type {
   VisualStyle,
   RoomVisualEntry,
 } from './types/game.js'
+
+export { badgeToSvg } from './badge/index.js'
+export type { BadgeSvgOptions } from './badge/index.js'
 export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus } from './types/events.js'
 
 export type { HttpClient, RateLimitInfo } from './http/HttpClient.js'

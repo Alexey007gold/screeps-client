@@ -1,7 +1,7 @@
 import { TypedStore } from './TypedStore.js'
 import type { Logger } from '../logger.js'
 import type { HttpClient } from '../http/HttpClient.js'
-import type { ApiMapStatsRoomStat } from '../types/api.js'
+import type { ApiMapStatsRoomStat, ApiMapStatsBadge } from '../types/api.js'
 
 export interface MapStatsRoomData {
   own?: { user: string; level: number }
@@ -9,6 +9,7 @@ export interface MapStatsRoomData {
   density?: number
   username?: string
   safeMode?: boolean
+  badge?: ApiMapStatsBadge
 }
 
 export interface MapStatsStoreEvents {
@@ -66,7 +67,7 @@ export class MapStatsStore extends TypedStore<MapStatsStoreEvents> {
     for (const [, batch] of toFlush) {
       const allRooms = [...batch.rooms]
       try {
-        const res = await this.http.request<{ ok: number; stats: Record<string, ApiMapStatsRoomStat>; users: Record<string, { _id: string; username: string }> }>(
+        const res = await this.http.request<{ ok: number; stats: Record<string, ApiMapStatsRoomStat>; users: Record<string, { _id: string; username: string; badge: ApiMapStatsBadge }> }>(
           'POST', '/api/game/map-stats', { rooms: allRooms, statName: batch.statName, shard: batch.shard }
         )
 
@@ -89,7 +90,7 @@ export class MapStatsStore extends TypedStore<MapStatsStoreEvents> {
     }
   }
 
-  private buildData(stat: ApiMapStatsRoomStat, userMap: Record<string, { username: string }>): MapStatsRoomData {
+  private buildData(stat: ApiMapStatsRoomStat, userMap: Record<string, { username: string; badge: ApiMapStatsBadge }>): MapStatsRoomData {
     let mineral: string | undefined
     let density: number | undefined
     for (let i = 0; i < 3; i++) {
@@ -108,6 +109,7 @@ export class MapStatsStore extends TypedStore<MapStatsStoreEvents> {
       density,
       username: ownerId ? userMap[ownerId]?.username : undefined,
       safeMode: stat.safeMode,
+      badge: ownerId ? userMap[ownerId]?.badge : undefined,
     }
   }
 }

@@ -39,10 +39,10 @@ export class RoomTerrain {
 
 export interface Badge {
   type: number | { path1: string; path2: string }
-  color1: string
-  color2: string
-  color3: string
-  param: number
+  color1: string | number
+  color2: string | number
+  color3: string | number
+  param?: number
   flip: boolean
 }
 

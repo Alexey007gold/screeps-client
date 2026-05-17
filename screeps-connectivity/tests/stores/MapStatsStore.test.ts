@@ -37,7 +37,7 @@ describe('MapStatsStore', () => {
       stats: {
         W1N1: { own: { user: 'u1', level: 3 } },
       },
-      users: { u1: { _id: 'u1', username: 'Alice' } },
+      users: { u1: { _id: 'u1', username: 'Alice', badge: { type: 1, color1: '#fff', color2: '#000', color3: '#f00', flip: false } } },
     }))
 
     const events: Array<{ room: string; stat: unknown }> = []
@@ -51,6 +51,54 @@ describe('MapStatsStore', () => {
     const stat = events[0].stat as { own: { user: string; level: number }; username: string }
     expect(stat.own).toEqual({ user: 'u1', level: 3 })
     expect(stat.username).toBe('Alice')
+  })
+
+  it('propagates badge data for room owners', async () => {
+    fetchMock.mockResolvedValue(mockResponse({
+      ok: 1,
+      stats: {
+        W1N1: { own: { user: 'u1', level: 3 } },
+      },
+      users: {
+        u1: {
+          _id: 'u1',
+          username: 'Alice',
+          badge: { type: 24, color1: '#000077', color2: '#5555dd', color3: '#9999ff', param: 0, flip: false },
+        },
+      },
+    }))
+
+    const events: Array<{ room: string; stat: unknown }> = []
+    store.on('mapStats:room', (e) => events.push(e))
+
+    store.request(['W1N1'], 'owner0')
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(events).toHaveLength(1)
+    const stat = events[0].stat as { badge: { type: number; color1: string } }
+    expect(stat.badge).toBeDefined()
+    expect(stat.badge.type).toBe(24)
+    expect(stat.badge.color1).toBe('#000077')
+  })
+
+  it('does not include badge for unowned rooms', async () => {
+    fetchMock.mockResolvedValue(mockResponse({
+      ok: 1,
+      stats: {
+        W1N1: { status: 'normal' },
+      },
+      users: {},
+    }))
+
+    const events: Array<{ room: string; stat: unknown }> = []
+    store.on('mapStats:room', (e) => events.push(e))
+
+    store.request(['W1N1'], 'owner0')
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(events).toHaveLength(1)
+    const stat = events[0].stat as { badge?: unknown }
+    expect(stat.badge).toBeUndefined()
   })
 
   it('batches multiple request() calls into one HTTP request', async () => {
