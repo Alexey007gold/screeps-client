@@ -81,6 +81,7 @@ export class MapRenderer {
   private dragWorldY = 0
   private lastVisibleKey = ''
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  private selectedRoom: string | null = null
 
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
@@ -368,6 +369,7 @@ export class MapRenderer {
   }
 
   setSelectedRoom(room: string | null): void {
+    this.selectedRoom = room
     if (!this.selectionGraphics) return
     this.selectionGraphics.clear()
     // Keep on top of all room containers
@@ -379,7 +381,8 @@ export class MapRenderer {
     const x = coord.x * MAP_ROOM_SIZE
     const y = coord.y * MAP_ROOM_SIZE
     this.selectionGraphics.rect(x + 1, y + 1, MAP_ROOM_SIZE - 2, MAP_ROOM_SIZE - 2)
-    this.selectionGraphics.stroke({ color: 0xffffff, width: 2 })
+    const width = Math.max(2, Math.ceil(2 / this.zoom))
+    this.selectionGraphics.stroke({ color: 0xffffff, width })
   }
 
   setBounds(minX: number, maxX: number, minY: number, maxY: number): void {
@@ -604,6 +607,7 @@ export class MapRenderer {
       if (this.getLOD() !== prevLOD) this.applyLOD()
       if ((next >= LOD_ZOOM_THRESHOLD) !== prevZoomAboveThreshold) this.updateAllNameLabels()
       this.callbacks.onZoomChanged?.(next)
+      this.setSelectedRoom(this.selectedRoom)
     }, { passive: false })
   }
 
