@@ -16,6 +16,12 @@ const CREEP_OUTER_R = TILE_SIZE * 0.44
 const CREEP_INNER_R = TILE_SIZE * 0.28
 const CREEP_MAX_BODY = 50
 
+const LABEL_FONT_SIZE  = 32
+const LABEL_FONT_SCALE = 12 / LABEL_FONT_SIZE  // base scale: ~12px height at world-scale=1
+// Label bottom sits GAP_PX screen-pixels above the creep outer edge; constant across zoom levels.
+const LABEL_CREEP_TOP = TILE_SIZE / 2 - TILE_SIZE * 0.44  // CREEP_OUTER_R in container space
+const LABEL_GAP_PX    = 2
+
 const EXT_OUTER_R = TILE_SIZE * 0.42
 const EXT_INNER_R = TILE_SIZE * 0.30
 const EXT_STROKE_W = Math.max(1, TILE_SIZE * 0.08)
@@ -158,6 +164,93 @@ function updateTowerFill(visual: ContainerWithTarget, height: number): void {
   }
 }
 
+// ── Controller helpers ─────────────────────────────────────────────────────
+
+const CTRL_OCTO_R  = TILE_SIZE * 0.65
+const CTRL_SEG_OUT = CTRL_OCTO_R
+const CTRL_SEG_IN  = TILE_SIZE * 0.42
+const CTRL_GEM_R   = CTRL_SEG_IN * 0.65
+
+function drawControllerSegments(
+  g: Graphics,
+  cx: number, cy: number,
+  outerR: number, innerR: number,
+  level: number, progress: number, progressTotal: number,
+): void {
+  g.clear()
+  const SEG_COUNT  = 8
+  const gapAngle   = 0.10
+  const segArc     = (2 * Math.PI / SEG_COUNT) - gapAngle
+
+  for (let i = 0; i < SEG_COUNT; i++) {
+    const a0 = -Math.PI / 2 + i * (2 * Math.PI / SEG_COUNT) + gapAngle / 2
+    const a1 = a0 + segArc
+    const sx = cx + innerR * Math.cos(a0)
+    const sy = cy + innerR * Math.sin(a0)
+
+    if (i < level) {
+      g.moveTo(sx, sy)
+      g.arc(cx, cy, outerR, a0, a1)
+      g.arc(cx, cy, innerR, a1, a0, true)
+      g.closePath()
+      g.fill({ color: 0xdddddd, alpha: 0.9 })
+    } else if (i === level && progressTotal > 0) {
+      g.moveTo(sx, sy)
+      g.arc(cx, cy, outerR, a0, a1)
+      g.arc(cx, cy, innerR, a1, a0, true)
+      g.closePath()
+      g.fill({ color: 0x1e1e1e, alpha: 0.85 })
+      if (progress > 0) {
+        const ratio = Math.min(1, progress / progressTotal)
+        const pe = a0 + segArc * ratio
+        g.moveTo(sx, sy)
+        g.arc(cx, cy, outerR, a0, pe)
+        g.arc(cx, cy, innerR, pe, a0, true)
+        g.closePath()
+        g.fill({ color: 0xdddddd, alpha: 0.9 })
+      }
+    } else {
+      g.moveTo(sx, sy)
+      g.arc(cx, cy, outerR, a0, a1)
+      g.arc(cx, cy, innerR, a1, a0, true)
+      g.closePath()
+      g.fill({ color: 0x1e1e1e, alpha: 0.6 })
+    }
+  }
+}
+
+function drawControllerGem(g: Graphics, cx: number, cy: number, r: number): void {
+  // dark shadow ring
+  g.circle(cx, cy, r + 0.5)
+  g.fill(0x080818)
+  // main dark-blue body
+  g.moveTo(cx,           cy - r)
+  g.lineTo(cx + r,       cy - r * 0.2)
+  g.lineTo(cx + r * 0.6, cy + r)
+  g.lineTo(cx - r * 0.6, cy + r)
+  g.lineTo(cx - r,       cy - r * 0.2)
+  g.closePath()
+  g.fill(0x1c1c8c)
+  // upper-left facet: medium blue
+  g.moveTo(cx, cy - r)
+  g.lineTo(cx - r, cy - r * 0.2)
+  g.lineTo(cx - r * 0.1, cy + r * 0.15)
+  g.closePath()
+  g.fill(0x4545cc)
+  // upper-right facet: slightly darker
+  g.moveTo(cx, cy - r)
+  g.lineTo(cx + r, cy - r * 0.2)
+  g.lineTo(cx + r * 0.1, cy - r * 0.3)
+  g.closePath()
+  g.fill(0x2828a8)
+  // bright highlight near top-left
+  g.moveTo(cx - r * 0.25, cy - r * 0.82)
+  g.lineTo(cx - r * 0.72, cy - r * 0.08)
+  g.lineTo(cx - r * 0.02, cy - r * 0.22)
+  g.closePath()
+  g.fill(0x7878ee)
+}
+
 function isForeignCreep(obj: RoomObject, currentUserId?: string): boolean {
   const creepUser = obj.user
   if (typeof creepUser !== 'string') return false
@@ -186,10 +279,11 @@ function createObjectVisual(
       bodyContainer.position.set(cx, cy)
       bodyContainer.rotation = -Math.PI / 2
 
-      if (isForeignCreep(obj, currentUserId)) {
+      const isForeign = isForeignCreep(obj, currentUserId)
+      if (isForeign) {
         const borderG = new Graphics()
-        borderG.circle(0, 0, CREEP_OUTER_R + 1.5)
-        borderG.stroke({ width: 3, color: 0xff0000 })
+        borderG.circle(0, 0, CREEP_OUTER_R + 0.75)
+        borderG.stroke({ width: 1.5, color: 0xff2222 })
         bodyContainer.addChild(borderG)
       }
 
@@ -278,8 +372,14 @@ function createObjectVisual(
       innerG.fill(BG_DARK)
       bodyContainer.addChild(innerG)
 
-      // Own-player badge (under the energy fill)
-      const isOwn = !isForeignCreep(obj, currentUserId)
+      // Center indicator: badge for own creep, red fill for foreign/NPC
+      const isOwn = !isForeign
+      if (isForeign) {
+        const markG = new Graphics()
+        markG.circle(0, 0, CREEP_INNER_R * 0.82)
+        markG.fill({ color: 0xcc1111, alpha: 0.8 })
+        bodyContainer.addChild(markG)
+      }
       if (isOwn && badge && badgeCache) {
         const badgeSprite = new Sprite()
         badgeSprite.anchor.set(0.5, 0.5)
@@ -356,10 +456,60 @@ function createObjectVisual(
       break
     }
     case 'controller': {
-      g.circle(cx, cy, TILE_SIZE * 0.4)
-      g.fill(color)
-      g.circle(cx, cy, TILE_SIZE * 0.25)
-      g.stroke({ width: 1, color: OBJ_DEFAULT })
+      const level        = typeof obj.level         === 'number' ? obj.level         : 0
+      const progress     = typeof obj.progress      === 'number' ? obj.progress      : 0
+      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
+
+      // Octagon background
+      const octoG = new Graphics()
+      const octopts: number[] = []
+      for (let i = 0; i < 8; i++) {
+        const angle = -Math.PI / 2 + i * Math.PI / 4  // vertex at top
+        octopts.push(cx + CTRL_OCTO_R * Math.cos(angle), cy + CTRL_OCTO_R * Math.sin(angle))
+      }
+      octoG.poly(octopts)
+      octoG.fill(ST_DARK)
+      octoG.poly(octopts)
+      octoG.stroke({ width: TILE_SIZE * 0.05, color: 0x484848 })
+      container.addChild(octoG)
+
+      // Level / progress segments (dynamic)
+      const segG = new Graphics()
+      drawControllerSegments(segG, cx, cy, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
+      container.addChild(segG)
+      ;(container as ContainerWithTarget).__ctrlSegGraphics   = segG
+      ;(container as ContainerWithTarget).__ctrlLevel         = level
+      ;(container as ContainerWithTarget).__ctrlProgress      = progress
+      ;(container as ContainerWithTarget).__ctrlProgressTotal = progressTotal
+
+      // Inner dark circle — fills exactly to segment inner edge
+      const innerCircleG = new Graphics()
+      innerCircleG.circle(cx, cy, CTRL_SEG_IN)
+      innerCircleG.fill(ST_DARK)
+      container.addChild(innerCircleG)
+
+      // Owner badge — circular, fills inner area (own controller only)
+      if (currentUserId && (obj.user as string | undefined) === currentUserId && badge && badgeCache) {
+        const bs = new Sprite()
+        bs.anchor.set(0.5, 0.5)
+        bs.width  = CTRL_SEG_IN * 2
+        bs.height = CTRL_SEG_IN * 2
+        bs.position.set(cx, cy)
+        // Circular mask so the badge is round, not square
+        const bsMask = new Graphics()
+        bsMask.circle(cx, cy, CTRL_SEG_IN)
+        bsMask.fill(0xffffff)
+        container.addChild(bsMask)
+        bs.mask = bsMask
+        container.addChild(bs)
+        badgeCache.getOrCreate(badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
+      }
+
+      // Gem crystal on top
+      const gemG = new Graphics()
+      drawControllerGem(gemG, cx, cy, CTRL_GEM_R)
+      container.addChild(gemG)
+
       break
     }
     case 'energy': {
@@ -542,22 +692,22 @@ function createObjectVisual(
     }
   }
 
-  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower') {
+  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller') {
     container.addChild(g)
   }
 
-  // Label for creeps — render at 4× font size, scale down to stay crisp when zoomed
+  // Label for creeps — rendered at high font size, scaled down so it stays crisp when zoomed.
+  // Base scale gives ~8px height at world-scale=1; ObjectLayer.tick() divides by world-scale
+  // so the label stays constant in screen pixels and shrinks relative to the creep when zoomed in.
   if (obj.type === 'creep' && typeof obj.name === 'string') {
-    const FONT_SIZE = 32
-    const FONT_SCALE = 8 / FONT_SIZE
     const label = new Text({
       text: obj.name as string,
-      style: { fontSize: FONT_SIZE, fill: 0xffffff },
+      style: { fontSize: LABEL_FONT_SIZE, fill: 0xffffff },
     })
-    label.scale.set(FONT_SCALE)
+    label.scale.set(LABEL_FONT_SCALE)
     label.anchor.set(0.5, 1)
     label.x = cx
-    label.y = -2
+    label.y = LABEL_CREEP_TOP - LABEL_GAP_PX  // correct at world-scale=1; ticker adjusts on zoom
     label.visible = showLabel
     ;(container as ContainerWithTarget).__nameLabel = label
     container.addChild(label)
@@ -586,6 +736,10 @@ type ContainerWithTarget = Container & {
   __towerEnergy?: number
   __towerCapacity?: number
   __barrelContainer?: Container
+  __ctrlSegGraphics?: Graphics
+  __ctrlLevel?: number
+  __ctrlProgress?: number
+  __ctrlProgressTotal?: number
 }
 
 interface ExtAnimation {
@@ -612,6 +766,7 @@ export class ObjectLayer {
   private creepFillAnimations = new Map<string, ExtAnimation>()
   private towerFillAnimations = new Map<string, ExtAnimation>()
   private readonly EXT_ANIM_DURATION = 300
+  private lastWorldScale = 1
   private showLabels: boolean
   private currentUserId?: string
   private badge?: Badge
@@ -647,6 +802,21 @@ export class ObjectLayer {
         } else {
           visual.x += dx * 0.15
           visual.y += dy * 0.15
+        }
+      }
+    }
+
+    // Label scale: invert world zoom so labels stay at constant screen size.
+    // Relative to the (now larger) creep this makes them appear smaller on zoom-in.
+    const worldScale = this.container.parent?.scale.x ?? 1
+    if (worldScale !== this.lastWorldScale) {
+      this.lastWorldScale = worldScale
+      const s      = LABEL_FONT_SCALE / worldScale
+      const labelY = LABEL_CREEP_TOP - LABEL_GAP_PX / worldScale
+      for (const visual of this.objects.values()) {
+        if (visual.__nameLabel) {
+          visual.__nameLabel.scale.set(s)
+          visual.__nameLabel.y = labelY
         }
       }
     }
@@ -816,6 +986,19 @@ export class ObjectLayer {
                 existing.__towerCapacity = capacity
               }
             }
+            if (obj.type === 'controller') {
+              const level         = typeof obj.level         === 'number' ? obj.level         : 0
+              const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+              const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
+              if (existing.__ctrlLevel !== level || existing.__ctrlProgress !== progress || existing.__ctrlProgressTotal !== progressTotal) {
+                if (existing.__ctrlSegGraphics) {
+                  drawControllerSegments(existing.__ctrlSegGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
+                }
+                existing.__ctrlLevel         = level
+                existing.__ctrlProgress      = progress
+                existing.__ctrlProgressTotal = progressTotal
+              }
+            }
           }
         }
       }
@@ -872,6 +1055,27 @@ export class ObjectLayer {
               )
               ext.__extEnergy = energy
               ext.__extCapacity = capacity
+            }
+          }
+          if (obj.type === 'tower') {
+            const { energy, capacity } = getExtensionEnergy(obj)
+            if (existing.__towerEnergy !== energy || existing.__towerCapacity !== capacity) {
+              this.startTowerFillAnimation(id, existing, existing.__towerEnergy ?? 0, existing.__towerCapacity ?? capacity, energy, capacity)
+              existing.__towerEnergy = energy
+              existing.__towerCapacity = capacity
+            }
+          }
+          if (obj.type === 'controller') {
+            const level         = typeof obj.level         === 'number' ? obj.level         : 0
+            const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+            const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
+            if (existing.__ctrlLevel !== level || existing.__ctrlProgress !== progress || existing.__ctrlProgressTotal !== progressTotal) {
+              if (existing.__ctrlSegGraphics) {
+                drawControllerSegments(existing.__ctrlSegGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
+              }
+              existing.__ctrlLevel         = level
+              existing.__ctrlProgress      = progress
+              existing.__ctrlProgressTotal = progressTotal
             }
           }
         }
