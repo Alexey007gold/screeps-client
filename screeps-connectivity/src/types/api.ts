@@ -93,6 +93,7 @@ export interface ApiMapStatsRoomStat {
   respawnArea: number | null
   openTime: number | null
   own?: { user: string; level: number }
+  safeMode?: boolean
   [mineral: `minerals${number}`]: { type: string; density: number } | undefined
 }
 

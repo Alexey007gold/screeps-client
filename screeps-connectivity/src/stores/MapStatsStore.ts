@@ -8,6 +8,7 @@ export interface MapStatsRoomData {
   mineral?: string
   density?: number
   username?: string
+  safeMode?: boolean
 }
 
 export interface MapStatsStoreEvents {
@@ -106,6 +107,7 @@ export class MapStatsStore extends TypedStore<MapStatsStoreEvents> {
       mineral,
       density,
       username: ownerId ? userMap[ownerId]?.username : undefined,
+      safeMode: stat.safeMode,
     }
   }
 }

@@ -130,4 +130,57 @@ describe('MapStatsStore', () => {
     expect(stat.mineral).toBe('H')
     expect(stat.density).toBe(4)
   })
+
+  it('extracts safeMode from response', async () => {
+    fetchMock.mockResolvedValue(mockResponse({
+      ok: 1,
+      stats: {
+        W9N8: {
+          status: 'normal',
+          novice: null,
+          respawnArea: null,
+          openTime: null,
+          own: { user: 'u1', level: 2 },
+          safeMode: true,
+          minerals0: { type: 'O', density: 2 },
+        },
+      },
+      users: { u1: { _id: 'u1', username: 'Alice' } },
+    }))
+
+    const events: Array<{ room: string; stat: unknown }> = []
+    store.on('mapStats:room', (e) => events.push(e))
+
+    store.request(['W9N8'], 'owner0')
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(events).toHaveLength(1)
+    const stat = events[0].stat as { safeMode: boolean; own: { user: string; level: number }; username: string }
+    expect(stat.safeMode).toBe(true)
+    expect(stat.own).toEqual({ user: 'u1', level: 2 })
+    expect(stat.username).toBe('Alice')
+  })
+
+  it('omits safeMode when not present in response', async () => {
+    fetchMock.mockResolvedValue(mockResponse({
+      ok: 1,
+      stats: {
+        W1N1: {
+          status: 'normal',
+          own: { user: 'u1', level: 1 },
+        },
+      },
+      users: {},
+    }))
+
+    const events: Array<{ room: string; stat: unknown }> = []
+    store.on('mapStats:room', (e) => events.push(e))
+
+    store.request(['W1N1'], 'owner0')
+
+    await new Promise(r => setTimeout(r, 50))
+    expect(events).toHaveLength(1)
+    const stat = events[0].stat as { safeMode?: boolean }
+    expect(stat.safeMode).toBeUndefined()
+  })
 })

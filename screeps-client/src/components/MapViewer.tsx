@@ -16,6 +16,7 @@ export interface RoomInfo {
 interface MapViewerProps {
   shard: string | null
   originRoom?: string
+  initialZoom?: number
   onNavigateToRoom: (room: string) => void
   onHoveredRoomChanged?: (info: RoomInfo | null) => void
   onSelectedRoomChanged?: (info: RoomInfo | null) => void
@@ -37,7 +38,7 @@ export function MapViewer(props: MapViewerProps) {
   const map2Subs = new Map<string, Map2Subscription>()
 
   // Per-room stats received from the library's mapStats store via events
-  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string }>()
+  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean }>()
 
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
@@ -126,6 +127,9 @@ export function MapViewer(props: MapViewerProps) {
 
       await renderer.init(canvasRef!)
       if (!renderer) return
+      if (props.initialZoom !== undefined && props.initialZoom > 0) {
+        renderer.setZoom(props.initialZoom)
+      }
       props.onZoomChanged?.(renderer.zoom)
       // Apply world bounds immediately if already known (worldInfo arrived before renderer init)
       const initialBounds = worldBounds()
@@ -203,7 +207,6 @@ export function MapViewer(props: MapViewerProps) {
     const shard = props.shard
     if (!c || rooms.length === 0) return
 
-    const me = userInfo()?._id
     const visibleSet = new Set(rooms)
 
     // Queue new rooms for progressive terrain loading, sorted center-out
@@ -317,7 +320,10 @@ export function MapViewer(props: MapViewerProps) {
     const sub = c.stores.mapStats.on('mapStats:room', ({ room, stat }) => {
       roomStats.set(room, stat)
       const owned = !!(stat.own && stat.own.user !== me)
-      if (visibleSet.has(room)) renderer?.setRoomOwned(room, owned)
+      if (visibleSet.has(room)) {
+        renderer?.setRoomOwned(room, owned)
+        renderer?.setRoomSafeMode(room, !!stat.safeMode)
+      }
       const sel = selectedRoom()
       if (sel === room) {
         props.onSelectedRoomChanged?.(buildRoomInfo(room))

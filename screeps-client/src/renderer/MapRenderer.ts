@@ -54,6 +54,8 @@ export class MapRenderer {
   private world!: Container
   private boundsGraphics: Graphics | null = null
   private selectionGraphics: Graphics | null = null
+  private safeModeGraphics: Graphics | null = null
+  private readonly safeModeRooms = new Set<string>()
   private readonly activeRooms = new Map<string, RoomEntry>()
   private readonly roomPool: RoomEntry[] = []
   private readonly terrainBaked = new Set<string>()
@@ -132,6 +134,9 @@ export class MapRenderer {
     this.selectionGraphics = new Graphics()
     this.world.addChild(this.selectionGraphics)
 
+    this.safeModeGraphics = new Graphics()
+    this.world.addChild(this.safeModeGraphics)
+
     this.setupInteraction()
     this.app.ticker.add(() => {
       if (this.isAnimating) {
@@ -152,6 +157,31 @@ export class MapRenderer {
 
   get zoom(): number {
     return this.world?.scale.x ?? 1
+  }
+
+  setZoom(next: number): void {
+    if (!this.world) return
+    next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next))
+    const scale = this.world.scale.x
+    if (next === scale) return
+
+    const cx = this.app.screen.width / 2
+    const cy = this.app.screen.height / 2
+    const wx = (cx - this.world.x) / scale
+    const wy = (cy - this.world.y) / scale
+
+    const prevLOD = this.getLOD()
+    const prevZoomAboveThreshold = this.zoom >= LOD_ZOOM_THRESHOLD
+
+    this.world.scale.set(next)
+    this.world.x = cx - wx * next
+    this.world.y = cy - wy * next
+
+    if (this.getLOD() !== prevLOD) this.applyLOD()
+    if ((next >= LOD_ZOOM_THRESHOLD) !== prevZoomAboveThreshold) this.updateAllNameLabels()
+    this.callbacks.onZoomChanged?.(next)
+    this.setSelectedRoom(this.selectedRoom)
+    this.redrawSafeMode()
   }
 
   centerOn(rx: number, ry: number, animated = false): void {
@@ -385,9 +415,36 @@ export class MapRenderer {
     if (!coord) return
     const x = coord.x * MAP_ROOM_SIZE
     const y = coord.y * MAP_ROOM_SIZE
-    this.selectionGraphics.rect(x + 1, y + 1, MAP_ROOM_SIZE - 2, MAP_ROOM_SIZE - 2)
+    this.selectionGraphics.rect(x, y, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
     const width = Math.max(2, Math.ceil(2 / this.zoom))
-    this.selectionGraphics.stroke({ color: 0xffffff, width })
+    this.selectionGraphics.stroke({ color: 0xffffff, width, alignment: 0 })
+  }
+
+  setRoomSafeMode(room: string, active: boolean): void {
+    if (active) {
+      this.safeModeRooms.add(room)
+    } else {
+      this.safeModeRooms.delete(room)
+    }
+    this.redrawSafeMode()
+  }
+
+  private redrawSafeMode(): void {
+    if (!this.safeModeGraphics) return
+    this.safeModeGraphics.clear()
+    if (this.safeModeRooms.size === 0) return
+    const width = Math.max(1, Math.ceil(1 / this.zoom))
+    for (const room of this.safeModeRooms) {
+      const coord = parseRoomName(room)
+      if (!coord) continue
+      const x = coord.x * MAP_ROOM_SIZE
+      const y = coord.y * MAP_ROOM_SIZE
+      this.safeModeGraphics.rect(x, y, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
+      this.safeModeGraphics.stroke({ color: 0xffff00, width, alignment: 1, alpha: 0.5 })
+    }
+    // Keep on top of all room containers, below selection
+    this.world.removeChild(this.safeModeGraphics)
+    this.world.addChild(this.safeModeGraphics)
   }
 
   setBounds(minX: number, maxX: number, minY: number, maxY: number): void {
@@ -431,6 +488,7 @@ export class MapRenderer {
     entry.map2Graphics.clear()
     entry.ownerOverlay.clear()
     entry.container.visible = false
+    this.safeModeRooms.delete(roomName)
 
     this.terrainBaked.delete(roomName)
     this.terrainData.delete(roomName)
@@ -474,6 +532,7 @@ export class MapRenderer {
       if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     }
     this.activeRooms.clear()
+    this.safeModeRooms.clear()
     for (const entry of this.roomPool) {
       if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
       if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
@@ -534,7 +593,11 @@ export class MapRenderer {
     entry.nameLabel.text = roomName
     entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
 
-    // Keep selection overlay on top
+    // Keep overlays on top
+    if (this.safeModeGraphics) {
+      this.world.removeChild(this.safeModeGraphics)
+      this.world.addChild(this.safeModeGraphics)
+    }
     if (this.selectionGraphics) {
       this.world.removeChild(this.selectionGraphics)
       this.world.addChild(this.selectionGraphics)
@@ -565,6 +628,7 @@ export class MapRenderer {
     const stage = this.app.stage
 
     stage.on('pointerdown', (e) => {
+      this.isAnimating = false
       this.isDragging = true
       this.hasDragged = false
       this.dragStartX = e.global.x
@@ -599,6 +663,7 @@ export class MapRenderer {
 
     this.app.canvas.addEventListener('wheel', (e) => {
       e.preventDefault()
+      this.isAnimating = false
       const scale  = this.world.scale.x
       const factor = e.deltaY < 0 ? 1.1 : 0.9
       const next   = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor))
