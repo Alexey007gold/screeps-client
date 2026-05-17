@@ -6,14 +6,24 @@ import {
   BODY_PART_COLORS,
   OBJECT_COLORS,
   BG_DEEP, BG_DARK,
-  OBJ_DEFAULT, OBJ_CYAN, OBJ_ROAD, OBJ_GOLD, OBJ_WALL,
+  OBJ_DEFAULT, OBJ_ROAD, OBJ_GOLD,
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
+  ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART, ST_RAMPART_STROKE,
 } from './colors.js'
 
 const CREEP_OUTER_R = TILE_SIZE * 0.44
 const CREEP_INNER_R = TILE_SIZE * 0.28
 const CREEP_MAX_BODY = 50
+
+const EXT_OUTER_R = TILE_SIZE * 0.42
+const EXT_INNER_R = TILE_SIZE * 0.30
+const EXT_STROKE_W = Math.max(1, TILE_SIZE * 0.08)
+
+// Converts screeps tile-relative coords (tile center = origin, 1 unit = TILE_SIZE px) to flat pixel array
+function spts(cx: number, cy: number, pts: ReadonlyArray<readonly [number, number]>): number[] {
+  return pts.flatMap(([rx, ry]) => [cx + rx * TILE_SIZE, cy + ry * TILE_SIZE])
+}
 
 function drawCreepArc(g: Graphics, startAngle: number, endAngle: number, color: number): void {
   if (endAngle - startAngle < 0.001) return
@@ -83,61 +93,68 @@ function getExtensionEnergy(obj: RoomObject): { energy: number; capacity: number
   return { energy, capacity }
 }
 
-function getExtensionOuterRadius(capacity: number): number {
-  return capacity < 100 ? TILE_SIZE * 0.32 : TILE_SIZE * 0.42
+function extScale(capacity: number): number {
+  return capacity < 100 ? 0.7 : 1.0
 }
 
 function calcExtensionFillRadius(energy: number, capacity: number): number {
-  const outerRadius = getExtensionOuterRadius(capacity)
   if (capacity <= 0 || energy <= 0) return 0
-  const ratio = Math.min(1, energy / capacity)
-  return outerRadius * 0.25 + (outerRadius * 0.7) * ratio
+  return EXT_INNER_R * extScale(capacity) * Math.min(1, energy / capacity)
 }
 
 function drawExtensionVisual(container: Container, energy: number, capacity: number): void {
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
-  const outerRadius = getExtensionOuterRadius(capacity)
-  const borderColor = OBJ_CYAN
-  const bgColor = BG_DARK
-  const fillColor = ENERGY_FILL
+  const scale = extScale(capacity)
+  const g = new Graphics()
+  g.circle(cx, cy, EXT_OUTER_R * scale)
+  g.fill(ST_DARK)
+  g.circle(cx, cy, EXT_OUTER_R * scale)
+  g.stroke({ width: EXT_STROKE_W * scale, color: ST_OUTLINE })
+  g.circle(cx, cy, EXT_INNER_R * scale)
+  g.fill(ST_LIGHT)
+  container.addChild(g)
 
-  // Remove old graphics children
-  for (const child of container.children) {
-    if (child instanceof Graphics) {
-      child.destroy()
-    }
-  }
-
-  const bg = new Graphics()
-  bg.circle(cx, cy, outerRadius)
-  bg.fill(bgColor)
-  bg.circle(cx, cy, outerRadius)
-  bg.stroke({ width: 1, color: borderColor })
-  container.addChild(bg)
-
-  const radius = calcExtensionFillRadius(energy, capacity)
   const fill = new Graphics()
+  const radius = calcExtensionFillRadius(energy, capacity)
   if (radius > 0) {
     fill.circle(cx, cy, radius)
-    fill.fill(fillColor)
+    fill.fill(ST_ENERGY)
   }
   container.addChild(fill)
-
   ;(container as Container & { __fillGraphics?: Graphics }).__fillGraphics = fill
 }
 
 function updateExtensionFill(visual: Container, radius: number): void {
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
-  const fillColor = ENERGY_FILL
   const fill = (visual as Container & { __fillGraphics?: Graphics }).__fillGraphics
-
   if (!fill) return
   fill.clear()
   if (radius > 0) {
     fill.circle(cx, cy, radius)
-    fill.fill(fillColor)
+    fill.fill(ST_ENERGY)
+  }
+}
+
+const TOWER_BODY_X = -TILE_SIZE * 0.4
+const TOWER_BODY_Y = -TILE_SIZE * 0.3
+const TOWER_BODY_W = TILE_SIZE * 0.8
+const TOWER_BODY_H = TILE_SIZE * 0.6
+
+function calcTowerFillHeight(energy: number, capacity: number): number {
+  if (capacity <= 0 || energy <= 0) return 0
+  return TOWER_BODY_H * Math.min(1, energy / capacity)
+}
+
+function updateTowerFill(visual: ContainerWithTarget, height: number): void {
+  const fill = visual.__towerFillGraphics
+  if (!fill) return
+  fill.clear()
+  if (height > 0) {
+    const margin = Math.max(0.5, TILE_SIZE * 0.02)
+    fill.rect(TOWER_BODY_X + margin, TOWER_BODY_Y + TOWER_BODY_H - height + margin, TOWER_BODY_W - margin * 2, height - margin * 2)
+    fill.fill(ST_ENERGY)
   }
 }
 
@@ -313,6 +330,24 @@ function createObjectVisual(
       ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extCapacity = capacity
       break
     }
+    case 'spawn': {
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.fill(ST_DARK)
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.stroke({ width: TILE_SIZE * 0.1, color: 0xcccccc })
+      g.circle(cx, cy, TILE_SIZE * 0.4)
+      g.fill(ST_ENERGY)
+      break
+    }
+    case 'powerSpawn': {
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.fill(ST_DARK)
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.stroke({ width: TILE_SIZE * 0.1, color: ST_POWER })
+      g.circle(cx, cy, TILE_SIZE * 0.4)
+      g.fill(ST_ENERGY)
+      break
+    }
     case 'source':
     case 'mineral':
     case 'deposit': {
@@ -337,108 +372,166 @@ function createObjectVisual(
       // but we still need the empty container for selection tracking
       break
     }
-    case 'spawn': {
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.fill(OBJ_WALL)
-      g.circle(cx, cy, TILE_SIZE * 0.3)
-      g.fill(color)
-      g.circle(cx, cy, TILE_SIZE * 0.15)
-      g.fill(ENERGY_FILL)
-      break
-    }
-    case 'tower': {
-      // Base
-      g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
-      g.fill(OBJ_WALL)
-      // Turret base
-      g.circle(cx, cy, TILE_SIZE * 0.35)
-      g.fill(color)
-      // Barrel
-      g.rect(cx - TILE_SIZE * 0.1, 1, TILE_SIZE * 0.2, cy - 1)
-      g.fill(0xcccccc)
-      break
-    }
-    case 'storage': {
-      g.roundRect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2, TILE_SIZE * 0.3)
-      g.fill(OBJ_WALL)
-      g.roundRect(3, 3, TILE_SIZE - 6, TILE_SIZE - 6, TILE_SIZE * 0.2)
-      g.stroke({ width: 2, color })
-      break
-    }
-    case 'terminal': {
-      g.poly([
-        cx, 1,
-        TILE_SIZE - 1, cx,
-        cx, TILE_SIZE - 1,
-        1, cx
-      ])
-      g.fill(OBJ_WALL)
-      g.poly([
-        cx, 3,
-        TILE_SIZE - 3, cx,
-        cx, TILE_SIZE - 3,
-        3, cx
-      ])
-      g.stroke({ width: 2, color })
-      break
-    }
-    case 'link': {
-      g.poly([
-        cx, 1,
-        TILE_SIZE - 1, cx,
-        cx, TILE_SIZE - 1,
-        1, cx
-      ])
-      g.fill(OBJ_WALL)
-      g.poly([
-        cx, 4,
-        TILE_SIZE - 4, cx,
-        cx, TILE_SIZE - 4,
-        4, cx
-      ])
-      g.fill(color)
-      break
-    }
-    case 'lab': {
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.fill(OBJ_WALL)
-      g.circle(cx, cy, TILE_SIZE * 0.35)
-      g.fill(0x222222)
-      g.circle(cx, cy, TILE_SIZE * 0.25)
-      g.fill(color)
-      break
-    }
-    case 'container': {
-      g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
-      g.fill(OBJ_WALL)
-      g.rect(4, 4, TILE_SIZE - 8, TILE_SIZE - 8)
-      g.fill(color)
-      break
-    }
     case 'wall': {
-      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
-      g.fill(BG_DEEP)
-      g.rect(1, 1, TILE_SIZE - 2, TILE_SIZE - 2)
-      g.fill(OBJ_WALL)
+      g.circle(cx, cy, TILE_SIZE * 0.4)
+      g.fill(ST_DARK)
+      g.circle(cx, cy, TILE_SIZE * 0.4)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_LIGHT })
       break
     }
     case 'rampart': {
-      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
-      g.fill({ color: color, alpha: 0.3 })
-      g.rect(0, 0, TILE_SIZE, TILE_SIZE)
-      g.stroke({ width: 2, color: color, alpha: 0.5 })
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.fill(ST_RAMPART)
+      g.circle(cx, cy, TILE_SIZE * 0.65)
+      g.stroke({ width: TILE_SIZE * 0.1, color: ST_RAMPART_STROKE })
       break
     }
-    case 'nuker':
-    case 'observer':
-    case 'powerSpawn':
+    case 'tower': {
+      const { energy: towerEnergy, capacity: towerCap } = getExtensionEnergy(obj)
+
+      // Static outer circle
+      const towerBase = new Graphics()
+      towerBase.circle(cx, cy, TILE_SIZE * 0.6)
+      towerBase.fill(ST_DARK)
+      towerBase.circle(cx, cy, TILE_SIZE * 0.6)
+      towerBase.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      container.addChild(towerBase)
+
+      // Rotating turret: body rect + energy fill + barrel — pivot at tile center
+      const turret = new Container()
+      turret.position.set(cx, cy)
+
+      const towerBody = new Graphics()
+      towerBody.rect(TOWER_BODY_X, TOWER_BODY_Y, TOWER_BODY_W, TOWER_BODY_H)
+      towerBody.fill(ST_DARK)
+      turret.addChild(towerBody)
+
+      const towerFill = new Graphics()
+      turret.addChild(towerFill)
+      ;(container as ContainerWithTarget).__towerFillGraphics = towerFill as unknown as Graphics
+      ;(container as ContainerWithTarget).__towerEnergy = towerEnergy
+      ;(container as ContainerWithTarget).__towerCapacity = towerCap
+      updateTowerFill(container as ContainerWithTarget, calcTowerFillHeight(towerEnergy, towerCap))
+
+      const towerBorder = new Graphics()
+      towerBorder.rect(TOWER_BODY_X, TOWER_BODY_Y, TOWER_BODY_W, TOWER_BODY_H)
+      towerBorder.stroke({ width: 1, color: ST_GRAY })
+      turret.addChild(towerBorder)
+
+      const barrelG = new Graphics()
+      barrelG.rect(-TILE_SIZE * 0.2, -TILE_SIZE * 0.9, TILE_SIZE * 0.4, TILE_SIZE * 0.5)
+      barrelG.fill(ST_LIGHT)
+      barrelG.rect(-TILE_SIZE * 0.2, -TILE_SIZE * 0.9, TILE_SIZE * 0.4, TILE_SIZE * 0.5)
+      barrelG.stroke({ width: TILE_SIZE * 0.07, color: ST_DARK })
+      turret.addChild(barrelG)
+
+      container.addChild(turret)
+      ;(container as ContainerWithTarget).__barrelContainer = turret
+      break
+    }
+    case 'storage': {
+      const storagePts = spts(cx, cy, [
+        [-0.6, -0.7], [0, -0.8], [0.6, -0.7], [0.65, 0],
+        [0.6, 0.7], [0, 0.8], [-0.6, 0.7], [-0.65, 0], [-0.6, -0.7],
+      ])
+      g.poly(storagePts)
+      g.fill(ST_DARK)
+      g.poly(storagePts)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
+      g.fill(ST_GRAY)
+      g.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
+      g.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
+      break
+    }
+    case 'terminal': {
+      const termOuter = spts(cx, cy, [
+        [0, -0.8], [0.55, -0.55], [0.8, 0], [0.55, 0.55],
+        [0, 0.8], [-0.55, 0.55], [-0.8, 0], [-0.55, -0.55], [0, -0.8],
+      ])
+      const termInner = spts(cx, cy, [
+        [0, -0.65], [0.45, -0.45], [0.65, 0], [0.45, 0.45],
+        [0, 0.65], [-0.45, 0.45], [-0.65, 0], [-0.45, -0.45], [0, -0.65],
+      ])
+      g.poly(termOuter)
+      g.fill(ST_DARK)
+      g.poly(termOuter)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.poly(termInner)
+      g.fill(ST_LIGHT)
+      g.rect(cx - TILE_SIZE * 0.45, cy - TILE_SIZE * 0.45, TILE_SIZE * 0.9, TILE_SIZE * 0.9)
+      g.fill(ST_GRAY)
+      g.rect(cx - TILE_SIZE * 0.45, cy - TILE_SIZE * 0.45, TILE_SIZE * 0.9, TILE_SIZE * 0.9)
+      g.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
+      break
+    }
+    case 'link': {
+      const linkOuter = spts(cx, cy, [[0, -0.5], [0.4, 0], [0, 0.5], [-0.4, 0], [0, -0.5]])
+      const linkInner = spts(cx, cy, [[0, -0.3], [0.25, 0], [0, 0.3], [-0.25, 0], [0, -0.3]])
+      g.poly(linkOuter)
+      g.fill(ST_DARK)
+      g.poly(linkOuter)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.poly(linkInner)
+      g.fill(ST_GRAY)
+      break
+    }
+    case 'lab': {
+      const labCy = cy - TILE_SIZE * 0.025
+      g.circle(cx, labCy, TILE_SIZE * 0.55)
+      g.fill(ST_DARK)
+      g.circle(cx, labCy, TILE_SIZE * 0.55)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.circle(cx, labCy, TILE_SIZE * 0.4)
+      g.fill(ST_GRAY)
+      g.rect(cx - TILE_SIZE * 0.45, cy + TILE_SIZE * 0.3, TILE_SIZE * 0.9, TILE_SIZE * 0.25)
+      g.fill(ST_DARK)
+      g.poly(spts(cx, cy, [[-0.45, 0.3], [-0.45, 0.55], [0.45, 0.55], [0.45, 0.3]]))
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      break
+    }
+    case 'container': {
+      g.rect(cx - TILE_SIZE * 0.225, cy - TILE_SIZE * 0.3, TILE_SIZE * 0.45, TILE_SIZE * 0.6)
+      g.fill(ST_ENERGY)
+      g.rect(cx - TILE_SIZE * 0.225, cy - TILE_SIZE * 0.3, TILE_SIZE * 0.45, TILE_SIZE * 0.6)
+      g.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
+      break
+    }
+    case 'observer': {
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.fill(ST_DARK)
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.circle(cx + TILE_SIZE * 0.225, cy, TILE_SIZE * 0.2)
+      g.fill(ST_OUTLINE)
+      break
+    }
+    case 'nuker': {
+      const nukerOuter = spts(cx, cy, [
+        [0, -1], [-0.47, 0.2], [-0.5, 0.5], [0.5, 0.5], [0.47, 0.2], [0, -1],
+      ])
+      const nukerInner = spts(cx, cy, [
+        [0, -0.8], [-0.4, 0.2], [0.4, 0.2], [0, -0.8],
+      ])
+      g.poly(nukerOuter)
+      g.fill(ST_DARK)
+      g.poly(nukerOuter)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.poly(nukerInner)
+      g.fill(ST_GRAY)
+      g.poly(nukerInner)
+      g.stroke({ width: TILE_SIZE * 0.01, color: ST_OUTLINE })
+      break
+    }
     case 'factory':
     case 'extractor':
     case 'invaderCore': {
       g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.fill(OBJ_WALL)
+      g.fill(ST_DARK)
+      g.circle(cx, cy, TILE_SIZE * 0.45)
+      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
       g.circle(cx, cy, TILE_SIZE * 0.35)
-      g.stroke({ width: 2, color })
+      g.fill(ST_GRAY)
       break
     }
     default: {
@@ -449,7 +542,7 @@ function createObjectVisual(
     }
   }
 
-  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep') {
+  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower') {
     container.addChild(g)
   }
 
@@ -489,6 +582,10 @@ type ContainerWithTarget = Container & {
   __nameLabel?: Text
   __creepBorderG?: Graphics
   __creepBadgeSprite?: Sprite
+  __towerFillGraphics?: Graphics
+  __towerEnergy?: number
+  __towerCapacity?: number
+  __barrelContainer?: Container
 }
 
 interface ExtAnimation {
@@ -513,6 +610,7 @@ export class ObjectLayer {
   private tickerCallback: (() => void) | null = null
   private extAnimations = new Map<string, ExtAnimation>()
   private creepFillAnimations = new Map<string, ExtAnimation>()
+  private towerFillAnimations = new Map<string, ExtAnimation>()
   private readonly EXT_ANIM_DURATION = 300
   private showLabels: boolean
   private currentUserId?: string
@@ -553,8 +651,18 @@ export class ObjectLayer {
       }
     }
 
-    // Extension + creep fill animations
+    // Time-based animations (independent of game tick)
     const now = performance.now()
+    const t_sec = now / 1000
+
+    // Tower barrel rotation
+    for (const visual of this.objects.values()) {
+      if (visual.__barrelContainer) {
+        visual.__barrelContainer.rotation = t_sec * 0.4  // ~23°/s idle sweep
+      }
+    }
+
+    // Extension + creep fill animations
     for (const [id, anim] of this.extAnimations) {
       const elapsed = now - anim.startTime
       const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
@@ -568,6 +676,13 @@ export class ObjectLayer {
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
       updateCreepFill(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
       if (t >= 1) this.creepFillAnimations.delete(id)
+    }
+    for (const [id, anim] of this.towerFillAnimations) {
+      const elapsed = now - anim.startTime
+      const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      updateTowerFill(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
+      if (t >= 1) this.towerFillAnimations.delete(id)
     }
   }
 
@@ -599,6 +714,20 @@ export class ObjectLayer {
     this.creepFillAnimations.set(id, { visual, fromRadius, toRadius, startTime: performance.now() })
   }
 
+  private startTowerFillAnimation(
+    id: string,
+    visual: ContainerWithTarget,
+    fromEnergy: number,
+    fromCapacity: number,
+    toEnergy: number,
+    toCapacity: number,
+  ): void {
+    const fromH = calcTowerFillHeight(fromEnergy, fromCapacity)
+    const toH = calcTowerFillHeight(toEnergy, toCapacity)
+    if (fromH === toH) return
+    this.towerFillAnimations.set(id, { visual, fromRadius: fromH, toRadius: toH, startTime: performance.now() })
+  }
+
   update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
     let roadsChanged = false
 
@@ -616,6 +745,7 @@ export class ObjectLayer {
             this.rawObjects.delete(id)
             this.extAnimations.delete(id)
             this.creepFillAnimations.delete(id)
+            this.towerFillAnimations.delete(id)
           }
         } else {
           const obj = objects[id]
@@ -676,6 +806,14 @@ export class ObjectLayer {
                 )
                 ext.__extEnergy = energy
                 ext.__extCapacity = capacity
+              }
+            }
+            if (obj.type === 'tower') {
+              const { energy, capacity } = getExtensionEnergy(obj)
+              if (existing.__towerEnergy !== energy || existing.__towerCapacity !== capacity) {
+                this.startTowerFillAnimation(id, existing, existing.__towerEnergy ?? 0, existing.__towerCapacity ?? capacity, energy, capacity)
+                existing.__towerEnergy = energy
+                existing.__towerCapacity = capacity
               }
             }
           }
@@ -779,7 +917,7 @@ export class ObjectLayer {
 
     const cxOffset = TILE_SIZE / 2
     const cyOffset = TILE_SIZE / 2
-    const radius = TILE_SIZE * 0.15
+    const radius = TILE_SIZE * 0.175
 
     // Draw center dots
     for (const r of roads) {
@@ -850,6 +988,7 @@ export class ObjectLayer {
     this.rawObjects.clear()
     this.extAnimations.clear()
     this.creepFillAnimations.clear()
+    this.towerFillAnimations.clear()
     this.container.removeChildren()
   }
 

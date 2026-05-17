@@ -2,13 +2,13 @@
 export const BG_DEEP    = 0x0d1117  // wall tiles, creep body center
 export const BG_DARK    = 0x161b22  // creep inner ring, extension bg
 export const BG_MEDIUM  = 0x1c2128  // creep ring: empty body-part slots
-export const BG_SURFACE = 0x2d333b  // terrain plain
+export const BG_SURFACE = 0x34343B  // terrain plain
 
 // ── Terrain ────────────────────────────────────────────────────────────────
 export const TERRAIN_PLAIN  = BG_SURFACE
 export const TERRAIN_WALL   = BG_DEEP
-export const TERRAIN_SWAMP  = 0x3d5a3d
-export const TERRAIN_ROAD   = 0x484f58  // also used for room exits
+export const TERRAIN_SWAMP  = 0x334933
+export const TERRAIN_ROAD   = 0x6B6969 // also used for room exits
 export const TERRAIN_BORDER = 0x30363d
 
 // ── Body parts ─────────────────────────────────────────────────────────────
@@ -20,7 +20,6 @@ export const BP_ATTACK        = 0xf93842
 export const BP_RANGED_ATTACK = 0x5d80b2
 export const BP_HEAL          = 0x65fd62
 export const BP_CLAIM         = 0xb99cfb
-
 export const BODY_PART_COLORS: Record<string, number> = {
   tough:         BP_TOUGH,
   move:          BP_MOVE,
@@ -83,3 +82,13 @@ export const ANIM_UPGRADE = OBJ_CYAN
 // ── Creep rendering ────────────────────────────────────────────────────────
 export const CREEP_RING_DARK = BG_MEDIUM
 export const CREEP_NOTCH     = 0xd0d0d0
+
+// ── Screeps canonical structure palette ────────────────────────────────────
+export const ST_DARK           = 0x181818  // structure dark background
+export const ST_GRAY           = 0x555555  // structure gray fill
+export const ST_LIGHT          = 0xAAAAAA  // structure light elements
+export const ST_OUTLINE        = 0x8FBB93  // structure green outline
+export const ST_ENERGY         = 0xFFE87B  // energy (structure displays)
+export const ST_POWER          = 0xF53547  // power red
+export const ST_RAMPART        = 0x434C43  // rampart fill
+export const ST_RAMPART_STROKE = 0x5D735F  // rampart border
