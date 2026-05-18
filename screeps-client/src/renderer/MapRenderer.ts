@@ -374,9 +374,10 @@ export class MapRenderer {
     if (powerBanks.length) g.fill(OBJ_ORANGE)
 
     // User objects — blue for current user, red for others
-    for (const key in data) {
+    const dataRec = data as Record<string, [number, number][]>
+    for (const key in dataRec) {
       if (MAP2_FIXED_KEYS.has(key)) continue
-      const positions = (data as Record<string, unknown>)[key]
+      const positions = dataRec[key]
       if (!Array.isArray(positions)) continue
       if (positions.length === 0) continue
       for (const [x, y] of positions) {

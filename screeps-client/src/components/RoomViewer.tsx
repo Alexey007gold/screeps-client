@@ -79,14 +79,19 @@ export function RoomViewer(props: RoomViewerProps) {
 
     group.add(c.stores.room.subscribe(room, shard))
     group.add(c.stores.room.on('room:update', (data) => {
+      // Use for...in to count keys without allocating an array, avoiding memory allocations on hot path
+      let objectCount = 0
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for (const _k in data.objects) { objectCount++ }
+
       if (!data.diff) {
-        console.log(`[room] objects loaded — ${room}: ${Object.keys(data.objects).length} objects, tick=${data.gameTime}`)
+        console.log(`[room] objects loaded — ${room}: ${objectCount} objects, tick=${data.gameTime}`)
       }
       setObjectState({ objects: data.objects, diff: data.diff })
       setVisualState(data.visual)
       setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
-      setRoomObjectCount(Object.keys(data.objects).length)
+      setRoomObjectCount(objectCount)
     }))
 
     onCleanup(() => {
@@ -271,7 +276,9 @@ export function RoomViewer(props: RoomViewerProps) {
     if (animLayer) {
       animLayer.clear()
       const duration = (tickDuration() ?? 2000) * 0.6
-      for (const [, obj] of Object.entries(objs)) {
+      // Use for...in over Object.entries to avoid allocating a new array of arrays every tick
+      for (const id in objs) {
+        const obj = objs[id]
         if (!obj || obj.type !== 'creep') continue
         const actionLog = obj.actionLog as Record<string, { x: number; y: number } | null> | null | undefined
         if (!actionLog) continue

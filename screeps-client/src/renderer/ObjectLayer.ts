@@ -53,7 +53,10 @@ function getCreepStore(obj: RoomObject): { used: number; capacity: number } {
 
   let used = 0
   if (obj.store && typeof obj.store === 'object') {
-    for (const v of Object.values(obj.store as Record<string, unknown>)) {
+    // Avoid Object.values allocation
+    const storeObj = obj.store as Record<string, unknown>
+    for (const k in storeObj) {
+      const v = storeObj[k]
       if (typeof v === 'number') used += v
     }
   } else if (typeof obj.energy === 'number') {
@@ -902,7 +905,9 @@ export class ObjectLayer {
     let roadsChanged = false
 
     if (diff) {
-      for (const [id, changes] of Object.entries(diff)) {
+      // Use for...in over Object.entries to avoid array allocation per tick
+      for (const id in diff) {
+        const changes = diff[id]
         if (changes === null) {
           const oldObj = this.rawObjects.get(id)
           if (oldObj && oldObj.type === 'road') roadsChanged = true
@@ -1005,7 +1010,11 @@ export class ObjectLayer {
     } else {
       const seen = new Set<string>()
 
-      for (const [id, obj] of Object.entries(objects)) {
+      // Use for...in to prevent unnecessary array allocation
+      for (const id in objects) {
+        const obj = objects[id]
+        if (!obj) continue
+
         seen.add(id)
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)

@@ -20,7 +20,9 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
     Number(localStorage.getItem('screeps:consoleSplit')) || 50
   )
   const [splitDragging, setSplitDragging] = createSignal(false)
+  // eslint-disable-next-line prefer-const, @typescript-eslint/no-explicit-any, no-unassigned-vars
   let logScrollRef: HTMLDivElement | any
+  // eslint-disable-next-line prefer-const, @typescript-eslint/no-explicit-any, no-unassigned-vars
   let consoleScrollRef: HTMLDivElement | any
   let splitContainerRef: HTMLDivElement | undefined = undefined
   let nextId = 0
