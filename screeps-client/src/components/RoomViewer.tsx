@@ -1,8 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 
-const log = import.meta.env.DEV
-  ? (...args: unknown[]) => console.log('[room]', ...args)
-  : () => {}
 import { RoomRenderer } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer } from '~/renderer/TerrainLayer.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
@@ -11,6 +8,7 @@ import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo } from '~/stores/clientStore.js'
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
+import { setRoomObjectCount } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
@@ -59,32 +57,41 @@ export function RoomViewer(props: RoomViewerProps) {
     const room = props.room
     const shard = props.shard
 
-    log(`subscribing to ${room} shard=${shard ?? 'default'}`)
+    console.log(`[room] navigate → ${room} (shard=${shard ?? 'default'})`)
     setTerrain(null)
     setObjectState(null)
     setVisualState('')
     setGameTime(null)
     clearSelection()
+    setRoomObjectCount(null)
 
     const group = new SubscriptionGroup()
 
+    let terrainCancelled = false
     c.stores.room.terrain(room, shard)
-      .then((t) => { log(`terrain ready for ${room}`); setTerrain(t) })
-      .catch((err) => console.error(`[room] terrain load failed for ${room}:`, err))
+      .then((t) => {
+        if (!terrainCancelled) {
+          console.log(`[room] terrain loaded — ${room}`)
+          setTerrain(t)
+        }
+      })
+      .catch((err) => { if (!terrainCancelled) console.error(`[room] terrain load failed for ${room}:`, err) })
 
     group.add(c.stores.room.subscribe(room, shard))
     group.add(c.stores.room.on('room:update', (data) => {
       if (!data.diff) {
-        log(`initial state: ${Object.keys(data.objects).length} objects, tick=${data.gameTime}`)
+        console.log(`[room] objects loaded — ${room}: ${Object.keys(data.objects).length} objects, tick=${data.gameTime}`)
       }
       setObjectState({ objects: data.objects, diff: data.diff })
       setVisualState(data.visual)
       setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
+      setRoomObjectCount(Object.keys(data.objects).length)
     }))
 
     onCleanup(() => {
-      log(`unsubscribing from ${room}`)
+      console.log(`[room] leaving ${room}`)
+      terrainCancelled = true
       group.dispose()
     })
   })
@@ -112,6 +119,7 @@ export function RoomViewer(props: RoomViewerProps) {
     // Apply terrain immediately if it arrived before this clear ran
     const t = untrack(terrain)
     if (t) {
+      console.log(`[room] terrain applied immediately (pre-loaded) — ${props.room}`)
       terrainLayerRef = createTerrainLayer(t)
       r.world.addChildAt(terrainLayerRef, 0)
       r.bringNavOverlayToTop()
@@ -134,17 +142,22 @@ export function RoomViewer(props: RoomViewerProps) {
       const canNavigate = (tx: number, ty: number) =>
         !bounds || isRoomInWorld(tx, ty, bounds)
 
+      const navTo = (target: string) => {
+        console.log(`[room] navigate requested: ${props.room} → ${target}`)
+        nav(target, shard)
+      }
+
       useRoomNavigationKeys({
         currentRoom: () => props.room,
         worldBounds,
-        onMove: (rx, ry) => nav(formatRoomName(rx, ry), shard),
+        onMove: (rx, ry) => navTo(formatRoomName(rx, ry)),
       })
 
       r.setupNavigationZones({
-        west:  canNavigate(coord.x - 1, coord.y) ? () => nav(formatRoomName(coord.x - 1, coord.y), shard) : undefined,
-        east:  canNavigate(coord.x + 1, coord.y) ? () => nav(formatRoomName(coord.x + 1, coord.y), shard) : undefined,
-        north: canNavigate(coord.x, coord.y - 1) ? () => nav(formatRoomName(coord.x, coord.y - 1), shard) : undefined,
-        south: canNavigate(coord.x, coord.y + 1) ? () => nav(formatRoomName(coord.x, coord.y + 1), shard) : undefined,
+        west:  canNavigate(coord.x - 1, coord.y) ? () => navTo(formatRoomName(coord.x - 1, coord.y)) : undefined,
+        east:  canNavigate(coord.x + 1, coord.y) ? () => navTo(formatRoomName(coord.x + 1, coord.y)) : undefined,
+        north: canNavigate(coord.x, coord.y - 1) ? () => navTo(formatRoomName(coord.x, coord.y - 1)) : undefined,
+        south: canNavigate(coord.x, coord.y + 1) ? () => navTo(formatRoomName(coord.x, coord.y + 1)) : undefined,
       })
     }
   })
@@ -154,7 +167,11 @@ export function RoomViewer(props: RoomViewerProps) {
     const r = renderer()
     const t = terrain()
     if (!r || !t) return
-    if (terrainLayerRef?.parent) return  // already in scene (clear-effect handled it)
+    if (terrainLayerRef?.parent) {
+      console.log(`[room] terrain already in scene, skipping — ${props.room}`)
+      return
+    }
+    console.log(`[room] terrain applied (async) — ${props.room}`)
     terrainLayerRef = createTerrainLayer(t)
     r.world.addChildAt(terrainLayerRef, 0)
     r.bringNavOverlayToTop()
@@ -169,6 +186,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const { objects: objs, diff } = state
 
     if (!objLayer) {
+      console.log(`[room] object layer created — ${props.room}`)
       objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge)
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)

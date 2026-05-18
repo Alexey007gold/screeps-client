@@ -1,5 +1,7 @@
 import { Show } from 'solid-js'
 import { SelectionList } from '~/components/SelectionList.js'
+import { RoomInfoPanel } from '~/components/RoomInfoPanel.js'
+import { MapInfoPanel } from '~/components/MapInfoPanel.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
 
 const DENSITY_LABELS = ['Low', 'Medium', 'High', 'Ultra'] as const
@@ -84,6 +86,10 @@ interface SidebarProps {
   mapMode?: boolean
   hoveredRoomInfo?: RoomInfo | null
   selectedRoomInfo?: RoomInfo | null
+  room?: string
+  shard?: string | null
+  mapZoom?: number | null
+  mapSubsActive?: boolean | null
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -173,6 +179,12 @@ export function Sidebar(props: SidebarProps) {
             </button>
           )}
         </div>
+
+        <Show when={props.mapMode} fallback={
+          <RoomInfoPanel room={props.room ?? '—'} shard={props.shard ?? null} />
+        }>
+          <MapInfoPanel zoom={props.mapZoom} subsActive={props.mapSubsActive} />
+        </Show>
 
         <Show
           when={props.mapMode}

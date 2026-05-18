@@ -253,7 +253,6 @@ export class RoomRenderer {
 
     const onUp = (e: PointerEvent) => {
       if (this.canDrag) canvas.releasePointerCapture(e.pointerId)
-      const wasDragging = dragging
       dragging = false
 
       // Treat as click if pointer barely moved

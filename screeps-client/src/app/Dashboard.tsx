@@ -351,6 +351,10 @@ export function Dashboard() {
                   mapMode={mapMode()}
                   hoveredRoomInfo={hoveredRoomInfo()}
                   selectedRoomInfo={selectedRoomInfo()}
+                  room={room()}
+                  shard={shard()}
+                  mapZoom={mapZoom()}
+                  mapSubsActive={mapSubsActive()}
                 />
               </div>
             </div>
@@ -443,6 +447,10 @@ export function Dashboard() {
               mapMode={mapMode()}
               hoveredRoomInfo={hoveredRoomInfo()}
               selectedRoomInfo={selectedRoomInfo()}
+              room={room()}
+              shard={shard()}
+              mapZoom={mapZoom()}
+              mapSubsActive={mapSubsActive()}
             />
           </div>
         </div>
