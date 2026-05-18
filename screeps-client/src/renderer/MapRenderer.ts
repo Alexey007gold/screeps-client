@@ -376,8 +376,8 @@ export class MapRenderer {
     // User objects — blue for current user, red for others
     const dataRec = data as Record<string, [number, number][]>
     for (const key in dataRec) {
-      const positions = dataRec[key]
       if (MAP2_FIXED_KEYS.has(key)) continue
+      const positions = dataRec[key]
       if (!Array.isArray(positions)) continue
       if (positions.length === 0) continue
       for (const [x, y] of positions) {
@@ -692,15 +692,21 @@ export class MapRenderer {
 
 
   private nameLabelShouldShow(rx: number, ry: number): boolean {
-    if (!this.showRoomNames) return false
-    if (this.zoom < LOD_ZOOM_THRESHOLD) return false
     const b = this.worldBoundsSet
     if (b && (rx < b.minX || rx > b.maxX || ry < b.minY || ry > b.maxY)) return false
     return true
   }
 
   private updateAllNameLabels(): void {
+    // Hoist the global checks out of the per-room loop
+    const globalShow = this.showRoomNames && this.zoom >= LOD_ZOOM_THRESHOLD
+
     for (const [name, entry] of this.activeRooms) {
+      if (!globalShow) {
+        entry.nameLabel.visible = false
+        continue
+      }
+
       const coord = parseRoomName(name)
       if (!coord) continue
       entry.nameLabel.visible = this.nameLabelShouldShow(coord.x, coord.y)
@@ -853,12 +859,27 @@ export class MapRenderer {
     this.callbacks.onRoomHover(this.screenToRoom(sx, sy))
   }
 
+  private lastCheckX = 0
+  private lastCheckY = 0
+  private lastCheckScale = 0
+
   private checkVisibleRooms(): void {
-    const scale  = this.world.scale.x
-    const left   = (-this.world.x) / scale
-    const top    = (-this.world.y) / scale
-    const right  = (this.app.screen.width  - this.world.x) / scale
-    const bottom = (this.app.screen.height - this.world.y) / scale
+    const scale = this.world.scale.x
+    const worldX = this.world.x
+    const worldY = this.world.y
+
+    if (this.lastCheckX === worldX && this.lastCheckY === worldY && this.lastCheckScale === scale) {
+      return
+    }
+
+    this.lastCheckX = worldX
+    this.lastCheckY = worldY
+    this.lastCheckScale = scale
+
+    const left   = (-worldX) / scale
+    const top    = (-worldY) / scale
+    const right  = (this.app.screen.width  - worldX) / scale
+    const bottom = (this.app.screen.height - worldY) / scale
 
     const rxMin = Math.floor(left   / MAP_ROOM_SIZE) - 1
     const rxMax = Math.ceil (right  / MAP_ROOM_SIZE)
