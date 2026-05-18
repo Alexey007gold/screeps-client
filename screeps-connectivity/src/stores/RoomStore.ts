@@ -15,6 +15,33 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly roomObjects = new Map<string, RoomObjectMap>()
   private readonly roomSubCount = new Map<string, number>()
 
+  private parseFlagsString(flagsStr: string | undefined, roomName: string): RoomObject[] {
+    if (!flagsStr || flagsStr.length === 0) return []
+    const result: RoomObject[] = []
+    const entries = flagsStr.split('|')
+    for (const entry of entries) {
+      const parts = entry.split('~')
+      if (parts.length !== 5) continue
+      const [name, colorStr, secColorStr, xStr, yStr] = parts
+      const color = parseInt(colorStr, 10)
+      const secondaryColor = parseInt(secColorStr, 10)
+      const x = parseInt(xStr, 10)
+      const y = parseInt(yStr, 10)
+      if (isNaN(color) || isNaN(secondaryColor) || isNaN(x) || isNaN(y)) continue
+      result.push({
+        _id: name,
+        type: 'flag',
+        room: roomName,
+        name,
+        x,
+        y,
+        color,
+        secondaryColor,
+      })
+    }
+    return result
+  }
+
   constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger) {
     super(logger)
     this.http = http
@@ -125,7 +152,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const socketSub = this.socket.subscribe(channel)
 
     const listenerSub = this.socket.on(channel, (data) => {
-      const update = data as { objects: RoomObjectDiff; gameTime?: number; visual?: string }
+      const update = data as { objects: RoomObjectDiff; gameTime?: number; visual?: string; flags?: string }
       const current: RoomObjectMap = { ...(this.roomObjects.get(mapKey) ?? {}) }
 
       for (const [id, obj] of Object.entries(update.objects)) {
@@ -138,8 +165,43 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
         }
       }
 
+      // Parse and inject flags from the dedicated flags field
+      if ('flags' in update) {
+        const flags = this.parseFlagsString(update.flags, room)
+        // Remove old flag objects first
+        for (const id in current) {
+          if (current[id]?.type === 'flag') {
+            delete current[id]
+          }
+        }
+        // Add new flags
+        for (const flag of flags) {
+          const name = flag.name as string
+          current[name] = flag
+          this.logger.log(`[flag:room] ${name} @ ${room} (${flag.x},${flag.y})`)
+        }
+      }
+
+      // Build diff that includes flags so ObjectLayer can incremental-update them
+      const diff: RoomObjectDiff = { ...update.objects }
+      for (const id in current) {
+        const obj = current[id]
+        if (obj?.type === 'flag' && !(id in update.objects)) {
+          diff[id] = obj
+        }
+      }
+      // Mark removed flags in diff
+      const prevMap = this.roomObjects.get(mapKey)
+      if (prevMap) {
+        for (const id in prevMap) {
+          if (prevMap[id]?.type === 'flag' && !current[id]) {
+            diff[id] = null
+          }
+        }
+      }
+
       this.roomObjects.set(mapKey, current)
-      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current, diff: update.objects, visual: update.visual ?? '' })
+      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current, diff, visual: update.visual ?? '' })
     })
 
     return {

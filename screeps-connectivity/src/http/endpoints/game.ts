@@ -1,5 +1,5 @@
 import type { HttpClient } from '../HttpClient.js'
-import type { ApiRoomTerrainResponse, ApiRoomObjectsResponse, ApiShardsInfoResponse, ApiMapStatsResponse, ApiGameRoomsResponse } from '../../types/api.js'
+import type { ApiRoomTerrainResponse, ApiRoomObjectsResponse, ApiShardsInfoResponse, ApiMapStatsResponse, ApiGameRoomsResponse, ApiCreateFlagResponse } from '../../types/api.js'
 
 const DEFAULT_SHARD = 'shard0'
 
@@ -12,6 +12,7 @@ export interface GameEndpoints {
   worldSize(shard?: string): Promise<unknown>
   mapStats(rooms: string[], statName: string, shard?: string): Promise<ApiMapStatsResponse>
   roomsTerrain(rooms: string[], shard?: string): Promise<ApiGameRoomsResponse>
+  createFlag(room: string, x: number, y: number, name: string, color: number, secondaryColor: number, shard?: string): Promise<ApiCreateFlagResponse>
   market: {
     ordersIndex(shard?: string): Promise<unknown>
     myOrders(): Promise<unknown>
@@ -36,6 +37,7 @@ export function createGameEndpoints(http: HttpClient): GameEndpoints {
       const params = new URLSearchParams({ encoded: 'true', shard })
       return http.request('POST', `/api/game/rooms?${params}`, { rooms })
     },
+    createFlag: (room, x, y, name, color, secondaryColor, shard = DEFAULT_SHARD) => http.request('POST', '/api/game/create-flag', { room, x, y, name, color, secondaryColor, shard }),
     market: {
       ordersIndex: (shard = DEFAULT_SHARD) => http.request('GET', '/api/game/market/orders-index', { shard }),
       myOrders: () => http.request('GET', '/api/game/market/my-orders'),

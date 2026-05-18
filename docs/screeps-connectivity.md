@@ -671,6 +671,7 @@ http.game.time(shard?): Promise<{ ok, time }>
 http.game.worldSize(shard?): Promise<unknown>
 http.game.mapStats(rooms, statName, shard?): Promise<ApiMapStatsResponse>
 http.game.roomsTerrain(rooms, shard?): Promise<ApiGameRoomsResponse>
+http.game.createFlag(room, x, y, name, color, secondaryColor, shard?): Promise<ApiCreateFlagResponse>
 http.game.market.ordersIndex(shard?): Promise<unknown>
 http.game.market.myOrders(): Promise<unknown>
 http.game.market.orders(resourceType, shard?): Promise<unknown>
@@ -679,6 +680,25 @@ http.game.shards.info(): Promise<ApiShardsInfoResponse>
 ```
 
 Default shard is `'shard0'` for all endpoints that accept one.
+
+#### HTTP Events
+
+`HttpClient` emits events for every request lifecycle and token refresh. Listen with `client.http.on(event, handler)` — returns a `Subscription` with a `dispose()` method.
+
+```ts
+client.http.on('http:success', ({ method, path, status }) => {
+  // e.g. method='POST', path='/api/game/create-flag', status=200
+})
+
+client.http.on('http:error', ({ method, path, status, error }) => {
+  // e.g. status=500, error=new Error('HTTP 500: Server Error')
+})
+
+client.http.on('http:tokenRefresh', ({ token }) => {
+  // Screeps returns a fresh token in the x-token header on every response.
+  // This event fires whenever the header is present with a new value.
+})
+```
 
 #### `mapStats` detail
 

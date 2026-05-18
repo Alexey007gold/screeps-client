@@ -122,3 +122,9 @@ export interface ApiMapStatsResponse {
   statsMax: Record<string, unknown>
   users: Record<string, { _id: string; username: string; badge: ApiMapStatsBadge }>
 }
+
+export interface ApiCreateFlagResponse {
+  ok: number
+  name?: string
+  error?: string
+}

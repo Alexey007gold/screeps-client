@@ -6,6 +6,8 @@ import { createGameEndpoints, type GameEndpoints } from './endpoints/game.js'
 import { createUserEndpoints, type UserEndpoints } from './endpoints/user.js'
 import { createLeaderboardEndpoints, type LeaderboardEndpoints } from './endpoints/leaderboard.js'
 import { createExperimentalEndpoints, type ExperimentalEndpoints } from './endpoints/experimental.js'
+import type { HttpClientEvents } from '../types/events.js'
+import type { Subscription } from '../subscription/index.js'
 
 export interface RateLimitInfo {
   limit: number
@@ -13,7 +15,7 @@ export interface RateLimitInfo {
   reset: number
 }
 
-export class HttpClient {
+export class HttpClient extends EventTarget {
   readonly baseUrl: string
   private readonly authStrategy: AuthStrategy
   private readonly logger: Logger
@@ -28,6 +30,7 @@ export class HttpClient {
   readonly experimental: ExperimentalEndpoints
 
   constructor(opts: { url: string; auth: AuthStrategy; logger?: Logger }) {
+    super()
     this.baseUrl = opts.url.endsWith('/') ? opts.url : `${opts.url}/`
     this.authStrategy = opts.auth
     this.logger = opts.logger ?? Logger.create()
@@ -36,6 +39,23 @@ export class HttpClient {
     this.user = createUserEndpoints(this)
     this.leaderboard = createLeaderboardEndpoints(this)
     this.experimental = createExperimentalEndpoints(this)
+  }
+
+  emit<K extends string & keyof HttpClientEvents>(type: K, detail: HttpClientEvents[K]): void {
+    this.dispatchEvent(new CustomEvent(type, { detail }))
+  }
+
+  on<K extends string & keyof HttpClientEvents>(
+    type: K,
+    handler: (detail: HttpClientEvents[K]) => void,
+  ): Subscription {
+    const listener = (e: Event) => handler((e as CustomEvent<HttpClientEvents[K]>).detail)
+    this.addEventListener(type, listener)
+    return {
+      dispose: () => {
+        this.removeEventListener(type, listener)
+      },
+    }
   }
 
   async authenticate(): Promise<void> {
@@ -73,7 +93,10 @@ export class HttpClient {
     const res = await fetch(url.toString(), init)
 
     const newToken = res.headers.get('x-token')
-    if (newToken) this.token = newToken
+    if (newToken) {
+      this.token = newToken
+      this.emit('http:tokenRefresh', { token: newToken })
+    }
 
     this.updateRateLimit(path, res)
 
@@ -85,8 +108,12 @@ export class HttpClient {
     if (!res.ok) {
       let body = ''
       try { body = await res.text() } catch { /* ignore */ }
-      throw new Error(`HTTP ${res.status}: ${body}`)
+      const error = new Error(`HTTP ${res.status}: ${body}`)
+      this.emit('http:error', { method, path, status: res.status, error })
+      throw error
     }
+
+    this.emit('http:success', { method, path, status: res.status })
 
     const data = await res.json() as Record<string, unknown>
 

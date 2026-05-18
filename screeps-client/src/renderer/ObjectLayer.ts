@@ -10,6 +10,7 @@ import {
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
   ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART, ST_RAMPART_STROKE,
+  FLAG_COLORS,
 } from './colors.js'
 
 const CREEP_OUTER_R = TILE_SIZE * 0.44
@@ -172,7 +173,6 @@ function updateTowerFill(visual: ContainerWithTarget, height: number): void {
 const CTRL_OCTO_R  = TILE_SIZE * 0.65
 const CTRL_SEG_OUT = CTRL_OCTO_R
 const CTRL_SEG_IN  = TILE_SIZE * 0.42
-const CTRL_GEM_R   = CTRL_SEG_IN * 0.65
 
 function drawControllerSegments(
   g: Graphics,
@@ -220,38 +220,6 @@ function drawControllerSegments(
       g.fill({ color: 0x1e1e1e, alpha: 0.6 })
     }
   }
-}
-
-function drawControllerGem(g: Graphics, cx: number, cy: number, r: number): void {
-  // dark shadow ring
-  g.circle(cx, cy, r + 0.5)
-  g.fill(0x080818)
-  // main dark-blue body
-  g.moveTo(cx,           cy - r)
-  g.lineTo(cx + r,       cy - r * 0.2)
-  g.lineTo(cx + r * 0.6, cy + r)
-  g.lineTo(cx - r * 0.6, cy + r)
-  g.lineTo(cx - r,       cy - r * 0.2)
-  g.closePath()
-  g.fill(0x1c1c8c)
-  // upper-left facet: medium blue
-  g.moveTo(cx, cy - r)
-  g.lineTo(cx - r, cy - r * 0.2)
-  g.lineTo(cx - r * 0.1, cy + r * 0.15)
-  g.closePath()
-  g.fill(0x4545cc)
-  // upper-right facet: slightly darker
-  g.moveTo(cx, cy - r)
-  g.lineTo(cx + r, cy - r * 0.2)
-  g.lineTo(cx + r * 0.1, cy - r * 0.3)
-  g.closePath()
-  g.fill(0x2828a8)
-  // bright highlight near top-left
-  g.moveTo(cx - r * 0.25, cy - r * 0.82)
-  g.lineTo(cx - r * 0.72, cy - r * 0.08)
-  g.lineTo(cx - r * 0.02, cy - r * 0.22)
-  g.closePath()
-  g.fill(0x7878ee)
 }
 
 function isForeignCreep(obj: RoomObject, currentUserId?: string): boolean {
@@ -508,11 +476,6 @@ function createObjectVisual(
         badgeCache.getOrCreate(badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
       }
 
-      // Gem crystal on top
-      const gemG = new Graphics()
-      drawControllerGem(gemG, cx, cy, CTRL_GEM_R)
-      container.addChild(gemG)
-
       break
     }
     case 'energy': {
@@ -687,6 +650,64 @@ function createObjectVisual(
       g.fill(ST_GRAY)
       break
     }
+    case 'flag': {
+      const colorIdx = typeof obj.color === 'number' ? obj.color : 0
+      const secColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
+      const flagColor = FLAG_COLORS[colorIdx] ?? FLAG_COLORS[0]
+      const secColor = FLAG_COLORS[secColorIdx] ?? FLAG_COLORS[0]
+      const S = 1.5
+
+      // Flag pole — centered in tile, 50% bigger
+      const poleW = TILE_SIZE * 0.08 * S
+      const poleH = TILE_SIZE * 0.7 * S
+      const poleX = cx - poleW / 2
+      const poleY = cy - TILE_SIZE * 0.25 * S
+      g.rect(poleX, poleY, poleW, poleH)
+      g.fill(0x888888)
+
+      // Primary flag triangle — attached to top-right of pole, waving right
+      const attachX = poleX + poleW
+      const attachY = poleY
+      const tipX = attachX + TILE_SIZE * 0.45 * S
+      const midY = attachY + TILE_SIZE * 0.12 * S
+      const bottomY = attachY + TILE_SIZE * 0.4 * S
+
+      g.moveTo(attachX, attachY)
+      g.lineTo(tipX, midY)
+      g.lineTo(attachX, bottomY)
+      g.closePath()
+      g.fill(flagColor)
+
+      // Secondary flag triangle (inner)
+      const secOff = TILE_SIZE * 0.08 * S
+      const secTipX = attachX + TILE_SIZE * 0.28 * S
+      const secMidY = attachY + secOff + TILE_SIZE * 0.06 * S
+      const secBottomY = attachY + secOff + TILE_SIZE * 0.22 * S
+
+      g.moveTo(attachX, attachY + secOff)
+      g.lineTo(secTipX, secMidY)
+      g.lineTo(attachX, secBottomY)
+      g.closePath()
+      g.fill(secColor)
+
+      container.addChild(g)
+
+      // Label with flag name
+      if (typeof obj.name === 'string') {
+        const label = new Text({
+          text: obj.name as string,
+          style: { fontSize: LABEL_FONT_SIZE, fill: 0xffffff },
+        })
+        label.scale.set(LABEL_FONT_SCALE)
+        label.anchor.set(0.5, 0)
+        label.x = cx
+        label.y = cy + TILE_SIZE * 0.55
+        label.visible = showLabel
+        ;(container as ContainerWithTarget).__nameLabel = label
+        container.addChild(label)
+      }
+      break
+    }
     default: {
       // Structures (fallback)
       const size = TILE_SIZE - 2
@@ -695,7 +716,7 @@ function createObjectVisual(
     }
   }
 
-  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller') {
+  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller' && obj.type !== 'flag') {
     container.addChild(g)
   }
 
@@ -717,6 +738,7 @@ function createObjectVisual(
   }
 
   if (obj.type === 'creep') container.zIndex = 1
+  if (obj.type === 'flag') container.zIndex = 10
 
   container.position.set(obj.x * TILE_SIZE, obj.y * TILE_SIZE)
   return container
@@ -819,7 +841,13 @@ export class ObjectLayer {
       for (const visual of this.objects.values()) {
         if (visual.__nameLabel) {
           visual.__nameLabel.scale.set(s)
-          visual.__nameLabel.y = labelY
+          if (visual.__nameLabel.anchor.y === 0) {
+            // Flag label — anchored at top, positioned below the flag
+            visual.__nameLabel.y = TILE_SIZE / 2 + TILE_SIZE * 0.55
+          } else {
+            // Creep label — anchored at bottom, positioned above the creep
+            visual.__nameLabel.y = labelY
+          }
         }
       }
     }

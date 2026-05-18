@@ -2,6 +2,7 @@ import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { MapViewer } from '~/components/MapViewer.js'
+import { ToastContainer } from '~/components/ToastContainer.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
@@ -455,6 +456,7 @@ export function Dashboard() {
           </div>
         </div>
       </Show>
+      <ToastContainer />
     </div>
   )
 }

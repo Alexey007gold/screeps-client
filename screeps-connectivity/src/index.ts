@@ -24,6 +24,7 @@ export type {
   RoomMap2Data,
   UserInfo,
   CpuStats,
+  WorldStatus,
   ConsoleMessage,
   ServerVersion,
   ShardInfo,
@@ -34,7 +35,7 @@ export type {
 } from './types/game.js'
 
 export { badgeToSvg } from './badge/index.js'
-export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus } from './types/events.js'
+export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus, HttpClientEvents } from './types/events.js'
 
 export type { HttpClient, RateLimitInfo } from './http/HttpClient.js'
 export type { SocketClient } from './socket/SocketClient.js'

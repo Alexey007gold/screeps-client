@@ -8,6 +8,7 @@ const mockUser: UserInfo = { _id: 'uid1', username: 'user', email: 'a@b.com', cp
 function makeStore() {
   const http = {
     auth: { me: vi.fn().mockResolvedValue({ ...mockUser, ok: 1 }) },
+    user: { worldStatus: vi.fn().mockResolvedValue({ ok: 1, status: 'normal' }) },
   } as unknown as import('../../src/http/HttpClient.js').HttpClient
 
   const socket = {
@@ -24,6 +25,39 @@ describe('UserStore', () => {
     const { store } = makeStore()
     const user = await store.me()
     expect(user.username).toBe('user')
+  })
+
+  it('fetches world status from API and emits event', async () => {
+    const { store, http } = makeStore()
+    const events: Array<{ status: string }> = []
+    store.on('user:worldStatus', e => events.push(e))
+
+    const status = await store.worldStatus()
+
+    expect(status).toBe('normal')
+    expect(store.worldStatusValue).toBe('normal')
+    expect(http.user.worldStatus).toHaveBeenCalledOnce()
+    expect(events).toEqual([{ status: 'normal' }])
+  })
+
+  it('caches world status after first fetch', async () => {
+    const { store, http } = makeStore()
+
+    await store.worldStatus()
+    await store.worldStatus()
+
+    expect(http.user.worldStatus).toHaveBeenCalledOnce()
+  })
+
+  it('refreshWorldStatus() bypasses cached world status', async () => {
+    const { store, http } = makeStore()
+
+    await store.worldStatus()
+    ;(http.user.worldStatus as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: 1, status: 'lost' })
+    const status = await store.refreshWorldStatus()
+
+    expect(status).toBe('lost')
+    expect(http.user.worldStatus).toHaveBeenCalledTimes(2)
   })
 
   it('caches user info after first fetch', async () => {

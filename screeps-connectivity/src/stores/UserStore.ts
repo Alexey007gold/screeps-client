@@ -1,7 +1,7 @@
 import { TypedStore } from './TypedStore.js'
 import type { Logger } from '../logger.js'
 import type { UserStoreEvents } from '../types/events.js'
-import type { UserInfo, CpuStats, ConsoleMessage } from '../types/game.js'
+import type { UserInfo, CpuStats, ConsoleMessage, WorldStatus } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
@@ -19,6 +19,8 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   get userInfo(): UserInfo | null { return this._userInfo }
   private _userId: string | null = null
   get userId(): string | null { return this._userId }
+  private _worldStatus: WorldStatus | null = null
+  get worldStatusValue(): WorldStatus | null { return this._worldStatus }
 
   constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, maxConsoleSize = 100) {
     super(logger)
@@ -30,7 +32,11 @@ export class UserStore extends TypedStore<UserStoreEvents> {
 
   async me(): Promise<UserInfo> {
     const cached = this.cache.get<UserInfo>('user/me')
-    if (cached) return cached
+    if (cached) {
+      this._userId = cached._id
+      this._userInfo = cached
+      return cached
+    }
     this.logger.log('fetch me')
     const res = await this.http.auth.me()
     const user = res as unknown as UserInfo
@@ -45,6 +51,27 @@ export class UserStore extends TypedStore<UserStoreEvents> {
     this.logger.log('refresh me')
     this.cache.delete('user/me')
     return this.me()
+  }
+
+  async worldStatus(): Promise<WorldStatus> {
+    const cached = this.cache.get<WorldStatus>('user/worldStatus')
+    if (cached) {
+      this._worldStatus = cached
+      return cached
+    }
+
+    this.logger.log('fetch world status')
+    const res = await this.http.user.worldStatus()
+    this._worldStatus = res.status
+    this.cache.set('user/worldStatus', res.status, 60_000)
+    this.emit('user:worldStatus', { status: res.status })
+    return res.status
+  }
+
+  async refreshWorldStatus(): Promise<WorldStatus> {
+    this.logger.log('refresh world status')
+    this.cache.delete('user/worldStatus')
+    return this.worldStatus()
   }
 
   subscribe(channel: 'console' | 'cpu' | 'code'): Subscription {
@@ -94,6 +121,57 @@ export class UserStore extends TypedStore<UserStoreEvents> {
     return {
       dispose: () => {
         this.logger.log('unsubscribe', channel)
+        disposed = true
+        socketSub?.dispose()
+        listenerSub?.dispose()
+      },
+    }
+  }
+
+  /** Subscribe to the general user stream to receive global data like flags. */
+  subscribeUserStream(): Subscription {
+    this.logger.log('subscribe user stream')
+    let socketSub: Subscription | null = null
+    let listenerSub: Subscription | null = null
+    let disposed = false
+
+    const setup = async () => {
+      try {
+        const uid = this._userId ?? (await this.me())._id
+        if (disposed) return
+        const fullChannel = `user:${uid}`
+        socketSub = this.socket.subscribe(fullChannel)
+        listenerSub = this.socket.on(fullChannel, (data) => {
+          const payload = data as Record<string, unknown>
+          // Log flags received via user stream
+          if (payload && typeof payload === 'object' && 'flags' in payload) {
+            const flags = payload.flags as Record<string, unknown> | undefined
+            if (flags && typeof flags === 'object') {
+              for (const [name, flagData] of Object.entries(flags)) {
+                const fd = flagData as Record<string, unknown> | null
+                if (fd && typeof fd === 'object') {
+                  const room = fd.room ?? 'unknown'
+                  const x = fd.x ?? '?'
+                  const y = fd.y ?? '?'
+                  this.logger.log(`[flag:user] ${name} @ ${room} (${x},${y})`)
+                }
+              }
+            }
+          }
+          this.emit('user:stream', payload)
+        })
+      } catch (err) {
+        if (!disposed) {
+          this.dispatchEvent(new ErrorEvent('error', { error: err instanceof Error ? err : new Error(String(err)) }))
+        }
+      }
+    }
+
+    void setup()
+
+    return {
+      dispose: () => {
+        this.logger.log('unsubscribe user stream')
         disposed = true
         socketSub?.dispose()
         listenerSub?.dispose()

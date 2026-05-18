@@ -1,6 +1,7 @@
 import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from '@bastianh/screeps-connectivity'
+import { addToast } from './toastStore.js'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
@@ -93,6 +94,16 @@ export async function connect(opts: {
       debug: import.meta.env.DEV,
     })
 
+    screepsClient.http.on('http:tokenRefresh', ({ token }) => {
+      log('token refreshed')
+      localStorage.setItem('screeps:token', token)
+    })
+
+    screepsClient.http.on('http:error', ({ method, path, error }) => {
+      log('http error:', method, path, error.message)
+      addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
+    })
+
     screepsClient.stores.server.on('server:disconnected', (data) => {
       log(`server disconnected (willReconnect: ${data.willReconnect})`)
       if (!data.willReconnect) {
@@ -113,6 +124,8 @@ export async function connect(opts: {
       log(`user: ${info.username} (id: ${info._id})`)
       setUserInfo(info)
     })
+
+    screepsClient.stores.user.subscribeUserStream()
     screepsClient.stores.server.on('server:version', (v) => {
       log(`server version: ${v.package ?? 'unknown'}`)
       setServerVersion(v)

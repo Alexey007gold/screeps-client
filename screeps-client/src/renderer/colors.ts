@@ -45,6 +45,20 @@ export const OBJ_WALL   = 0x21262d
 export const OBJ_ROAD   = TERRAIN_ROAD
 export const OBJ_DEFAULT = 0xc9d1d9  // unknown type fallback
 
+// ── Flag colors (Screeps canonical) ───────────────────────────────────────
+export const FLAG_COLORS: number[] = [
+  0xffffff, // 0 white
+  0x808080, // 1 grey
+  0xff0000, // 2 red
+  0x800080, // 3 purple
+  0x0000ff, // 4 blue
+  0x00ffff, // 5 cyan
+  0x008000, // 6 green
+  0xffff00, // 7 yellow
+  0xffa500, // 8 orange
+  0xa52a2a, // 9 brown
+]
+
 export const OBJECT_COLORS: Record<string, number> = {
   creep:       OBJ_ORANGE,
   spawn:       OBJ_BLUE,

@@ -78,6 +78,7 @@ export class ScreepsClient {
     await this.socket.connect(this.http.token!)
     await Promise.all([
       this.stores.user.me(),
+      this.stores.user.worldStatus(),
       this.stores.server.version(),
     ])
   }

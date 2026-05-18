@@ -8,11 +8,13 @@ import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo } from '~/stores/clientStore.js'
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
+import { addToast } from '~/stores/toastStore.js'
 import { setRoomObjectCount } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from '@bastianh/screeps-connectivity'
 import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
+import {flagDraft, roomViewMode, FLAG_COLOR_MAP} from '~/stores/roomViewStore';
 
 interface RoomViewerProps {
   room: string
@@ -206,64 +208,93 @@ export function RoomViewer(props: RoomViewerProps) {
       r.world.addChild(visualLayer.container)
       r.bringNavOverlayToTop()
 
-      // Wire up tile click → selection
+      // Wire up tile click → current room interaction mode
       r.setTileHandlers(
-        // hover: nothing extra needed beyond what HoverHighlightLayer does internally
-        (_tx, _ty) => {},
-        (tx, ty, ctrlKey) => {
-          if (!objLayer) return
-          const hits = objLayer.getObjectsAtTile(tx, ty)
-          if (hits.length === 0) return
+          // hover: nothing extra needed beyond what HoverHighlightLayer does internally
+          (_tx, _ty) => {},
+          (tx, ty, ctrlKey) => {
+            const mode = roomViewMode()
 
-          let nextSelection = [...selection()]
+            if (mode === 'flag') {
+              const c = client()
+              if (!c) return
 
-          if (ctrlKey) {
-            // Ctrl+Click: if ANY object on the tile is already selected → deselect
-            // those objects only; otherwise add all objects on the tile.
-            const hitIds = new Set(hits.map(h => h.id))
-            const hasSelected = nextSelection.some(s => hitIds.has(s.id))
+              const draft = flagDraft()
+              const name = draft.name.trim()
+              if (!name) return
 
-            if (hasSelected) {
-              // Deselect the objects on this tile
-              nextSelection = nextSelection.filter(s => !hitIds.has(s.id))
-            } else {
-              // Add all objects on this tile
-              const toAdd = hits
-                .filter(({ id }) => !nextSelection.some(s => s.id === id))
-                .map(({ id, obj }) => ({
-                  id,
-                  type: obj.type,
-                  name: typeof obj.name === 'string' ? obj.name : undefined,
-                  x: obj.x,
-                  y: obj.y,
-                  raw: obj,
-                }))
-              nextSelection = [...nextSelection, ...toAdd]
+              const color = FLAG_COLOR_MAP[draft.color] ?? 0
+              const secondaryColor = FLAG_COLOR_MAP[draft.secondaryColor] ?? 0
+              c.http.game.createFlag(props.room, tx, ty, name, color, secondaryColor, props.shard ?? undefined)
+                  .then(() => addToast(`Flag "${name}" created`, 'success'))
+                  .catch((err) => console.error('[room] create flag failed:', err))
+              return
             }
-          } else {
-            // Normal click: replace selection with objects on this tile
-            nextSelection = hits.map(({ id, obj }) => ({
-              id,
-              type: obj.type,
-              name: typeof obj.name === 'string' ? obj.name : undefined,
-              x: obj.x,
-              y: obj.y,
-              raw: obj,
-            }))
-          }
 
-          setSelection(nextSelection)
+            if (mode === 'build') {
+              return
+            }
 
-          // Rebuild visual overlays from the full new selection
-          const visuals = nextSelection
-            .map(({ id, type }) => ({
-              id,
-              type,
-              visual: objLayer!.getVisualById(id)!,
-            }))
-            .filter(v => v.visual != null)
-          r.hoverLayer.setSelectedObjects(visuals)
-        },
+            if (!objLayer) return
+            const hits = objLayer.getObjectsAtTile(tx, ty)
+
+            if (hits.length === 0) {
+              if (!ctrlKey) {
+                setSelection([])
+                r.hoverLayer.clearSelection()
+              }
+              return
+            }
+
+            let nextSelection = [...selection()]
+
+            if (ctrlKey) {
+              // Ctrl+Click: if ANY object on the tile is already selected → deselect
+              // those objects only; otherwise add all objects on the tile.
+              const hitIds = new Set(hits.map(h => h.id))
+              const hasSelected = nextSelection.some(s => hitIds.has(s.id))
+
+              if (hasSelected) {
+                // Deselect the objects on this tile
+                nextSelection = nextSelection.filter(s => !hitIds.has(s.id))
+              } else {
+                // Add all objects on this tile
+                const toAdd = hits
+                    .filter(({ id }) => !nextSelection.some(s => s.id === id))
+                    .map(({ id, obj }) => ({
+                      id,
+                      type: obj.type,
+                      name: typeof obj.name === 'string' ? obj.name : undefined,
+                      x: obj.x,
+                      y: obj.y,
+                      raw: obj,
+                    }))
+                nextSelection = [...nextSelection, ...toAdd]
+              }
+            } else {
+              // Normal click: replace selection with objects on this tile
+              nextSelection = hits.map(({ id, obj }) => ({
+                id,
+                type: obj.type,
+                name: typeof obj.name === 'string' ? obj.name : undefined,
+                x: obj.x,
+                y: obj.y,
+                raw: obj,
+              }))
+            }
+
+            setSelection(nextSelection)
+
+            // Rebuild visual overlays from the full new selection
+            const visuals = nextSelection
+                .map(({ id, type }) => ({
+                  id,
+                  type,
+                  visual: objLayer!.getVisualById(id)!,
+                }))
+                .filter(v => v.visual != null)
+            r.hoverLayer.setSelectedObjects(visuals)
+          },
       )
     }
 

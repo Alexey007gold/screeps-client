@@ -81,11 +81,38 @@ export class ActionAnimationLayer {
       const elapsed = now - anim.startTime
       const progress = Math.min(1, elapsed / anim.duration)
 
-      const currentX = anim.fromX + (anim.toX - anim.fromX) * progress
-      const currentY = anim.fromY + (anim.toY - anim.fromY) * progress
+      let startX: number
+      let startY: number
+      let endX: number
+      let endY: number
 
-      this.graphics.moveTo(anim.fromX, anim.fromY)
-      this.graphics.lineTo(currentX, currentY)
+      const buildRatio = 0.5
+      const holdRatio = 0.2
+
+      if (progress < buildRatio) {
+        // Build phase: beam grows from source toward target
+        const p = progress / buildRatio
+        startX = anim.fromX
+        startY = anim.fromY
+        endX = anim.fromX + (anim.toX - anim.fromX) * p
+        endY = anim.fromY + (anim.toY - anim.fromY) * p
+      } else if (progress < buildRatio + holdRatio) {
+        // Hold phase: full beam visible
+        startX = anim.fromX
+        startY = anim.fromY
+        endX = anim.toX
+        endY = anim.toY
+      } else {
+        // Dissolve phase: beam shrinks from the source (back) toward target
+        const p = (progress - buildRatio - holdRatio) / (1 - buildRatio - holdRatio)
+        startX = anim.fromX + (anim.toX - anim.fromX) * p
+        startY = anim.fromY + (anim.toY - anim.fromY) * p
+        endX = anim.toX
+        endY = anim.toY
+      }
+
+      this.graphics.moveTo(startX, startY)
+      this.graphics.lineTo(endX, endY)
       this.graphics.stroke({ width: anim.width, color: anim.color })
       anyActive = true
 

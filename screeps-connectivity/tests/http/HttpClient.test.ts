@@ -112,4 +112,38 @@ describe('HttpClient', () => {
     const res = await http.request<{ ok: number; data: { result: number } }>('GET', '/api/test')
     expect(res.data.result).toBe(42)
   })
+
+  it('emits http:tokenRefresh when x-token header is present', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }, {
+      headers: { 'content-type': 'application/json', 'x-token': 'new-tok' },
+    }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 'old' }) })
+    const handler = vi.fn()
+    http.on('http:tokenRefresh', handler)
+    await http.request('GET', '/api/version')
+    expect(handler).toHaveBeenCalledWith({ token: 'new-tok' })
+  })
+
+  it('emits http:success on 200 response', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    const handler = vi.fn()
+    http.on('http:success', handler)
+    await http.request('GET', '/api/version')
+    expect(handler).toHaveBeenCalledWith({ method: 'GET', path: '/api/version', status: 200 })
+  })
+
+  it('emits http:error on non-2xx response', async () => {
+    fetchMock.mockResolvedValue(new Response('Server Error', { status: 500 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    const handler = vi.fn()
+    http.on('http:error', handler)
+    await expect(http.request('GET', '/api/version')).rejects.toThrow('HTTP 500')
+    expect(handler).toHaveBeenCalledOnce()
+    const arg = handler.mock.calls[0][0]
+    expect(arg.method).toBe('GET')
+    expect(arg.path).toBe('/api/version')
+    expect(arg.status).toBe(500)
+    expect(arg.error).toBeInstanceOf(Error)
+  })
 })

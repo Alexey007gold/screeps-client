@@ -18,11 +18,23 @@ class MockWS {
 
 beforeEach(() => {
   MockWS.instances = []
-  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
-    new Response(JSON.stringify({ ok: 1, token: 'authed' }), {
-      headers: { 'content-type': 'application/json' },
-    })
-  )))
+  vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+    const path = new URL(url).pathname
+
+    if (path === '/api/user/world-status') {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: 1, status: 'normal' }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+    }
+
+    return Promise.resolve(
+      new Response(JSON.stringify({ ok: 1, token: 'authed', _id: 'uid1', username: 'user', serverData: { features: [], shards: [] } }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    )
+  }))
 })
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -66,5 +78,28 @@ describe('ScreepsClient', () => {
       WebSocket: MockWS as unknown as typeof WebSocket,
     })
     expect(client.isConnected).toBe(false)
+  })
+
+  it('connect() fetches user info, world status, and server version', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'tok' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+    })
+
+    const connectPromise = client.connect()
+    await new Promise(r => setTimeout(r, 0))
+    const ws = MockWS.instances[0]
+    ws.simulateOpen()
+    ws.simulateMessage('auth ok tok')
+    await connectPromise
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).toContain('/api/auth/me')
+    expect(paths).toContain('/api/user/world-status')
+    expect(paths).toContain('/api/version')
+    expect(client.stores.user.worldStatusValue).toBe('normal')
   })
 })

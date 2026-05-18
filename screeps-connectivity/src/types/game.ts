@@ -1,135 +1,139 @@
 export interface RoomMap2Data {
-  w?: [number, number][] | null    // player-built walls / ramparts
-  r?: [number, number][] | null    // roads
-  pb?: [number, number][] | null   // power banks / power
-  p?: [number, number][] | null    // portals
-  s?: [number, number][] | null    // sources
-  c?: [number, number][] | null    // controllers
-  m?: [number, number][] | null    // minerals
-  k?: [number, number][] | null    // source keeper lairs
-  [userId: string]: [number, number][] | null | undefined  // structures + creeps for that user
+    w?: [number, number][] | null    // player-built walls / ramparts
+    r?: [number, number][] | null    // roads
+    pb?: [number, number][] | null   // power banks / power
+    p?: [number, number][] | null    // portals
+    s?: [number, number][] | null    // sources
+    c?: [number, number][] | null    // controllers
+    m?: [number, number][] | null    // minerals
+    k?: [number, number][] | null    // source keeper lairs
+    [userId: string]: [number, number][] | null | undefined  // structures + creeps for that user
 }
 
 export enum TerrainType {
-  Plain = 0,
-  Wall = 1,
-  Swamp = 2,
+    Plain = 0,
+    Wall = 1,
+    Swamp = 2,
 }
 
 export class RoomTerrain {
-  readonly raw: Uint8Array
+    readonly raw: Uint8Array
 
-  constructor(data: Uint8Array) {
-    this.raw = data
-  }
-
-  get(x: number, y: number): TerrainType {
-    return this.raw[y * 50 + x] as TerrainType
-  }
-
-  static fromEncodedString(encoded: string): RoomTerrain {
-    const data = new Uint8Array(2500)
-    for (let i = 0; i < 2500; i++) {
-      const v = parseInt(encoded[i], 10)
-      data[i] = v === 3 ? TerrainType.Wall : (v as TerrainType)
+    constructor(data: Uint8Array) {
+        this.raw = data
     }
-    return new RoomTerrain(data)
-  }
+
+    static fromEncodedString(encoded: string): RoomTerrain {
+        const data = new Uint8Array(2500)
+        for (let i = 0; i < 2500; i++) {
+            const v = parseInt(encoded[i], 10)
+            data[i] = v === 3 ? TerrainType.Wall : (v as TerrainType)
+        }
+        return new RoomTerrain(data)
+    }
+
+    get(x: number, y: number): TerrainType {
+        return this.raw[y * 50 + x] as TerrainType
+    }
 }
 
 export interface Badge {
-  type: number | { path1: string; path2: string }
-  color1: string | number
-  color2: string | number
-  color3: string | number
-  param?: number
-  flip: boolean
+    type: number | { path1: string; path2: string }
+    color1: string | number
+    color2: string | number
+    color3: string | number
+    param?: number
+    flip: boolean
 }
 
 export interface RoomObject {
-  _id: string
-  type: string
-  room: string
-  x: number
-  y: number
-  [key: string]: unknown
+    _id: string
+    type: string
+    room: string
+    x: number
+    y: number
+
+    [key: string]: unknown
 }
 
 export type RoomObjectMap = Record<string, RoomObject>
 export type RoomObjectDiff = Record<string, Partial<RoomObject> | null>
 
 export interface UserInfo {
-  _id: string
-  username: string
-  email: string
-  cpu: number
-  gcl: number
-  credits: number
-  badge: Badge
+    _id: string
+    username: string
+    email: string
+    cpu: number
+    gcl: number
+    credits: number
+    badge: Badge
 }
 
 export interface CpuStats {
-  cpu: number
-  memory: number
+    cpu: number
+    memory: number
 }
 
+export type WorldStatus = 'normal' | 'lost' | 'empty'
+
+
 export interface ConsoleMessage {
-  log: string[]
-  results: string[]
-  error: string[]
+    log: string[]
+    results: string[]
+    error: string[]
 }
 
 export interface ServerVersion {
-  ok: number
-  package: number
-  protocol: number
-  users: number
-  serverData: {
-    historyChunkSize: number
-    features: Array<{ name: string }>
-    shards: string[]
-  }
+    ok: number
+    package: number
+    protocol: number
+    users: number
+    serverData: {
+        historyChunkSize: number
+        features: Array<{ name: string }>
+        shards: string[]
+    }
 }
 
 export interface ShardInfo {
-  name: string
-  lastTicks: number[]
-  cpuLimit: number
-  rooms: number
-  users: number
-  tick: number
+    name: string
+    lastTicks: number[]
+    cpuLimit: number
+    rooms: number
+    users: number
+    tick: number
 }
 
 export interface WorldInfo {
-  shard: string | null
-  width: number
-  height: number
-  // Inclusive coordinate bounds of valid rooms.
-  // Uses the internal system where W0 = x = -1, E0 = x = 0, N0 = y = -1, S0 = y = 0.
-  minX: number
-  maxX: number
-  minY: number
-  maxY: number
+    shard: string | null
+    width: number
+    height: number
+    // Inclusive coordinate bounds of valid rooms.
+    // Uses the internal system where W0 = x = -1, E0 = x = 0, N0 = y = -1, S0 = y = 0.
+    minX: number
+    maxX: number
+    minY: number
+    maxY: number
 }
 
 export interface VisualStyle {
-  opacity?: number
-  fill?: string
-  stroke?: string
-  strokeWidth?: number
-  color?: string
-  backgroundColor?: string
-  backgroundPadding?: number
-  align?: 'center' | 'left' | 'right'
-  lineStyle?: 'dashed' | 'dotted' | 'solid'
-  width?: number
-  radius?: number
-  font?: string | number
+    opacity?: number
+    fill?: string
+    stroke?: string
+    strokeWidth?: number
+    color?: string
+    backgroundColor?: string
+    backgroundPadding?: number
+    align?: 'center' | 'left' | 'right'
+    lineStyle?: 'dashed' | 'dotted' | 'solid'
+    width?: number
+    radius?: number
+    font?: string | number
 }
 
 export type RoomVisualEntry =
-  | { t: 't'; x: number; y: number; text: string; s: VisualStyle }
-  | { t: 'c'; x: number; y: number; s: VisualStyle }
-  | { t: 'r'; x: number; y: number; w: number; h: number; s: VisualStyle }
-  | { t: 'p'; points: [number, number][]; s: VisualStyle }
-  | { t: 'l'; x1: number; y1: number; x2: number; y2: number; s: VisualStyle }
+    | { t: 't'; x: number; y: number; text: string; s: VisualStyle }
+    | { t: 'c'; x: number; y: number; s: VisualStyle }
+    | { t: 'r'; x: number; y: number; w: number; h: number; s: VisualStyle }
+    | { t: 'p'; points: [number, number][]; s: VisualStyle }
+    | { t: 'l'; x1: number; y1: number; x2: number; y2: number; s: VisualStyle }
