@@ -76,9 +76,10 @@ function DefaultDetails(props: { item: SelectedObject }) {
   const fields = () => {
     const raw = props.item.raw as Record<string, unknown>
     const pairs: { key: string; value: string }[] = []
-    for (const [k, v] of Object.entries(raw)) {
+    for (const k in raw) {
       if (SKIP_FIELDS.has(k)) continue
       
+      const v = raw[k]
       const finalKey = k
       let finalValue = formatValue(v)
 
@@ -157,7 +158,14 @@ function DefaultDetails(props: { item: SelectedObject }) {
 }
 
 function StoreDetails(props: { store?: Record<string, number> }) {
-  const items = () => Object.entries(props.store || {})
+  const items = () => {
+    const storeObj = props.store || {}
+    const arr: [string, number][] = []
+    for (const res in storeObj) {
+      arr.push([res, storeObj[res]])
+    }
+    return arr
+  }
 
   return (
     <Show when={items().length > 0}>
