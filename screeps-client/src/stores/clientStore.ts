@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js'
-import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
-import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from 'screeps-connectivity'
+import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
+import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from '@bastianh/screeps-connectivity'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 

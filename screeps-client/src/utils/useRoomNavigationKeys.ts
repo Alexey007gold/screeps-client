@@ -1,6 +1,6 @@
 import { onCleanup } from 'solid-js'
 import { parseRoomName, isRoomInWorld } from './roomName.js'
-import type { WorldInfo } from 'screeps-connectivity'
+import type { WorldInfo } from '@bastianh/screeps-connectivity'
 
 interface UseRoomNavigationKeysOptions {
   currentRoom: () => string | null

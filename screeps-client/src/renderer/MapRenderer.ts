@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js'
-import type { RoomMap2Data, Badge } from 'screeps-connectivity'
+import type { RoomMap2Data, Badge } from '@bastianh/screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, imageBitmapToBlob } from './terrainCache.js'

@@ -1,4 +1,4 @@
-import type { WorldInfo } from 'screeps-connectivity'
+import type { WorldInfo } from '@bastianh/screeps-connectivity'
 
 export interface RoomCoord {
   x: number

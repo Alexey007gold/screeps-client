@@ -11,8 +11,8 @@ import { setSelection, clearSelection, selection, updateSelectionWithDiff } from
 import { setRoomObjectCount } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
-import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
-import { SubscriptionGroup } from 'screeps-connectivity'
+import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from '@bastianh/screeps-connectivity'
+import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
 
 interface RoomViewerProps {
   room: string
