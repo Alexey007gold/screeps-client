@@ -4,7 +4,7 @@ import { client, userInfo, worldBounds, setWorldBounds } from '~/stores/clientSt
 import { showMapRoomNames } from '~/stores/settingsStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
-import type { Map2Subscription } from 'screeps-connectivity'
+import type { Map2Subscription } from '@bastianh/screeps-connectivity'
 
 export interface RoomInfo {
   room: string
@@ -39,7 +39,7 @@ export function MapViewer(props: MapViewerProps) {
   const map2Subs = new Map<string, Map2Subscription>()
 
   // Per-room stats received from the library's mapStats store via events
-  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean; badge?: import('screeps-connectivity').Badge }>()
+  const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean; badge?: import('@bastianh/screeps-connectivity').Badge }>()
 
   // Fast change-detection for badges: roomName → JSON key of last seen badge.
   // If the key hasn't changed we skip re-rendering the badge entirely.

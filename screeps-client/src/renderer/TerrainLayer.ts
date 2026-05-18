@@ -1,5 +1,5 @@
 import { Graphics } from 'pixi.js'
-import { TerrainType, RoomTerrain } from 'screeps-connectivity'
+import { TerrainType, RoomTerrain } from '@bastianh/screeps-connectivity'
 import { TILE_SIZE } from './RoomRenderer.js'
 import { TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD, TERRAIN_BORDER } from './colors.js'
 

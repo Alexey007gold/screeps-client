@@ -1,4 +1,4 @@
-import type { ScreepsClient, RoomTerrain, RoomObjectMap } from 'screeps-connectivity'
+import type { ScreepsClient, RoomTerrain, RoomObjectMap } from '@bastianh/screeps-connectivity'
 
 export interface ClientState {
   client: ScreepsClient | null

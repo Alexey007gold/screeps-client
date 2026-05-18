@@ -1,7 +1,14 @@
 {
-  "name": "screeps-connectivity",
+  "name": "@bastianh/screeps-connectivity",
   "version": "0.1.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bastianh/screeps-client.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "exports": {
     ".": {
       "development": "./src/index.ts",
