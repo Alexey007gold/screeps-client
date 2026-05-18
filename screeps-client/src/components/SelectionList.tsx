@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import { selection, deselectItem } from '~/stores/selectionStore.js'
-import { gameTime } from '~/stores/clientStore.js'
+import { client, gameTime } from '~/stores/clientStore.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 
 // Mirror the palette from ObjectLayer so colors match
@@ -58,6 +58,7 @@ const TYPE_LABELS: Record<string, string> = {
   powerBank:   'Power Bank',
   portal:      'Portal',
   energy:      'Energy',
+  flag:        'Flag',
 }
 
 /** Fields we want to surface as key-value rows (exclude noisy / structural ones) */
@@ -202,9 +203,114 @@ function CreepDetails(props: { item: SelectedObject }) {
   )
 }
 
+const FLAG_COLOR_OPTIONS = [
+  { label: 'Red', value: 1 },
+  { label: 'Purple', value: 2 },
+  { label: 'Blue', value: 3 },
+  { label: 'Cyan', value: 4 },
+  { label: 'Green', value: 5 },
+  { label: 'Yellow', value: 6 },
+  { label: 'Orange', value: 7 },
+  { label: 'Brown', value: 8 },
+  { label: 'Grey', value: 9 },
+  { label: 'White', value: 10 },
+]
+
+function FlagDetails(props: { item: SelectedObject }) {
+  const raw = props.item.raw as Record<string, unknown>
+  const name = typeof raw.name === 'string' ? raw.name : ''
+  const room = typeof raw.room === 'string' ? raw.room : ''
+  const currentColor = typeof raw.color === 'number' ? raw.color : 1
+  const currentSecondaryColor = typeof raw.secondaryColor === 'number' ? raw.secondaryColor : 1
+
+  const handleColorChange = (color: number, secondaryColor: number) => {
+    const c = client()
+    if (!c) return
+    c.http.game.changeFlagColor(room, name, color, secondaryColor).catch(() => {})
+  }
+
+  const handleDelete = () => {
+    if (!window.confirm(`Delete flag "${name}"?`)) return
+    const c = client()
+    if (!c) return
+    c.http.game.removeFlag(room, name)
+      .then(() => {
+        deselectItem(props.item.id)
+      })
+      .catch(() => {})
+  }
+
+  const selectStyle = {
+    background: '#010409',
+    color: '#c9d1d9',
+    border: '1px solid #30363d',
+    'border-radius': '4px',
+    padding: '5px 6px',
+    'font-size': '12px',
+    width: '100%',
+  }
+
+  const labelStyle = {
+    display: 'flex',
+    'flex-direction': 'column',
+    gap: '4px',
+    'font-size': '11px',
+    color: '#8b949e',
+  } as const
+
+  return (
+    <div style={{ padding: '8px', display: 'flex', 'flex-direction': 'column', gap: '8px', background: '#0d1117' }}>
+      <label style={labelStyle}>
+        Primary color
+        <select
+          value={currentColor}
+          onChange={(e) => handleColorChange(Number(e.currentTarget.value), currentSecondaryColor)}
+          style={selectStyle}
+        >
+          <For each={FLAG_COLOR_OPTIONS}>
+            {(opt) => <option value={opt.value}>{opt.label}</option>}
+          </For>
+        </select>
+      </label>
+
+      <label style={labelStyle}>
+        Secondary color
+        <select
+          value={currentSecondaryColor}
+          onChange={(e) => handleColorChange(currentColor, Number(e.currentTarget.value))}
+          style={selectStyle}
+        >
+          <For each={FLAG_COLOR_OPTIONS}>
+            {(opt) => <option value={opt.value}>{opt.label}</option>}
+          </For>
+        </select>
+      </label>
+
+      <button
+        onClick={handleDelete}
+        style={{
+          background: '#f85149',
+          color: '#fff',
+          border: 'none',
+          'border-radius': '4px',
+          padding: '6px 8px',
+          'font-size': '12px',
+          cursor: 'pointer',
+          'margin-top': '4px',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = '#da3633')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = '#f85149')}
+      >
+        Delete flag
+      </button>
+    </div>
+  )
+}
+
 import { JSX } from 'solid-js'
 const CUSTOM_DETAILS: Record<string, (props: { item: SelectedObject }) => JSX.Element> = {
   creep: CreepDetails,
+  flag: FlagDetails,
 }
 
 function SelectionItem(props: { item: SelectedObject }) {

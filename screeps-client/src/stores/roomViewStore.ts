@@ -10,16 +10,21 @@ export interface FlagDraft {
 }
 
 export const FLAG_COLOR_MAP: Record<string, number> = {
-  COLOR_WHITE: 0,
-  COLOR_GREY: 1,
-  COLOR_RED: 2,
-  COLOR_PURPLE: 3,
-  COLOR_BLUE: 4,
-  COLOR_CYAN: 5,
-  COLOR_GREEN: 6,
-  COLOR_YELLOW: 7,
-  COLOR_ORANGE: 8,
-  COLOR_BROWN: 9,
+  COLOR_RED: 1,
+  COLOR_PURPLE: 2,
+  COLOR_BLUE: 3,
+  COLOR_CYAN: 4,
+  COLOR_GREEN: 5,
+  COLOR_YELLOW: 6,
+  COLOR_ORANGE: 7,
+  COLOR_BROWN: 8,
+  COLOR_GREY: 9,
+  COLOR_WHITE: 10,
+}
+
+export interface PendingTile {
+  tx: number
+  ty: number
 }
 
 const [roomViewMode, setRoomViewMode] = createSignal<RoomViewMode>('view')
@@ -28,9 +33,15 @@ const [flagDraft, setFlagDraft] = createSignal<FlagDraft>({
     color: 'COLOR_WHITE',
     secondaryColor: 'COLOR_WHITE',
 })
+const [pendingTile, setPendingTile] = createSignal<PendingTile | null>(null)
 
-export { roomViewMode, setRoomViewMode, flagDraft, setFlagDraft }
+export { roomViewMode, setRoomViewMode, flagDraft, setFlagDraft, pendingTile, setPendingTile }
+
+export function clearPendingTile(): void {
+  setPendingTile(null)
+}
 
 export function resetRoomViewMode(): void {
     setRoomViewMode('view')
+    clearPendingTile()
 }

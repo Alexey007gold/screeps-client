@@ -5,6 +5,14 @@ import { addToast } from './toastStore.js'
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
+export interface UserFlag {
+  room: string
+  x: number
+  y: number
+  color?: number
+  secondaryColor?: number
+}
+
 const log = import.meta.env.DEV
   ? (...args: unknown[]) => console.log('[client]', ...args)
   : () => {}
@@ -18,6 +26,7 @@ const [gameTime, setGameTime] = createSignal<number | null>(null)
 const [tickDuration, setTickDuration] = createSignal<number | null>(null)
 const [isGuest, setIsGuest] = createSignal(false)
 const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
+const [userFlags, setUserFlags] = createSignal<Record<string, UserFlag>>({})
 
 let lastGameTime = -1
 let lastTickTimestamp = -1
@@ -56,7 +65,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds, setWorldBounds }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds, setWorldBounds, userFlags }
 
 export async function connect(opts: {
   url: string
@@ -125,13 +134,22 @@ export async function connect(opts: {
       setUserInfo(info)
     })
 
-    screepsClient.stores.user.subscribeUserStream()
     screepsClient.stores.server.on('server:version', (v) => {
       log(`server version: ${v.package ?? 'unknown'}`)
       setServerVersion(v)
     })
 
+    screepsClient.stores.user.on('user:stream', (payload) => {
+      if (payload && typeof payload === 'object' && 'flags' in payload) {
+        const flags = payload.flags as Record<string, UserFlag> | undefined
+        if (flags && typeof flags === 'object') {
+          setUserFlags(flags)
+        }
+      }
+    })
+
     await screepsClient.connect()
+    screepsClient.stores.user.subscribeUserStream()
     setClient(screepsClient)
     setStatus('connected')
     log(`connected to ${opts.url}`)
@@ -186,6 +204,7 @@ export function disconnect(): void {
   setGameTime(null)
   setIsGuest(false)
   setWorldBounds(null)
+  setUserFlags({})
   resetTickTracking()
   localStorage.removeItem('screeps:token')
 }

@@ -1,6 +1,6 @@
 import { For } from 'solid-js'
 import { gameTime, tickDuration } from '~/stores/clientStore.js'
-import { roomObjectCount } from '~/stores/roomDataStore.js'
+import { roomObjectCount, roomOwner } from '~/stores/roomDataStore.js'
 import { roomViewMode, setRoomViewMode, type RoomViewMode } from '~/stores/roomViewStore.js'
 
 interface RoomInfoPanelProps {
@@ -48,6 +48,8 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
         </div>
         <div style={{ padding: '3px 0', color: '#8b949e' }}>Objects</div>
         <div style={{ padding: '3px 0', color: '#c9d1d9' }}>{roomObjectCount() ?? '—'}</div>
+        <div style={{ padding: '3px 0', color: '#8b949e' }}>Owner</div>
+        <div style={{ padding: '3px 0', color: '#c9d1d9' }}>{roomOwner()?.username ?? '—'}</div>
       </div>
     </div>
     <div

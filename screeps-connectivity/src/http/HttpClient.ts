@@ -117,6 +117,12 @@ export class HttpClient extends EventTarget {
 
     const data = await res.json() as Record<string, unknown>
 
+    if (typeof data['error'] === 'string') {
+      const error = new Error(`Screeps API error: ${data['error']}`)
+      this.emit('http:error', { method, path, status: res.status, error })
+      throw error
+    }
+
     if (typeof data['data'] === 'string' && (data['data'] as string).startsWith('gz:')) {
       data['data'] = await decompressGzip(data['data'] as string)
     }

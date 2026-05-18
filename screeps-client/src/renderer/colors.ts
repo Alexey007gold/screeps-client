@@ -47,16 +47,17 @@ export const OBJ_DEFAULT = 0xc9d1d9  // unknown type fallback
 
 // ── Flag colors (Screeps canonical) ───────────────────────────────────────
 export const FLAG_COLORS: number[] = [
-  0xffffff, // 0 white
-  0x808080, // 1 grey
-  0xff0000, // 2 red
-  0x800080, // 3 purple
-  0x0000ff, // 4 blue
-  0x00ffff, // 5 cyan
-  0x008000, // 6 green
-  0xffff00, // 7 yellow
-  0xffa500, // 8 orange
-  0xa52a2a, // 9 brown
+  0xffffff, // 0 white (fallback/default)
+  0xff0000, // 1 red
+  0x800080, // 2 purple
+  0x0000ff, // 3 blue
+  0x00ffff, // 4 cyan
+  0x008000, // 5 green
+  0xffff00, // 6 yellow
+  0xffa500, // 7 orange
+  0xa52a2a, // 8 brown
+  0x808080, // 9 grey
+  0xffffff, // 10 white
 ]
 
 export const OBJECT_COLORS: Record<string, number> = {

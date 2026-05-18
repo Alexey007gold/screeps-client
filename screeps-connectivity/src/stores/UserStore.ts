@@ -21,6 +21,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   get userId(): string | null { return this._userId }
   private _worldStatus: WorldStatus | null = null
   get worldStatusValue(): WorldStatus | null { return this._worldStatus }
+  private _mePromise: Promise<UserInfo> | null = null
 
   constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, maxConsoleSize = 100) {
     super(logger)
@@ -37,14 +38,21 @@ export class UserStore extends TypedStore<UserStoreEvents> {
       this._userInfo = cached
       return cached
     }
+    if (this._mePromise) {
+      return this._mePromise
+    }
     this.logger.log('fetch me')
-    const res = await this.http.auth.me()
-    const user = res as unknown as UserInfo
-    this._userId = user._id
-    this._userInfo = user
-    this.cache.set('user/me', user, 60_000)
-    this.emit('user:me', user)
-    return user
+    this._mePromise = this.http.auth.me().then((res) => {
+      const user = res as unknown as UserInfo
+      this._userId = user._id
+      this._userInfo = user
+      this.cache.set('user/me', user, 60_000)
+      this.emit('user:me', user)
+      return user
+    }).finally(() => {
+      this._mePromise = null
+    })
+    return this._mePromise
   }
 
   async refreshMe(): Promise<UserInfo> {

@@ -42,7 +42,7 @@ describe('game endpoints', () => {
     })
   })
 
-  it('createFlag uses default shard', async () => {
+  it('createFlag omits shard when not provided', async () => {
     fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
     const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
 
@@ -56,7 +56,30 @@ describe('game endpoints', () => {
       name: 'MyFlag',
       color: 1,
       secondaryColor: 2,
-      shard: 'shard0',
     })
+  })
+
+  it('genUniqueFlagName sends POST to /api/game/gen-unique-flag-name', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1, name: 'Flag1' }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+
+    const res = await http.game.genUniqueFlagName()
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/game/gen-unique-flag-name')
+    expect(init.method).toBe('POST')
+    expect(res.name).toBe('Flag1')
+  })
+
+  it('checkUniqueFlagName sends POST to /api/game/check-unique-flag-name', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+
+    await http.game.checkUniqueFlagName('MyFlag')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/game/check-unique-flag-name')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'MyFlag' })
   })
 })

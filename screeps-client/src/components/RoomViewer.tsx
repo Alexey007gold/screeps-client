@@ -9,12 +9,12 @@ import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBound
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
 import { addToast } from '~/stores/toastStore.js'
-import { setRoomObjectCount } from '~/stores/roomDataStore.js'
+import { setRoomObjectCount, setRoomOwner } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from '@bastianh/screeps-connectivity'
 import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
-import {flagDraft, roomViewMode, FLAG_COLOR_MAP} from '~/stores/roomViewStore';
+import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft} from '~/stores/roomViewStore';
 
 interface RoomViewerProps {
   room: string
@@ -30,7 +30,7 @@ export function RoomViewer(props: RoomViewerProps) {
   let terrainLayerRef: ReturnType<typeof createTerrainLayer> | null = null
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<{ room: string, data: RoomTerrain } | null>(null)
-  const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff } | null>(null)
+  const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string }> } | null>(null)
   const [visualState, setVisualState] = createSignal<string>('')
 
   onMount(async () => {
@@ -66,6 +66,7 @@ export function RoomViewer(props: RoomViewerProps) {
     setGameTime(null)
     clearSelection()
     setRoomObjectCount(null)
+    setRoomOwner(null)
 
     const group = new SubscriptionGroup()
 
@@ -89,11 +90,23 @@ export function RoomViewer(props: RoomViewerProps) {
       if (!data.diff) {
         console.log(`[room] objects loaded — ${room}: ${objectCount} objects, tick=${data.gameTime}`)
       }
-      setObjectState({ objects: data.objects, diff: data.diff })
+      setObjectState({ objects: data.objects, diff: data.diff, users: data.users })
       setVisualState(data.visual)
       setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
       setRoomObjectCount(objectCount)
+
+      // Extract room owner from controller
+      let owner: { userId: string; username: string } | null = null
+      for (const obj of Object.values(data.objects)) {
+        if (obj?.type === 'controller' && typeof obj.user === 'string') {
+          const userId = obj.user
+          const username = data.users?.[userId]?.username ?? userId
+          owner = { userId, username }
+          break
+        }
+      }
+      setRoomOwner(owner)
     }))
 
     onCleanup(() => {
@@ -111,6 +124,9 @@ export function RoomViewer(props: RoomViewerProps) {
 
     void props.room
     void props.shard
+
+    clearPendingTile()
+    r.hoverLayer.clearPendingTile()
 
     terrainLayerRef?.destroy()
     terrainLayerRef = null
@@ -169,6 +185,16 @@ export function RoomViewer(props: RoomViewerProps) {
     }
   })
 
+  // Clear pending marker when switching back to view mode
+  createEffect(() => {
+    const mode = roomViewMode()
+    const r = renderer()
+    if (mode === 'view' && r) {
+      clearPendingTile()
+      r.hoverLayer.clearPendingTile()
+    }
+  })
+
   // Apply terrain when it changes; skip if the clear-effect already applied it
   createEffect(() => {
     const r = renderer()
@@ -191,11 +217,11 @@ export function RoomViewer(props: RoomViewerProps) {
     const state = objectState()
     if (!r || !state) return
 
-    const { objects: objs, diff } = state
+    const { objects: objs, diff, users } = state
 
     if (!objLayer) {
       console.log(`[room] object layer created — ${props.room}`)
-      objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge)
+      objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge, users)
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)
       r.bringNavOverlayToTop()
@@ -216,24 +242,54 @@ export function RoomViewer(props: RoomViewerProps) {
             const mode = roomViewMode()
 
             if (mode === 'flag') {
+              const pending = pendingTile()
+              if (!pending || pending.tx !== tx || pending.ty !== ty) {
+                setPendingTile({ tx, ty })
+                r.hoverLayer.setPendingTile(tx, ty)
+                return
+              }
+
               const c = client()
               if (!c) return
 
               const draft = flagDraft()
               const name = draft.name.trim()
-              if (!name) return
+              if (!name) {
+                addToast('Flag name is required', 'error')
+                return
+              }
 
               const color = FLAG_COLOR_MAP[draft.color] ?? 0
               const secondaryColor = FLAG_COLOR_MAP[draft.secondaryColor] ?? 0
               c.http.game.createFlag(props.room, tx, ty, name, color, secondaryColor, props.shard ?? undefined)
-                  .then(() => addToast(`Flag "${name}" created`, 'success'))
+                  .then(() => {
+                    addToast(`Flag "${name}" created`, 'success')
+                    clearPendingTile()
+                    r.hoverLayer.clearPendingTile()
+                    c.http.game.genUniqueFlagName()
+                        .then((res) => setFlagDraft(prev => ({ ...prev, name: res.name })))
+                        .catch((err) => console.error('[room] gen unique flag name failed:', err))
+                  })
                   .catch((err) => console.error('[room] create flag failed:', err))
               return
             }
 
             if (mode === 'build') {
+              const pending = pendingTile()
+              if (!pending || pending.tx !== tx || pending.ty !== ty) {
+                setPendingTile({ tx, ty })
+                r.hoverLayer.setPendingTile(tx, ty)
+                return
+              }
+              // Second click on same tile in build mode — not implemented yet
+              clearPendingTile()
+              r.hoverLayer.clearPendingTile()
               return
             }
+
+            // view mode: clear any pending marker
+            clearPendingTile()
+            r.hoverLayer.clearPendingTile()
 
             if (!objLayer) return
             const hits = objLayer.getObjectsAtTile(tx, ty)
@@ -302,7 +358,7 @@ export function RoomViewer(props: RoomViewerProps) {
       updateSelectionWithDiff(diff, objs)
     }
 
-    objLayer.update(objs, diff)
+    objLayer.update(objs, diff, users)
 
     if (animLayer) {
       animLayer.clear()

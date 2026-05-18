@@ -233,8 +233,9 @@ function createObjectVisual(
   obj: RoomObject,
   showLabel = true,
   currentUserId?: string,
-  badge?: Badge,
+  _badge?: Badge,
   badgeCache?: BadgeTextureCache,
+  users?: Record<string, { _id: string; username: string; badge?: Badge }>,
 ): Container {
   const container = new Container()
   const g = new Graphics()
@@ -343,15 +344,10 @@ function createObjectVisual(
       innerG.fill(BG_DARK)
       bodyContainer.addChild(innerG)
 
-      // Center indicator: badge for own creep, red fill for foreign/NPC
-      const isOwn = !isForeign
-      if (isForeign) {
-        const markG = new Graphics()
-        markG.circle(0, 0, CREEP_INNER_R * 0.82)
-        markG.fill({ color: 0xcc1111, alpha: 0.8 })
-        bodyContainer.addChild(markG)
-      }
-      if (isOwn && badge && badgeCache) {
+      // Center indicator: owner's badge if available, red fill for foreign/NPC without badge
+      const creepUserId = typeof obj.user === 'string' ? obj.user : undefined
+      const creepBadge = creepUserId ? users?.[creepUserId]?.badge : undefined
+      if (creepBadge && badgeCache) {
         const badgeSprite = new Sprite()
         badgeSprite.anchor.set(0.5, 0.5)
         const size = CREEP_INNER_R * 2
@@ -359,11 +355,16 @@ function createObjectVisual(
         badgeSprite.height = size
         badgeSprite.rotation = Math.PI / 2
         bodyContainer.addChild(badgeSprite)
-        badgeCache.getOrCreate(badge).then((texture) => {
+        badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
           if (!badgeSprite.destroyed) {
             badgeSprite.texture = texture
           }
         }).catch(() => {})
+      } else if (isForeign) {
+        const markG = new Graphics()
+        markG.circle(0, 0, CREEP_INNER_R * 0.82)
+        markG.fill({ color: 0xcc1111, alpha: 0.8 })
+        bodyContainer.addChild(markG)
       }
 
       // Store fill (animated, updated on store changes)
@@ -459,8 +460,10 @@ function createObjectVisual(
       innerCircleG.fill(ST_DARK)
       container.addChild(innerCircleG)
 
-      // Owner badge — circular, fills inner area (own controller only)
-      if (currentUserId && (obj.user as string | undefined) === currentUserId && badge && badgeCache) {
+      // Owner badge — circular, fills inner area
+      const ctrlUserId = typeof obj.user === 'string' ? obj.user : undefined
+      const ctrlBadge = ctrlUserId ? users?.[ctrlUserId]?.badge : undefined
+      if (ctrlBadge && badgeCache) {
         const bs = new Sprite()
         bs.anchor.set(0.5, 0.5)
         bs.width  = CTRL_SEG_IN * 2
@@ -473,7 +476,7 @@ function createObjectVisual(
         container.addChild(bsMask)
         bs.mask = bsMask
         container.addChild(bs)
-        badgeCache.getOrCreate(badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
+        badgeCache.getOrCreate(ctrlBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
       }
 
       break
@@ -665,28 +668,24 @@ function createObjectVisual(
       g.rect(poleX, poleY, poleW, poleH)
       g.fill(0x888888)
 
-      // Primary flag triangle — attached to top-right of pole, waving right
+      // One flag triangle split into upper (primary) and lower (secondary) halves
       const attachX = poleX + poleW
       const attachY = poleY
       const tipX = attachX + TILE_SIZE * 0.45 * S
-      const midY = attachY + TILE_SIZE * 0.12 * S
-      const bottomY = attachY + TILE_SIZE * 0.4 * S
+      const topY = attachY
+      const bottomY = attachY + TILE_SIZE * 0.44 * S
+      const tipY = (topY + bottomY) / 2
+      const splitY = tipY
 
-      g.moveTo(attachX, attachY)
-      g.lineTo(tipX, midY)
-      g.lineTo(attachX, bottomY)
+      g.moveTo(attachX, topY)
+      g.lineTo(tipX, tipY)
+      g.lineTo(attachX, splitY)
       g.closePath()
       g.fill(flagColor)
 
-      // Secondary flag triangle (inner)
-      const secOff = TILE_SIZE * 0.08 * S
-      const secTipX = attachX + TILE_SIZE * 0.28 * S
-      const secMidY = attachY + secOff + TILE_SIZE * 0.06 * S
-      const secBottomY = attachY + secOff + TILE_SIZE * 0.22 * S
-
-      g.moveTo(attachX, attachY + secOff)
-      g.lineTo(secTipX, secMidY)
-      g.lineTo(attachX, secBottomY)
+      g.moveTo(attachX, splitY)
+      g.lineTo(tipX, tipY)
+      g.lineTo(attachX, bottomY)
       g.closePath()
       g.fill(secColor)
 
@@ -724,9 +723,18 @@ function createObjectVisual(
   // Base scale gives ~8px height at world-scale=1; ObjectLayer.tick() divides by world-scale
   // so the label stays constant in screen pixels and shrinks relative to the creep when zoomed in.
   if (obj.type === 'creep' && typeof obj.name === 'string') {
+    const isForeign = isForeignCreep(obj, currentUserId)
+    let labelText: string
+    if (isForeign) {
+      const userId = typeof obj.user === 'string' ? obj.user : undefined
+      labelText = userId ? (users?.[userId]?.username ?? userId) : 'Hostile'
+    } else {
+      labelText = obj.name as string
+    }
+    const labelColor = isForeign ? 0xff2222 : 0xffffff
     const label = new Text({
-      text: obj.name as string,
-      style: { fontSize: LABEL_FONT_SIZE, fill: 0xffffff },
+      text: labelText,
+      style: { fontSize: LABEL_FONT_SIZE, fill: labelColor },
     })
     label.scale.set(LABEL_FONT_SCALE)
     label.anchor.set(0.5, 1)
@@ -796,11 +804,13 @@ export class ObjectLayer {
   private currentUserId?: string
   private badge?: Badge
   private badgeCache = new BadgeTextureCache()
+  private users?: Record<string, { _id: string; username: string }>
 
-  constructor(ticker?: Ticker, showLabels = true, currentUserId?: string, badge?: Badge) {
+  constructor(ticker?: Ticker, showLabels = true, currentUserId?: string, badge?: Badge, users?: Record<string, { _id: string; username: string }>) {
     this.showLabels = showLabels
     this.currentUserId = currentUserId
     this.badge = badge
+    this.users = users
     this.container = new Container()
     this.container.sortableChildren = true
     this.roadGraphics = new Graphics()
@@ -929,7 +939,10 @@ export class ObjectLayer {
     this.towerFillAnimations.set(id, { visual, fromRadius: fromH, toRadius: toH, startTime: performance.now() })
   }
 
-  update(objects: RoomObjectMap, diff?: RoomObjectDiff): void {
+  update(objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string }>): void {
+    if (users) {
+      this.users = users
+    }
     let roadsChanged = false
 
     if (diff) {
@@ -964,7 +977,7 @@ export class ObjectLayer {
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
-            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache)
+            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
             this.objects.set(id, visual)
@@ -1047,7 +1060,7 @@ export class ObjectLayer {
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)
         if (!existing) {
-          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache)
+          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
           visual.__tileX = obj.x
           visual.__tileY = obj.y
           this.objects.set(id, visual)

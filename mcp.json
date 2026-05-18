@@ -6,6 +6,10 @@
       "env": {
         "MEMORY_FILE_PATH": "./.mcp-memory.json"
       }
+    },
+ "code-index": {
+      "command": "uvx",
+      "args": ["code-index-mcp"]
     }
   }
 }

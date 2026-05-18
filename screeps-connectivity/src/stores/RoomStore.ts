@@ -13,6 +13,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly socket: SocketClient
   private readonly cache: Cache
   private readonly roomObjects = new Map<string, RoomObjectMap>()
+  private readonly roomUsers = new Map<string, Record<string, { _id: string; username: string }>>()
   private readonly roomSubCount = new Map<string, number>()
 
   private parseFlagsString(flagsStr: string | undefined, roomName: string): RoomObject[] {
@@ -139,7 +140,8 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       }
     }
     this.roomObjects.set(mapKey, map)
-    this.emit('room:update', { room, shard, gameTime: undefined, objects: map, diff: map, visual: '' })
+    const users = this.roomUsers.get(mapKey)
+    this.emit('room:update', { room, shard, gameTime: undefined, objects: map, diff: map, visual: '', users })
   }
 
   subscribe(room: string, shard: string | null): Subscription {
@@ -152,7 +154,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const socketSub = this.socket.subscribe(channel)
 
     const listenerSub = this.socket.on(channel, (data) => {
-      const update = data as { objects: RoomObjectDiff; gameTime?: number; visual?: string; flags?: string }
+      const update = data as { objects: RoomObjectDiff; gameTime?: number; visual?: string; flags?: string; users?: Record<string, { _id: string; username: string }> }
       const current: RoomObjectMap = { ...(this.roomObjects.get(mapKey) ?? {}) }
 
       for (const [id, obj] of Object.entries(update.objects)) {
@@ -200,8 +202,12 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
         }
       }
 
+      if (update.users) {
+        this.roomUsers.set(mapKey, update.users)
+      }
       this.roomObjects.set(mapKey, current)
-      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current, diff, visual: update.visual ?? '' })
+      const users = this.roomUsers.get(mapKey)
+      this.emit('room:update', { room, shard, gameTime: update.gameTime, objects: current, diff, visual: update.visual ?? '', users })
     })
 
     return {

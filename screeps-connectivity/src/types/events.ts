@@ -19,7 +19,8 @@ export interface RoomStoreEvents {
         gameTime: number | undefined;
         objects: RoomObjectMap;
         diff: RoomObjectDiff;
-        visual: string
+        visual: string;
+        users?: Record<string, { _id: string; username: string }>
     }
     'room:terrainavailable': { room: string; shard: string | null; terrain: RoomTerrain }
 }

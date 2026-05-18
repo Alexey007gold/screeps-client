@@ -16,6 +16,7 @@ export class HoverHighlightLayer {
   readonly container: Container
 
   private hoverGraphics: Graphics
+  private pendingGraphics: Graphics
   private selectionContainer: Container
   /** Map from object id → Graphics overlay */
   private selectionGraphics = new Map<string, Graphics>()
@@ -35,6 +36,10 @@ export class HoverHighlightLayer {
     this.hoverGraphics = new Graphics()
     this.hoverGraphics.eventMode = 'none'
     this.container.addChild(this.hoverGraphics)
+
+    this.pendingGraphics = new Graphics()
+    this.pendingGraphics.eventMode = 'none'
+    this.container.addChild(this.pendingGraphics)
 
     this.selectionContainer = new Container()
     this.selectionContainer.eventMode = 'none'
@@ -96,6 +101,34 @@ export class HoverHighlightLayer {
     this.selectionVisuals.clear()
   }
 
+  /** Show a crosshair marker on the given tile, or clear if null. */
+  setPendingTile(tx: number | null, ty: number | null): void {
+    this.pendingGraphics.clear()
+    if (tx === null || ty === null) return
+
+    const px = tx * TILE_SIZE
+    const py = ty * TILE_SIZE
+    const cx = px + TILE_SIZE / 2
+    const cy = py + TILE_SIZE / 2
+    const r = TILE_SIZE * 0.35
+
+    // Crosshair lines
+    this.pendingGraphics.moveTo(cx - r, cy)
+    this.pendingGraphics.lineTo(cx + r, cy)
+    this.pendingGraphics.moveTo(cx, cy - r)
+    this.pendingGraphics.lineTo(cx, cy + r)
+    this.pendingGraphics.stroke({ width: 1.5, color: 0xf0883e, alpha: 0.9 })
+
+    // Outer box
+    this.pendingGraphics.rect(px + 1, py + 1, TILE_SIZE - 2, TILE_SIZE - 2)
+    this.pendingGraphics.stroke({ width: 1.5, color: 0xf0883e, alpha: 0.6 })
+  }
+
+  /** Clear the pending tile marker. */
+  clearPendingTile(): void {
+    this.pendingGraphics.clear()
+  }
+
   private drawCreepRing(g: Graphics, x: number, y: number): void {
     g.clear()
     const cx = x + TILE_SIZE / 2
@@ -131,6 +164,8 @@ export class HoverHighlightLayer {
     this.ticker = null
     this.tickerCallback = null
     this.clearSelection()
+    this.clearPendingTile()
+    this.pendingGraphics.destroy()
     this.hoverGraphics.destroy()
     this.container.destroy()
   }

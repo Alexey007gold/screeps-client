@@ -67,6 +67,23 @@ describe('UserStore', () => {
     expect(http.auth.me).toHaveBeenCalledOnce()
   })
 
+  it('deduplicates concurrent me() calls', async () => {
+    const { store, http } = makeStore()
+    let resolveMe: (value: unknown) => void = () => {}
+    ;(http.auth.me as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(r => { resolveMe = r }))
+
+    const p1 = store.me()
+    const p2 = store.me()
+    const p3 = store.me()
+
+    resolveMe({ ...mockUser, ok: 1 })
+
+    const [u1, u2, u3] = await Promise.all([p1, p2, p3])
+    expect(u1).toEqual(u2)
+    expect(u2).toEqual(u3)
+    expect(http.auth.me).toHaveBeenCalledOnce()
+  })
+
   it('subscribe cpu starts WS subscription with userId prefix', async () => {
     const { store, socket } = makeStore()
     await store.me() // preload user id

@@ -672,6 +672,10 @@ http.game.worldSize(shard?): Promise<unknown>
 http.game.mapStats(rooms, statName, shard?): Promise<ApiMapStatsResponse>
 http.game.roomsTerrain(rooms, shard?): Promise<ApiGameRoomsResponse>
 http.game.createFlag(room, x, y, name, color, secondaryColor, shard?): Promise<ApiCreateFlagResponse>
+http.game.genUniqueFlagName(): Promise<ApiGenUniqueFlagNameResponse>
+http.game.checkUniqueFlagName(name): Promise<ApiCheckUniqueFlagNameResponse>
+http.game.changeFlagColor(room, name, color, secondaryColor): Promise<ApiChangeFlagColorResponse>
+http.game.removeFlag(room, name): Promise<ApiRemoveFlagResponse>
 http.game.market.ordersIndex(shard?): Promise<unknown>
 http.game.market.myOrders(): Promise<unknown>
 http.game.market.orders(resourceType, shard?): Promise<unknown>

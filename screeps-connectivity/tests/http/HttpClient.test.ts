@@ -146,4 +146,24 @@ describe('HttpClient', () => {
     expect(arg.status).toBe(500)
     expect(arg.error).toBeInstanceOf(Error)
   })
+
+  it('throws on 200 with error in response body', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 0, error: 'invalid params' }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    await expect(http.request('GET', '/api/game/create-flag')).rejects.toThrow('Screeps API error: invalid params')
+  })
+
+  it('emits http:error on 200 with error in response body', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 0, error: 'flags limit exceeded' }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    const handler = vi.fn()
+    http.on('http:error', handler)
+    await expect(http.request('POST', '/api/game/create-flag')).rejects.toThrow('Screeps API error: flags limit exceeded')
+    expect(handler).toHaveBeenCalledOnce()
+    const arg = handler.mock.calls[0][0]
+    expect(arg.method).toBe('POST')
+    expect(arg.path).toBe('/api/game/create-flag')
+    expect(arg.status).toBe(200)
+    expect(arg.error).toBeInstanceOf(Error)
+  })
 })

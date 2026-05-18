@@ -128,3 +128,21 @@ export interface ApiCreateFlagResponse {
   name?: string
   error?: string
 }
+
+export interface ApiGenUniqueFlagNameResponse {
+  ok: number
+  name: string
+}
+
+export interface ApiCheckUniqueFlagNameResponse {
+  ok: number
+  error?: string
+}
+
+export interface ApiChangeFlagColorResponse {
+  ok: number
+}
+
+export interface ApiRemoveFlagResponse {
+  ok: number
+}
