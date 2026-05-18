@@ -133,8 +133,6 @@ export class MapRenderer {
 
     this.world = new Container()
     this.app.stage.addChild(this.world)
-    this.app.stage.eventMode = 'static'
-    this.app.stage.hitArea = this.app.screen
 
     this.boundsGraphics = new Graphics()
     this.world.addChild(this.boundsGraphics)
@@ -708,44 +706,75 @@ export class MapRenderer {
   }
 
   private setupInteraction(): void {
-    const stage = this.app.stage
+    const canvas = this.app.canvas as HTMLCanvasElement
+    canvas.style.touchAction = 'none'
+    canvas.style.userSelect = 'none'
 
-    stage.on('pointerdown', (e) => {
+    canvas.addEventListener('pointermove', (e) => {
+      if (this.isDragging) return
+      const rect = canvas.getBoundingClientRect()
+      this.emitHover(e.clientX - rect.left, e.clientY - rect.top)
+    })
+
+    canvas.addEventListener('pointerleave', () => {
+      if (!this.isDragging) this.callbacks.onRoomHover(null)
+    })
+
+    canvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
       this.isAnimating = false
       this.isDragging = true
       this.hasDragged = false
-      this.dragStartX = e.global.x
-      this.dragStartY = e.global.y
+      this.dragStartX = e.clientX
+      this.dragStartY = e.clientY
       this.dragWorldX = this.world.x
       this.dragWorldY = this.world.y
-    })
 
-    stage.on('pointermove', (e) => {
-      if (this.isDragging) {
-        const dx = e.global.x - this.dragStartX
-        const dy = e.global.y - this.dragStartY
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this.hasDragged = true
-        this.world.x = this.dragWorldX + dx
-        this.world.y = this.dragWorldY + dy
+      const onMove = (ev: PointerEvent) => {
+        const rawDx = ev.clientX - this.dragStartX
+        const rawDy = ev.clientY - this.dragStartY
+        if (Math.abs(rawDx) > 3 || Math.abs(rawDy) > 3) this.hasDragged = true
+        const b = this.worldBoundsSet
+        if (b) {
+          const scale = this.world.scale.x
+          const MARGIN = 50
+          const minX = MARGIN - (b.maxX + 1) * MAP_ROOM_SIZE * scale
+          const maxX = this.app.screen.width  - MARGIN - b.minX * MAP_ROOM_SIZE * scale
+          const minY = MARGIN - (b.maxY + 1) * MAP_ROOM_SIZE * scale
+          const maxY = this.app.screen.height - MARGIN - b.minY * MAP_ROOM_SIZE * scale
+          this.world.x = this.rubberBand(this.dragWorldX + rawDx, minX, maxX)
+          this.world.y = this.rubberBand(this.dragWorldY + rawDy, minY, maxY)
+        } else {
+          this.world.x = this.dragWorldX + rawDx
+          this.world.y = this.dragWorldY + rawDy
+        }
       }
-      this.emitHover(e.global.x, e.global.y)
-    })
 
-    stage.on('pointerup', (e) => {
-      if (!this.hasDragged) {
-        const room = this.screenToRoom(e.global.x, e.global.y)
-        if (room) this.callbacks.onRoomClick(room)
+      const onUp = (ev: PointerEvent) => {
+        if (!this.hasDragged) {
+          const rect = canvas.getBoundingClientRect()
+          const room = this.screenToRoom(ev.clientX - rect.left, ev.clientY - rect.top)
+          if (room) this.callbacks.onRoomClick(room)
+        }
+        stop()
       }
-      this.isDragging = false
+
+      const stop = () => {
+        this.isDragging = false
+        this.springBack()
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', stop)
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', stop)
     })
 
-    stage.on('pointerleave', () => {
-      this.isDragging = false
-      this.callbacks.onRoomHover(null)
-    })
-
-    this.app.canvas.addEventListener('wheel', (e) => {
+    canvas.addEventListener('wheel', (e) => {
       e.preventDefault()
+      if (this.isDragging) return
       this.isAnimating = false
       const scale  = this.world.scale.x
       const factor = e.deltaY < 0 ? 1.1 : 0.9
@@ -762,7 +791,51 @@ export class MapRenderer {
       this.updateBadgeSizes()
       this.callbacks.onZoomChanged?.(next)
       this.setSelectedRoom(this.selectedRoom)
+      this.redrawSafeMode()
     }, { passive: false })
+  }
+
+  // iOS-style rubber-band: full movement within [lower, upper], decelerating damping outside.
+  private rubberBand(x: number, lower: number, upper: number): number {
+    const size = upper - lower
+    if (size <= 0) return x
+    if (x >= lower && x <= upper) return x
+    const c = 0.55
+    if (x < lower) {
+      const excess = lower - x
+      return lower - (1 - 1 / (excess * c / size + 1)) * size * c
+    }
+    const excess = x - upper
+    return upper + (1 - 1 / (excess * c / size + 1)) * size * c
+  }
+
+  // After drag: animate world back if the world has been pulled mostly off-screen.
+  private springBack(): void {
+    const b = this.worldBoundsSet
+    if (!b) return
+    const scale = this.world.scale.x
+    const sw = this.app.screen.width
+    const sh = this.app.screen.height
+    const MARGIN = 50
+
+    const wl = this.world.x + b.minX * MAP_ROOM_SIZE * scale
+    const wr = this.world.x + (b.maxX + 1) * MAP_ROOM_SIZE * scale
+    const wt = this.world.y + b.minY * MAP_ROOM_SIZE * scale
+    const wb = this.world.y + (b.maxY + 1) * MAP_ROOM_SIZE * scale
+
+    let tx = this.world.x
+    let ty = this.world.y
+
+    if (wr < MARGIN)           tx += MARGIN - wr
+    else if (wl > sw - MARGIN) tx -= wl - (sw - MARGIN)
+    if (wb < MARGIN)           ty += MARGIN - wb
+    else if (wt > sh - MARGIN) ty -= wt - (sh - MARGIN)
+
+    if (tx !== this.world.x || ty !== this.world.y) {
+      this.animTargetX = tx
+      this.animTargetY = ty
+      this.isAnimating = true
+    }
   }
 
   private screenToRoom(sx: number, sy: number): string | null {

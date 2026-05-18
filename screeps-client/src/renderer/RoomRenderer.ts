@@ -78,26 +78,35 @@ export class RoomRenderer {
     const ch = this.container.clientHeight
     const extra = extended ? OVERSCROLL : 0
 
-    // Horizontal: keep at least PADDING visible around the room
+    // Horizontal
     if (scaledSize <= cw) {
-      this.world.x = cw / 2 - scaledSize / 2
+      const centerX = cw / 2 - scaledSize / 2
+      if (extended) {
+        this.world.x = Math.min(centerX + OVERSCROLL, Math.max(centerX - OVERSCROLL, this.world.x))
+      } else {
+        this.world.x = centerX
+      }
     } else {
       const minX = cw - scaledSize - PADDING - extra
       const maxX = PADDING + extra
       this.world.x = Math.min(maxX, Math.max(minX, this.world.x))
     }
 
-    // Vertical: keep at least PADDING visible around the room
+    // Vertical
     if (scaledSize <= ch) {
-      this.world.y = ch / 2 - scaledSize / 2
+      const centerY = ch / 2 - scaledSize / 2
+      if (extended) {
+        this.world.y = Math.min(centerY + OVERSCROLL, Math.max(centerY - OVERSCROLL, this.world.y))
+      } else {
+        this.world.y = centerY
+      }
     } else {
       const minY = ch - scaledSize - PADDING - extra
       const maxY = PADDING + extra
       this.world.y = Math.min(maxY, Math.max(minY, this.world.y))
     }
 
-    // Drag is allowed if at least one dimension exceeds the viewport
-    this.canDrag = scaledSize > cw || scaledSize > ch
+    this.canDrag = true
   }
 
   private getTargetPosition(): { x: number; y: number } | null {
@@ -217,7 +226,6 @@ export class RoomRenderer {
     canvas.addEventListener('pointerdown', (e) => {
       this.cancelBounce()
       this.cancelWheelTimeout()
-      this.springBack()
       dragging = this.canDrag
       lastPos = new Point(e.clientX, e.clientY)
       pointerDownPos = new Point(e.clientX, e.clientY)
@@ -260,7 +268,7 @@ export class RoomRenderer {
         if (tile) this.onClickTile?.(tile.tx, tile.ty, e.ctrlKey || e.metaKey)
       }
 
-      if (wasDragging) this.springBack()
+      this.springBack()
     }
     canvas.addEventListener('pointerup', onUp)
     canvas.addEventListener('pointercancel', onUp)
