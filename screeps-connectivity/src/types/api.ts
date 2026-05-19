@@ -170,3 +170,33 @@ export interface ApiUserMoneyHistoryResponse {
     market?: unknown
   }>
 }
+
+export interface ApiUserMessage {
+  _id: string
+  date: string
+  respondent: string
+  user: string
+  text: string
+  unread: boolean
+}
+
+export interface ApiUserMessagesListResponse {
+  ok: number
+  messages: ApiUserMessage[]
+}
+
+export interface ApiUserMessagesIndexEntry {
+  _id: string
+  message: ApiUserMessage
+  user: { _id: string; username: string; badge: import('./game.js').Badge }
+}
+
+export interface ApiUserMessagesIndexResponse {
+  ok: number
+  list: ApiUserMessagesIndexEntry[]
+}
+
+export interface ApiUserMessagesUnreadCountResponse {
+  ok: number
+  count: number
+}

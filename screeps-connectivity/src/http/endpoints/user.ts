@@ -4,6 +4,7 @@ import type {
   ApiUserFindResponse,
   ApiUserMoneyHistoryResponse,
 } from '../../types/api.js'
+import { createUserMessagesEndpoints, type UserMessagesEndpoints } from './user-messages.js'
 
 export interface NotifyPrefs {
   disabled: boolean
@@ -45,6 +46,7 @@ export interface UserEndpoints {
   tutorialDone(): Promise<{ ok: number }>
   email(email: string): Promise<{ ok: number }>
   setSteamVisible(visible: boolean): Promise<{ ok: number }>
+  messages: UserMessagesEndpoints
 }
 
 function withShard(params: Record<string, unknown>, shard?: string | null): Record<string, unknown> {
@@ -85,5 +87,6 @@ export function createUserEndpoints(http: HttpClient): UserEndpoints {
     tutorialDone: () => http.request('POST', '/api/user/tutorial-done'),
     email: (email) => http.request('POST', '/api/user/email', { email }),
     setSteamVisible: (visible) => http.request('POST', '/api/user/set-steam-visible', { visible }),
+    messages: createUserMessagesEndpoints(http),
   }
 }
