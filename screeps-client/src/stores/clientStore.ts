@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, SteamTicketAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
+import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from '@bastianh/screeps-connectivity'
 import { addToast } from './toastStore.js'
 
@@ -69,11 +69,10 @@ export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, 
 
 export async function connect(opts: {
   url: string
-  auth: 'password' | 'token' | 'steam' | 'guest'
+  auth: 'password' | 'token' | 'guest'
   email?: string
   password?: string
   token?: string
-  steamTicket?: string
   serverPassword?: string
   storage?: StorageAdapter | null
 }): Promise<void> {
@@ -91,11 +90,6 @@ export async function connect(opts: {
         throw new Error('Email and password are required')
       }
       authStrategy = new PasswordAuth({ email: opts.email, password: opts.password })
-    } else if (opts.auth === 'steam') {
-      if (!opts.steamTicket) {
-        throw new Error('Steam ticket is required')
-      }
-      authStrategy = new SteamTicketAuth({ ticket: opts.steamTicket })
     } else {
       if (!opts.token) {
         throw new Error('Token is required')

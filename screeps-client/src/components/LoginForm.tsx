@@ -2,12 +2,11 @@ import { createSignal } from 'solid-js'
 import { connect, status, error } from '~/stores/clientStore.js'
 
 export function LoginForm() {
-  const [authType, setAuthType] = createSignal<'password' | 'token' | 'steam'>('password')
+  const [authType, setAuthType] = createSignal<'password' | 'token'>('password')
   const [url, setUrl] = createSignal('http://localhost:5173')
   const [email, setEmail] = createSignal('')
   const [password, setPassword] = createSignal('')
   const [token, setToken] = createSignal('')
-  const [steamTicket, setSteamTicket] = createSignal('')
   const [serverPassword, setServerPassword] = createSignal('')
 
   const handleSubmit = async (e: Event) => {
@@ -18,7 +17,6 @@ export function LoginForm() {
       email: email() || undefined,
       password: password() || undefined,
       token: token() || undefined,
-      steamTicket: steamTicket() || undefined,
       serverPassword: serverPassword() || undefined,
       storage: null,
     })
@@ -92,21 +90,6 @@ export function LoginForm() {
           >
             Token
           </button>
-          <button
-            type="button"
-            onClick={() => setAuthType('steam')}
-            style={{
-              flex: 1,
-              padding: '8px',
-              'border-radius': '6px',
-              border: '1px solid #30363d',
-              background: authType() === 'steam' ? '#1b2838' : 'transparent',
-              color: authType() === 'steam' ? '#c7d5e0' : '#fff',
-              cursor: 'pointer',
-            }}
-          >
-            Steam
-          </button>
         </div>
 
         <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
@@ -175,26 +158,6 @@ export function LoginForm() {
               />
             </label>
           </>
-        ) : authType() === 'steam' ? (
-          <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-            <span style={{ 'font-size': '12px', color: '#8b949e' }}>Steam Session Ticket</span>
-            <textarea
-              value={steamTicket()}
-              onInput={(e) => setSteamTicket(e.currentTarget.value)}
-              rows={3}
-              placeholder="Paste your Steam session ticket here"
-              style={{
-                padding: '8px 12px',
-                'border-radius': '6px',
-                border: '1px solid #30363d',
-                background: '#0d1117',
-                color: '#c9d1d9',
-                resize: 'vertical',
-                'font-family': 'monospace',
-                'font-size': '11px',
-              }}
-            />
-          </label>
         ) : (
           <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
             <span style={{ 'font-size': '12px', color: '#8b949e' }}>Auth Token</span>
