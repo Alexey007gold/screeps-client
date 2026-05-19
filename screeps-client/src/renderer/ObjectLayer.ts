@@ -9,7 +9,7 @@ import {
   OBJ_DEFAULT, OBJ_ROAD, OBJ_GOLD,
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
-  ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART, ST_RAMPART_STROKE,
+  ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART,
   FLAG_COLORS,
 } from './colors.js'
 
@@ -499,10 +499,8 @@ function createObjectVisual(
       break
     }
     case 'rampart': {
-      g.circle(cx, cy, TILE_SIZE * 0.65)
-      g.fill(ST_RAMPART)
-      g.circle(cx, cy, TILE_SIZE * 0.65)
-      g.stroke({ width: TILE_SIZE * 0.1, color: ST_RAMPART_STROKE })
+      // Intentionally left empty: rendering is batched in ObjectLayer's rampartGraphics
+      // but we still need the empty container for selection tracking
       break
     }
     case 'tower': {
@@ -793,6 +791,7 @@ export class ObjectLayer {
   private objects = new Map<string, ContainerWithTarget>()
   private rawObjects = new Map<string, RoomObject>()
   private roadGraphics: Graphics
+  private rampartGraphics: Graphics
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
   private extAnimations = new Map<string, ExtAnimation>()
@@ -813,6 +812,9 @@ export class ObjectLayer {
     this.users = users
     this.container = new Container()
     this.container.sortableChildren = true
+    this.rampartGraphics = new Graphics()
+    this.rampartGraphics.zIndex = -1
+    this.container.addChild(this.rampartGraphics)
     this.roadGraphics = new Graphics()
     this.container.addChild(this.roadGraphics)
     if (ticker) {
@@ -1146,6 +1148,7 @@ export class ObjectLayer {
       roadsChanged = true
     }
 
+    this.redrawRamparts()
     if (roadsChanged) {
       this.redrawRoads()
     }
@@ -1171,7 +1174,7 @@ export class ObjectLayer {
 
     const cxOffset = TILE_SIZE / 2
     const cyOffset = TILE_SIZE / 2
-    const radius = TILE_SIZE * 0.175
+    const radius = TILE_SIZE * 0.125
 
     // Draw center dots
     for (const r of roads) {
@@ -1203,6 +1206,132 @@ export class ObjectLayer {
       }
     }
     this.roadGraphics.stroke({ width: radius * 2, color })
+  }
+
+  private redrawRamparts(): void {
+    this.rampartGraphics.clear()
+    const T = TILE_SIZE
+    const R = T / 2
+
+    const grid = Array.from({ length: 50 }, () => new Array<string | undefined>(50).fill(undefined))
+    for (const obj of this.rawObjects.values()) {
+      if (obj.type === 'rampart' && obj.x >= 0 && obj.x < 50 && obj.y >= 0 && obj.y < 50) {
+        grid[obj.x][obj.y] = typeof obj.user === 'string' ? obj.user : undefined
+      }
+    }
+
+    const rampartColor = (user: string | undefined): { color: number; alpha: number } => {
+      if (!user || !this.currentUserId) return { color: ST_RAMPART, alpha: 0.7 }
+      return user === this.currentUserId
+        ? { color: ST_RAMPART, alpha: 0.7 }
+        : { color: 0x772222, alpha: 0.5 }
+    }
+
+    for (let y = 0; y < 50; y++) {
+      for (let x = 0; x < 50; x++) {
+        const centerUser = grid[x][y]
+        const center = centerUser !== undefined
+        const top = y > 0 && grid[x][y - 1] !== undefined
+        const bottom = y < 49 && grid[x][y + 1] !== undefined
+        const left = x > 0 && grid[x - 1][y] !== undefined
+        const right = x < 49 && grid[x + 1][y] !== undefined
+
+        const cx = x * T + R
+        const cy = y * T + R
+
+        // Top-Left Quadrant
+        if (center) {
+          const color = rampartColor(centerUser)
+          if (!top && !left && y > 0 && x > 0) {
+            this.rampartGraphics.moveTo(cx, y * T)
+            this.rampartGraphics.arc(cx, cy, R, -Math.PI / 2, Math.PI, true)
+            this.rampartGraphics.lineTo(cx, cy)
+            this.rampartGraphics.fill(color)
+          } else {
+            this.rampartGraphics.rect(x * T, y * T, R, R)
+            this.rampartGraphics.fill(color)
+          }
+        } else {
+          if (top && left && grid[x - 1][y - 1] !== undefined) {
+            const color = rampartColor(grid[x - 1][y - 1])
+            this.rampartGraphics.moveTo(cx, y * T)
+            this.rampartGraphics.lineTo(x * T, y * T)
+            this.rampartGraphics.lineTo(x * T, cy)
+            this.rampartGraphics.arc(cx, cy, R, Math.PI, -Math.PI / 2, false)
+            this.rampartGraphics.fill(color)
+          }
+        }
+
+        // Top-Right Quadrant
+        if (center) {
+          const color = rampartColor(centerUser)
+          if (!top && !right && y > 0 && x < 49) {
+            this.rampartGraphics.moveTo(cx, y * T)
+            this.rampartGraphics.arc(cx, cy, R, -Math.PI / 2, 0, false)
+            this.rampartGraphics.lineTo(cx, cy)
+            this.rampartGraphics.fill(color)
+          } else {
+            this.rampartGraphics.rect(cx, y * T, R, R)
+            this.rampartGraphics.fill(color)
+          }
+        } else {
+          if (top && right && grid[x + 1][y - 1] !== undefined) {
+            const color = rampartColor(grid[x + 1][y - 1])
+            this.rampartGraphics.moveTo(cx, y * T)
+            this.rampartGraphics.lineTo(x * T + T, y * T)
+            this.rampartGraphics.lineTo(x * T + T, cy)
+            this.rampartGraphics.arc(cx, cy, R, 0, -Math.PI / 2, true)
+            this.rampartGraphics.fill(color)
+          }
+        }
+
+        // Bottom-Left Quadrant
+        if (center) {
+          const color = rampartColor(centerUser)
+          if (!bottom && !left && y < 49 && x > 0) {
+            this.rampartGraphics.moveTo(x * T, cy)
+            this.rampartGraphics.arc(cx, cy, R, Math.PI, Math.PI / 2, true)
+            this.rampartGraphics.lineTo(cx, cy)
+            this.rampartGraphics.fill(color)
+          } else {
+            this.rampartGraphics.rect(x * T, cy, R, R)
+            this.rampartGraphics.fill(color)
+          }
+        } else {
+          if (bottom && left && grid[x - 1][y + 1] !== undefined) {
+            const color = rampartColor(grid[x - 1][y + 1])
+            this.rampartGraphics.moveTo(x * T, cy)
+            this.rampartGraphics.lineTo(x * T, y * T + T)
+            this.rampartGraphics.lineTo(cx, y * T + T)
+            this.rampartGraphics.arc(cx, cy, R, Math.PI / 2, Math.PI, false)
+            this.rampartGraphics.fill(color)
+          }
+        }
+
+        // Bottom-Right Quadrant
+        if (center) {
+          const color = rampartColor(centerUser)
+          if (!bottom && !right && y < 49 && x < 49) {
+            this.rampartGraphics.moveTo(cx, y * T + T)
+            this.rampartGraphics.arc(cx, cy, R, Math.PI / 2, 0, true)
+            this.rampartGraphics.lineTo(cx, cy)
+            this.rampartGraphics.fill(color)
+          } else {
+            this.rampartGraphics.rect(cx, cy, R, R)
+            this.rampartGraphics.fill(color)
+          }
+        } else {
+          if (bottom && right && grid[x + 1][y + 1] !== undefined) {
+            const color = rampartColor(grid[x + 1][y + 1])
+            this.rampartGraphics.moveTo(cx, y * T + T)
+            this.rampartGraphics.lineTo(x * T + T, y * T + T)
+            this.rampartGraphics.lineTo(x * T + T, cy)
+            this.rampartGraphics.arc(cx, cy, R, 0, Math.PI / 2, false)
+            this.rampartGraphics.fill(color)
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -1243,6 +1372,8 @@ export class ObjectLayer {
     this.extAnimations.clear()
     this.creepFillAnimations.clear()
     this.towerFillAnimations.clear()
+    this.roadGraphics.clear()
+    this.rampartGraphics.clear()
     this.container.removeChildren()
   }
 
