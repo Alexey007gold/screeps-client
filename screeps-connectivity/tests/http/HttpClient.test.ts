@@ -22,7 +22,7 @@ describe('HttpClient', () => {
     vi.unstubAllGlobals()
   })
 
-  it('attaches X-Token header after authenticate()', async () => {
+  it('attaches X-Token and X-Username headers after authenticate()', async () => {
     fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
     const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 'tok123' }) })
     await http.authenticate()
@@ -30,7 +30,8 @@ describe('HttpClient', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     const headers = init.headers as Record<string, string>
     expect(headers['X-Token']).toBe('tok123')
-    expect(headers['X-Username']).toBeUndefined()
+    // passport-token requires both x-token and x-username; server ignores the username value
+    expect(headers['X-Username']).toBe('tok123')
   })
 
   it('attaches X-Server-Password header when serverPassword is set', async () => {

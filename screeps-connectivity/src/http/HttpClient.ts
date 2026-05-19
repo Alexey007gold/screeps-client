@@ -86,6 +86,9 @@ export class HttpClient extends EventTarget {
 
     if (this.token) {
       headers['X-Token'] = this.token
+      // passport-token strategy requires both x-token and x-username to be present.
+      // The server ignores the username value but fails auth if the header is missing.
+      headers['X-Username'] = this.token
     }
     if (this.serverPassword) {
       headers['X-Server-Password'] = this.serverPassword
