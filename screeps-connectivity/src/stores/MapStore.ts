@@ -16,10 +16,6 @@ function canonicalize(data: RoomMap2Data): string {
   return JSON.stringify(obj)
 }
 
-function deepEquals(a: RoomMap2Data, b: RoomMap2Data): boolean {
-  return canonicalize(a) === canonicalize(b)
-}
-
 export interface Map2Subscription extends Subscription {
   /** Current subscription status — updated in place when waitlist entry is promoted. */
   readonly status: () => Map2SubscriptionStatus
@@ -40,6 +36,8 @@ interface ActiveEntry {
   refCount: number
   socketSub: Subscription
   listenerSub: Subscription
+  /** Canonical hash of the last data we emitted/stored. null until first message or cache-warm init. */
+  lastHash: string | null
 }
 
 interface WaitlistEntry {
@@ -127,14 +125,24 @@ export class MapStore extends TypedStore<MapStoreEvents> {
   private activateKey(room: string, shard: string | null, mapKey: string, refCount: number): void {
     const channel = shard ? `roomMap2:${shard}/${room}` : `roomMap2:${room}`
     const socketSub = this.socket.subscribe(channel)
-    const listenerSub = this.socket.on(channel, (data) => {
+    const cached = this.storage.getMemory(room, shard)
+    const entry: ActiveEntry = {
+      room,
+      shard,
+      refCount,
+      socketSub,
+      listenerSub: undefined as unknown as Subscription,
+      lastHash: cached ? canonicalize(cached) : null,
+    }
+    entry.listenerSub = this.socket.on(channel, (data) => {
       const next = data as RoomMap2Data
-      const prev = this.storage.getMemory(room, shard)
-      if (prev && deepEquals(prev, next)) return
+      const nextHash = canonicalize(next)
+      if (entry.lastHash === nextHash) return
+      entry.lastHash = nextHash
       void this.storage.put(room, shard, next)
       this.emit('room:map2update', { room, shard, data: next, source: 'live' })
     })
-    this.active.set(mapKey, { room, shard, refCount, socketSub, listenerSub })
+    this.active.set(mapKey, entry)
   }
 
   private promoteNext(): void {
@@ -230,6 +238,9 @@ export class MapStore extends TypedStore<MapStoreEvents> {
   private onReconnect(): void {
     this.logger.log('onReconnect —', this.active.size, 'active,', this.waitlist.length, 'pending')
     for (const entry of this.active.values()) {
+      // After a resubscribe, the server resends initial state. Clear the dedup hash so the first
+      // message after reconnect always fires an emit — even if the payload happens to match.
+      entry.lastHash = null
       this.emit('room:map2state', { room: entry.room, shard: entry.shard, status: 'active' })
     }
     for (const entry of this.waitlist) {

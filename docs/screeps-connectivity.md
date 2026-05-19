@@ -118,6 +118,7 @@ const client = new ScreepsClient(opts: ScreepsClientOptions)
 | `debug` | `boolean \| LogFn` | — | Enable debug logging (see [Logging](#logging)) |
 | `map2.maxSubscriptions` | `number` | — | Max simultaneous `roomMap2` WebSocket channels (default `500`). Excess rooms are queued on a FIFO waitlist and promoted as slots free. |
 | `map2.maxCacheEntries` | `number` | — | Max rooms to keep in the `Map2Storage` LRU cache (default `10000`). |
+| `tokenRefresh` | `{ intervalMs?: number } \| false` | — | Idle keep-alive that calls `auth/me` after `intervalMs` of HTTP inactivity to refresh the session token. Default `{ intervalMs: 30_000 }`; pass `false` to disable. See [Token lifecycle](#token-lifecycle). |
 
 ### Methods
 
@@ -210,6 +211,25 @@ class MyAuth implements AuthStrategy {
     return res.token
   }
 }
+```
+
+### Token lifecycle
+
+Screeps servers rotate the session token on every authenticated request — the new token is returned in the `X-Token` response header (HTTP) or the `auth ok <token>` payload (WebSocket). The previous token expires within roughly 60 seconds, so the **latest** token must be reused for the next call. `ScreepsClient` handles this end-to-end:
+
+- **HTTP rotation** — every response with an `x-token` header updates `HttpClient.token` and emits `http:tokenRefresh`.
+- **WebSocket rotation** — when the `auth ok` reply carries a token, `SocketClient.token` is updated and `socket:tokenRefresh` is emitted.
+- **Cross-channel sync** — `ScreepsClient` wires both events so the rotated token is propagated to the other transport. A reconnect after long HTTP-only activity therefore uses the freshest token, not the one captured at initial `connect()`.
+- **Idle refresh** — if the client neither makes HTTP calls nor receives a token rotation for `tokenRefresh.intervalMs` (default `30_000` ms), `ScreepsClient` issues a lightweight `auth/me` request to refresh the token before it can expire. Any real HTTP traffic resets the idle clock, so the keep-alive is suppressed whenever the app is actively making calls.
+
+To disable the keep-alive (e.g. if you drive your own refresh schedule), pass `tokenRefresh: false`:
+
+```ts
+new ScreepsClient({
+  url: 'https://screeps.com',
+  auth: new TokenAuth({ token: '...' }),
+  tokenRefresh: false,
+})
 ```
 
 ---
@@ -514,14 +534,20 @@ Synchronous getter for the last known data for a room. Does not open a subscript
 
 | Event | Payload | When |
 |---|---|---|
-| `room:map2update` | `{ room, shard, data: RoomMap2Data, source: 'live' \| 'cache' }` | New data arrives (live from WS or emitted from cache on subscribe). Only fires when data actually changed (diff detection). |
+| `room:map2update` | `{ room, shard, data: RoomMap2Data, source: 'live' \| 'cache' }` | New data arrives. Fires on `subscribe` (from cache, if any), on the **first** live message after every `subscribe`/reconnect (always — even if the payload is unchanged), and on every subsequent live message **only when the payload changed** (key-order-independent diff). |
 | `room:map2state` | `{ room, shard, status: 'active' \| 'pending' }` | A room's subscription status changes — including on reconnect. |
 
 `source: 'cache'` is emitted asynchronously after subscribe when cached data exists but no live update has arrived yet. Use it to render a visually distinct "stale" state.
 
+**Emit guarantees** — for each active subscription, consumers can rely on:
+
+- **At least one emit after `subscribe`**: a `source: 'cache'` event if data is cached, otherwise the first live message will pass through unconditionally.
+- **At least one emit after every reconnect**: the dedup hash is cleared on the `connected` event, so the first live message the server resends will always fire, even if the payload is identical to what was last seen.
+- **Steady state**: subsequent messages only fire when the payload actually differs (compared via a canonical JSON hash; key order and coordinate order do not matter). The hash is cached on the active entry, so each incoming message is canonicalized only once.
+
 #### Reconnect behaviour
 
-On WebSocket reconnect, `SocketClient` replays all `subscribe` commands automatically. `MapStore` re-emits `room:map2state` for every active and pending room so consumers can refresh their UI state without re-subscribing.
+On WebSocket reconnect, `SocketClient` replays all `subscribe` commands automatically. `MapStore` re-emits `room:map2state` for every active and pending room and resets the per-room dedup hash so the first `room:map2update` after reconnect always fires (see *Emit guarantees* above). Consumers don't need to re-subscribe or take any explicit action.
 
 **Example**:
 ```ts
@@ -701,8 +727,12 @@ client.http.on('http:error', ({ method, path, status, error }) => {
 client.http.on('http:tokenRefresh', ({ token }) => {
   // Screeps returns a fresh token in the x-token header on every response.
   // This event fires whenever the header is present with a new value.
+  // ScreepsClient already forwards this token to SocketClient automatically —
+  // listen to this event only if you also persist the token outside the library.
 })
 ```
+
+The complementary `socket:tokenRefresh` event fires from `SocketClient` when the WebSocket `auth ok` reply contains a token. `ScreepsClient` listens to both and keeps `HttpClient.token` and `SocketClient.token` in sync. See [Token lifecycle](#token-lifecycle) for the full flow.
 
 #### `mapStats` detail
 

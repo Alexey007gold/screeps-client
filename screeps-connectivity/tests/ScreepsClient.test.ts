@@ -103,3 +103,127 @@ describe('ScreepsClient', () => {
     expect(client.stores.user.worldStatusValue).toBe('normal')
   })
 })
+
+describe('ScreepsClient — token sync', () => {
+  it('rotates SocketClient token when an HTTP response carries x-token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: 1 }), {
+        headers: { 'content-type': 'application/json', 'x-token': 'http-rotated-token' },
+      })
+    ))
+
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'initial' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+      tokenRefresh: false,
+    })
+
+    const socketSetToken = vi.spyOn(client.socket, 'setToken')
+    await client.http.request('GET', '/api/auth/me')
+
+    expect(socketSetToken).toHaveBeenCalledWith('http-rotated-token')
+  })
+
+  it('rotates HttpClient token when WS auth response carries a new token', async () => {
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'initial' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+      tokenRefresh: false,
+    })
+
+    const httpSetToken = vi.spyOn(client.http, 'setToken')
+
+    const connectPromise = client.connect()
+    await new Promise(r => setTimeout(r, 0))
+    const ws = MockWS.instances[0]
+    ws.simulateOpen()
+    ws.simulateMessage('auth ok ws-rotated-token')
+    await connectPromise
+
+    expect(httpSetToken).toHaveBeenCalledWith('ws-rotated-token')
+    expect(client.http.token).toBe('ws-rotated-token')
+  })
+})
+
+describe('ScreepsClient — idle token refresh', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  async function buildConnected(opts: { tokenRefresh?: { intervalMs?: number } | false } = {}) {
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'tok' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+      tokenRefresh: opts.tokenRefresh,
+    })
+    const connectPromise = client.connect()
+    await vi.advanceTimersByTimeAsync(0)
+    const ws = MockWS.instances[0]
+    ws.simulateOpen()
+    ws.simulateMessage('auth ok tok')
+    await connectPromise
+    return client
+  }
+
+  it('issues an auth/me call after intervalMs of HTTP idleness', async () => {
+    const client = await buildConnected({ tokenRefresh: { intervalMs: 1_000 } })
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+
+    // Idle for 1.5s — exceeds 1s interval, refresh should fire on next tick (every 500ms).
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).toContain('/api/auth/me')
+
+    client.disconnect()
+  })
+
+  it('does NOT issue an auth/me call while HTTP traffic resets the idle clock', async () => {
+    const client = await buildConnected({ tokenRefresh: { intervalMs: 1_000 } })
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+
+    // Make a request every 400ms, well below the 1s threshold.
+    for (let i = 0; i < 5; i++) {
+      await client.http.request('GET', '/api/version')
+      await vi.advanceTimersByTimeAsync(400)
+    }
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).not.toContain('/api/auth/me')
+
+    client.disconnect()
+  })
+
+  it('does not start the refresh timer when tokenRefresh is false', async () => {
+    const client = await buildConnected({ tokenRefresh: false })
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).not.toContain('/api/auth/me')
+
+    client.disconnect()
+  })
+
+  it('stops the refresh timer on disconnect()', async () => {
+    const client = await buildConnected({ tokenRefresh: { intervalMs: 1_000 } })
+    client.disconnect()
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).not.toContain('/api/auth/me')
+  })
+})

@@ -33,6 +33,11 @@ export class SocketClient {
     return this._connected
   }
 
+  /** Update the stored token. Used to keep WS and HTTP token in sync after an HTTP rotation. */
+  setToken(token: string): void {
+    this.token = token
+  }
+
   connect(token: string): Promise<void> {
     this.logger.log('connect', this.wsUrl)
     this._intentionalClose = false
@@ -51,7 +56,10 @@ export class SocketClient {
           if (cmd.status === 'ok') {
             this.logger.log('auth ok')
             this.authed = true
-            if (cmd.token) this.token = cmd.token
+            if (cmd.token) {
+              this.token = cmd.token
+              this.emit('socket:tokenRefresh', { token: cmd.token })
+            }
             while (this.queue.length) this.rawSend(this.queue.shift()!)
             this.emit('connected', {})
             resolve()

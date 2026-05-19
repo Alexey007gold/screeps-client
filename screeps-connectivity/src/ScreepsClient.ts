@@ -12,8 +12,14 @@ import { Logger } from './logger.js'
 import type { LogFn } from './logger.js'
 import type { AuthStrategy } from './http/auth/AuthStrategy.js'
 import type { StorageAdapter } from './storage/StorageAdapter.js'
+import type { Subscription } from './subscription/index.js'
 
 type WsConstructor = typeof globalThis.WebSocket
+
+export interface TokenRefreshOptions {
+  /** Milliseconds of idleness before issuing a keep-alive request. Default 30_000. */
+  intervalMs?: number
+}
 
 export interface ScreepsClientOptions {
   url: string
@@ -25,6 +31,12 @@ export interface ScreepsClientOptions {
     maxSubscriptions?: number
     maxCacheEntries?: number
   }
+  /**
+   * Idle keep-alive that refreshes the auth token via a lightweight `auth/me` call when no
+   * authenticated traffic has happened for `intervalMs`. Default `{ intervalMs: 30_000 }`.
+   * Pass `false` to disable.
+   */
+  tokenRefresh?: TokenRefreshOptions | false
 }
 
 export class ScreepsClient {
@@ -40,6 +52,11 @@ export class ScreepsClient {
   }
   private readonly cache: Cache
   private readonly logger: Logger
+  private readonly tokenRefreshIntervalMs: number | null
+  private readonly tokenSyncSubs: Subscription[] = []
+  private tokenRefreshTimer: ReturnType<typeof setInterval> | null = null
+  private lastHttpActivity = 0
+  private refreshInFlight = false
 
   constructor(opts: ScreepsClientOptions) {
     let namespace: string
@@ -66,6 +83,28 @@ export class ScreepsClient {
       mapStats: new MapStatsStore(this.http, 100, 500, this.logger.child('mapStats')),
       navigation: new NavigationStore(50, this.logger.child('navigation')),
     }
+
+    this.tokenRefreshIntervalMs = opts.tokenRefresh === false
+      ? null
+      : (opts.tokenRefresh?.intervalMs ?? 30_000)
+
+    this.wireTokenSync()
+  }
+
+  private wireTokenSync(): void {
+    // HTTP rotates token via X-Token → propagate to WS so a later reconnect uses the fresh one.
+    this.tokenSyncSubs.push(this.http.on('http:tokenRefresh', ({ token }) => {
+      this.socket.setToken(token)
+    }))
+    // WS issues a new token on auth → keep HTTP side in sync.
+    this.tokenSyncSubs.push(this.socket.on('socket:tokenRefresh', (data) => {
+      const detail = data as { token: string }
+      this.http.setToken(detail.token)
+    }))
+    // Any successful HTTP response counts as activity — defers the next idle refresh.
+    this.tokenSyncSubs.push(this.http.on('http:success', () => {
+      this.lastHttpActivity = Date.now()
+    }))
   }
 
   get isConnected(): boolean {
@@ -81,11 +120,47 @@ export class ScreepsClient {
       this.stores.user.worldStatus(),
       this.stores.server.version(),
     ])
+    this.startTokenRefresh()
   }
 
   disconnect(): void {
     this.logger.log('[screeps:client] disconnect')
+    this.stopTokenRefresh()
     this.socket.disconnect()
+  }
+
+  private startTokenRefresh(): void {
+    if (this.tokenRefreshIntervalMs === null) return
+    if (this.tokenRefreshTimer !== null) return
+    const intervalMs = this.tokenRefreshIntervalMs
+    this.lastHttpActivity = Date.now()
+    // Tick at half the interval so we react within intervalMs of idleness.
+    const tickMs = Math.max(1_000, Math.floor(intervalMs / 2))
+    this.tokenRefreshTimer = setInterval(() => {
+      const idleFor = Date.now() - this.lastHttpActivity
+      if (idleFor < intervalMs) return
+      void this.refreshTokenNow()
+    }, tickMs)
+  }
+
+  private stopTokenRefresh(): void {
+    if (this.tokenRefreshTimer !== null) {
+      clearInterval(this.tokenRefreshTimer)
+      this.tokenRefreshTimer = null
+    }
+  }
+
+  private async refreshTokenNow(): Promise<void> {
+    if (this.refreshInFlight) return
+    this.refreshInFlight = true
+    try {
+      this.logger.log('[screeps:client] token refresh (idle)')
+      await this.http.auth.me()
+    } catch (err) {
+      this.logger.log('[screeps:client] token refresh failed', err)
+    } finally {
+      this.refreshInFlight = false
+    }
   }
 
   async clearCache(): Promise<void> {

@@ -69,6 +69,11 @@ export class HttpClient extends EventTarget {
     }
   }
 
+  /** Update the stored token. Used to keep HTTP and WS token in sync after a WS auth rotation. */
+  setToken(token: string): void {
+    this.token = token
+  }
+
   async request<T>(method: string, path: string, body?: Record<string, unknown>, isRetry = false): Promise<T> {
     this.logger.log(method, path)
     const url = new URL(path.startsWith('/') ? path.slice(1) : path, this.baseUrl)

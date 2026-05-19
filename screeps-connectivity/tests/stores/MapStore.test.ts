@@ -488,6 +488,34 @@ describe('MapStore — reconnect handling', () => {
     socket.trigger('connected', {})
     expect(events).toHaveLength(0)
   })
+
+  it('first message after reconnect always emits, even when payload is unchanged', () => {
+    const socket = makeSocketMockWithReconnect()
+    const storage = new Map2Storage({ adapter: null, namespace: 'test', maxEntries: 10000 })
+    const store = new MapStore(socket, storage)
+
+    store.subscribeMap2('W1N1', 'shard0')
+
+    const liveEvents: unknown[] = []
+    store.on('room:map2update', e => { if (e.source === 'live') liveEvents.push(e) })
+
+    const payload = { s: [[10, 20]] as [number, number][] }
+    socket.trigger('roomMap2:shard0/W1N1', payload)
+    expect(liveEvents).toHaveLength(1)
+
+    // Identical payload before reconnect is deduped
+    socket.trigger('roomMap2:shard0/W1N1', { s: [[10, 20]] })
+    expect(liveEvents).toHaveLength(1)
+
+    // After reconnect the server resends initial state — same payload must emit again
+    socket.trigger('connected', {})
+    socket.trigger('roomMap2:shard0/W1N1', { s: [[10, 20]] })
+    expect(liveEvents).toHaveLength(2)
+
+    // Subsequent identical messages after that are deduped again
+    socket.trigger('roomMap2:shard0/W1N1', { s: [[10, 20]] })
+    expect(liveEvents).toHaveLength(2)
+  })
 })
 
 describe('Map2Storage LRU eviction', () => {
