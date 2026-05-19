@@ -24,6 +24,17 @@ export interface ApiAuthQueryTokenResponse {
   token: { full: boolean }
 }
 
+export interface ApiAuthSteamTicketResponse {
+  ok: number
+  token: string
+  steamid: string
+}
+
+export interface ApiRegisterCheckResponse {
+  ok: number
+  error?: string
+}
+
 export interface ApiRoomTerrainResponse {
   ok: number
   terrain: Array<{

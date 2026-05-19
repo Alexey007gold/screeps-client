@@ -39,6 +39,7 @@ export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvent
 
 export type { UserMessagesEndpoints } from './http/endpoints/user-messages.js'
 export type { PowerCreepsEndpoints } from './http/endpoints/power-creeps.js'
+export type { RegisterEndpoints } from './http/endpoints/register.js'
 export type { HttpClient, RateLimitInfo } from './http/HttpClient.js'
 export type { SocketClient } from './socket/SocketClient.js'
 export type { RoomStore } from './stores/RoomStore.js'

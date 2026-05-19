@@ -6,6 +6,7 @@ import { createGameEndpoints, type GameEndpoints } from './endpoints/game.js'
 import { createUserEndpoints, type UserEndpoints } from './endpoints/user.js'
 import { createLeaderboardEndpoints, type LeaderboardEndpoints } from './endpoints/leaderboard.js'
 import { createExperimentalEndpoints, type ExperimentalEndpoints } from './endpoints/experimental.js'
+import { createRegisterEndpoints, type RegisterEndpoints } from './endpoints/register.js'
 import type { HttpClientEvents } from '../types/events.js'
 import type { Subscription } from '../subscription/index.js'
 
@@ -25,6 +26,7 @@ export class HttpClient extends EventTarget {
   private authenticating = false
 
   readonly auth: AuthEndpoints
+  readonly register: RegisterEndpoints
   readonly game: GameEndpoints
   readonly user: UserEndpoints
   readonly leaderboard: LeaderboardEndpoints
@@ -37,6 +39,7 @@ export class HttpClient extends EventTarget {
     this.logger = opts.logger ?? Logger.create()
     this.serverPassword = opts.serverPassword ?? null
     this.auth = createAuthEndpoints(this)
+    this.register = createRegisterEndpoints(this)
     this.game = createGameEndpoints(this)
     this.user = createUserEndpoints(this)
     this.leaderboard = createLeaderboardEndpoints(this)
