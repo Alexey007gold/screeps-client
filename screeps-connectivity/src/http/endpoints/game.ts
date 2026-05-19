@@ -1,5 +1,19 @@
 import type { HttpClient } from '../HttpClient.js'
-import type { ApiRoomTerrainResponse, ApiRoomObjectsResponse, ApiShardsInfoResponse, ApiMapStatsResponse, ApiGameRoomsResponse, ApiCreateFlagResponse, ApiGenUniqueFlagNameResponse, ApiCheckUniqueFlagNameResponse, ApiChangeFlagColorResponse, ApiRemoveFlagResponse } from '../../types/api.js'
+import type {
+  ApiRoomTerrainResponse,
+  ApiRoomObjectsResponse,
+  ApiShardsInfoResponse,
+  ApiMapStatsResponse,
+  ApiGameRoomsResponse,
+  ApiCreateFlagResponse,
+  ApiGenUniqueFlagNameResponse,
+  ApiCheckUniqueFlagNameResponse,
+  ApiChangeFlagColorResponse,
+  ApiRemoveFlagResponse,
+  ApiGenUniqueObjectNameResponse,
+  ApiCheckUniqueObjectNameResponse,
+  ApiGameTickResponse,
+} from '../../types/api.js'
 
 export interface GameEndpoints {
   roomTerrain(room: string, shard?: string | null): Promise<ApiRoomTerrainResponse>
@@ -8,6 +22,7 @@ export interface GameEndpoints {
   roomStatus(room: string, shard?: string | null): Promise<{ ok: number; status: string; novice?: string }>
   roomOverview(room: string, interval?: number, shard?: string | null): Promise<unknown>
   time(shard?: string | null): Promise<{ ok: number; time: number }>
+  tick(): Promise<ApiGameTickResponse>
   worldSize(shard?: string | null): Promise<unknown>
   mapStats(rooms: string[], statName: string, shard?: string | null): Promise<ApiMapStatsResponse>
   roomsTerrain(rooms: string[], shard?: string | null): Promise<ApiGameRoomsResponse>
@@ -16,6 +31,15 @@ export interface GameEndpoints {
   checkUniqueFlagName(name: string): Promise<ApiCheckUniqueFlagNameResponse>
   changeFlagColor(room: string, name: string, color: number, secondaryColor: number): Promise<ApiChangeFlagColorResponse>
   removeFlag(room: string, name: string): Promise<ApiRemoveFlagResponse>
+  genUniqueObjectName(type: string): Promise<ApiGenUniqueObjectNameResponse>
+  checkUniqueObjectName(type: string, name: string): Promise<ApiCheckUniqueObjectNameResponse>
+  placeSpawn(room: string, x: number, y: number, name?: string): Promise<{ ok: number }>
+  createConstruction(room: string, x: number, y: number, structureType: string, name?: string): Promise<{ ok: number }>
+  addObjectIntent(id: string, room: string, name: string, intent: unknown): Promise<{ ok: number }>
+  addGlobalIntent(name: string, intent: unknown): Promise<{ ok: number }>
+  setNotifyWhenAttacked(id: string, enabled: boolean): Promise<{ ok: number }>
+  createInvader(room: string, x: number, y: number, size: number, type: string, boosted?: boolean): Promise<{ ok: number }>
+  removeInvader(id: string): Promise<{ ok: number }>
   market: {
     ordersIndex(shard?: string | null): Promise<unknown>
     myOrders(): Promise<unknown>
@@ -51,6 +75,16 @@ export function createGameEndpoints(http: HttpClient): GameEndpoints {
     checkUniqueFlagName: (name) => http.request('POST', '/api/game/check-unique-flag-name', { name }),
     changeFlagColor: (room, name, color, secondaryColor) => http.request('POST', '/api/game/change-flag-color', { room, name, color, secondaryColor }),
     removeFlag: (room, name) => http.request('POST', '/api/game/remove-flag', { room, name }),
+    genUniqueObjectName: (type) => http.request('POST', '/api/game/gen-unique-object-name', { type }),
+    checkUniqueObjectName: (type, name) => http.request('POST', '/api/game/check-unique-object-name', { type, name }),
+    placeSpawn: (room, x, y, name) => http.request('POST', '/api/game/place-spawn', { room, x, y, ...(name ? { name } : {}) }),
+    createConstruction: (room, x, y, structureType, name) => http.request('POST', '/api/game/create-construction', { room, x, y, structureType, ...(name ? { name } : {}) }),
+    addObjectIntent: (id, room, name, intent) => http.request('POST', '/api/game/add-object-intent', { _id: id, room, name, intent }),
+    addGlobalIntent: (name, intent) => http.request('POST', '/api/game/add-global-intent', { name, intent }),
+    setNotifyWhenAttacked: (id, enabled) => http.request('POST', '/api/game/set-notify-when-attacked', { _id: id, enabled }),
+    createInvader: (room, x, y, size, type, boosted) => http.request('POST', '/api/game/create-invader', { room, x, y, size, type, ...(boosted != null ? { boosted } : {}) }),
+    removeInvader: (id) => http.request('POST', '/api/game/remove-invader', { _id: id }),
+    tick: () => http.request('GET', '/api/game/tick'),
     market: {
       ordersIndex: (shard) => http.request('GET', '/api/game/market/orders-index', withShard({}, shard)),
       myOrders: () => http.request('GET', '/api/game/market/my-orders'),

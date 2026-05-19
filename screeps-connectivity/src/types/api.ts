@@ -147,6 +147,21 @@ export interface ApiRemoveFlagResponse {
   ok: number
 }
 
+export interface ApiGenUniqueObjectNameResponse {
+  ok: number
+  name: string
+}
+
+export interface ApiCheckUniqueObjectNameResponse {
+  ok: number
+  error?: string
+}
+
+export interface ApiGameTickResponse {
+  ok: number
+  tick: number
+}
+
 export interface ApiUserFindResponse {
   ok: number
   user: {
