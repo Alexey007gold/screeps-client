@@ -7,6 +7,7 @@ export function LoginForm() {
   const [email, setEmail] = createSignal('')
   const [password, setPassword] = createSignal('')
   const [token, setToken] = createSignal('')
+  const [serverPassword, setServerPassword] = createSignal('')
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault()
@@ -16,6 +17,7 @@ export function LoginForm() {
       email: email() || undefined,
       password: password() || undefined,
       token: token() || undefined,
+      serverPassword: serverPassword() || undefined,
       storage: null,
     })
   }
@@ -25,6 +27,7 @@ export function LoginForm() {
     await connect({
       url: url(),
       auth: 'guest',
+      serverPassword: serverPassword() || undefined,
       storage: null,
     })
   }
@@ -95,6 +98,23 @@ export function LoginForm() {
             type="text"
             value={url()}
             onInput={(e) => setUrl(e.currentTarget.value)}
+            style={{
+              padding: '8px 12px',
+              'border-radius': '6px',
+              border: '1px solid #30363d',
+              background: '#0d1117',
+              color: '#c9d1d9',
+            }}
+          />
+        </label>
+
+        <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+          <span style={{ 'font-size': '12px', color: '#8b949e' }}>Server Password <span style={{ color: '#484f58' }}>(optional)</span></span>
+          <input
+            type="password"
+            value={serverPassword()}
+            onInput={(e) => setServerPassword(e.currentTarget.value)}
+            placeholder="Leave empty if not required"
             style={{
               padding: '8px 12px',
               'border-radius': '6px',

@@ -73,6 +73,7 @@ export async function connect(opts: {
   email?: string
   password?: string
   token?: string
+  serverPassword?: string
   storage?: StorageAdapter | null
 }): Promise<void> {
   log(`connecting to ${opts.url} (auth: ${opts.auth})`)
@@ -101,6 +102,7 @@ export async function connect(opts: {
       auth: authStrategy,
       storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
       debug: import.meta.env.DEV,
+      serverPassword: opts.serverPassword,
     })
 
     screepsClient.http.on('http:tokenRefresh', ({ token }) => {
@@ -162,6 +164,11 @@ export async function connect(opts: {
     if (screepsClient.http.token) {
       localStorage.setItem('screeps:token', screepsClient.http.token)
     }
+    if (opts.serverPassword) {
+      localStorage.setItem('screeps:serverPassword', opts.serverPassword)
+    } else {
+      localStorage.removeItem('screeps:serverPassword')
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     log('connection failed:', message)
@@ -177,12 +184,13 @@ export async function tryAutoConnect(): Promise<void> {
   const token = localStorage.getItem('screeps:token')
   if (!url || !token) return
 
+  const serverPassword = localStorage.getItem('screeps:serverPassword') ?? undefined
   log(`auto-connect: ${url}`)
   try {
     if (token === 'guest') {
-      await connect({ url, auth: 'guest', storage: null })
+      await connect({ url, auth: 'guest', storage: null, serverPassword })
     } else {
-      await connect({ url, auth: 'token', token })
+      await connect({ url, auth: 'token', token, serverPassword })
     }
   } catch {
     log('auto-connect failed — clearing stored token')
@@ -207,4 +215,5 @@ export function disconnect(): void {
   setUserFlags({})
   resetTickTracking()
   localStorage.removeItem('screeps:token')
+  localStorage.removeItem('screeps:serverPassword')
 }

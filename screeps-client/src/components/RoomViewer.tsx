@@ -81,6 +81,9 @@ export function RoomViewer(props: RoomViewerProps) {
       .catch((err) => { if (!terrainCancelled) console.error(`[room] terrain load failed for ${room}:`, err) })
 
     group.add(c.stores.room.subscribe(room, shard))
+    group.add(c.stores.room.on('room:error', (data) => {
+      addToast(`Room subscription error (${data.room}): ${data.message}`, 'error', 8000)
+    }))
     group.add(c.stores.room.on('room:update', (data) => {
       // Use for...in to count keys without allocating an array, avoiding memory allocations on hot path
       let objectCount = 0
