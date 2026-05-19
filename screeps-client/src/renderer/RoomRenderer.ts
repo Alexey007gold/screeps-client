@@ -61,6 +61,10 @@ export class RoomRenderer {
       autoDensity: true,
     })
     container.appendChild(app.canvas)
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(globalThis as any).__PIXI_APP__ = app
+    }
     return new RoomRenderer(app, container)
   }
 
@@ -513,5 +517,9 @@ export class RoomRenderer {
     this.resizeObserver = null
     this.hoverLayer.destroy()
     this.app.destroy(true, { children: true })
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (globalThis as any).__PIXI_APP__
+    }
   }
 }

@@ -35,7 +35,8 @@ export interface GameEndpoints {
   genUniqueObjectName(type: string): Promise<ApiGenUniqueObjectNameResponse>
   checkUniqueObjectName(type: string, name: string): Promise<ApiCheckUniqueObjectNameResponse>
   placeSpawn(room: string, x: number, y: number, name?: string): Promise<{ ok: number }>
-  createConstruction(room: string, x: number, y: number, structureType: string, name?: string): Promise<{ ok: number }>
+  createConstruction(room: string, x: number, y: number, structureType: string, name?: string, shard?: string | null): Promise<{ ok: number }>
+  removeConstructionSite(room: string, ids: string[], shard?: string | null): Promise<{ ok: number }>
   addObjectIntent(id: string, room: string, name: string, intent: unknown): Promise<{ ok: number }>
   addGlobalIntent(name: string, intent: unknown): Promise<{ ok: number }>
   setNotifyWhenAttacked(id: string, enabled: boolean): Promise<{ ok: number }>
@@ -80,7 +81,8 @@ export function createGameEndpoints(http: HttpClient): GameEndpoints {
     genUniqueObjectName: (type) => http.request('POST', '/api/game/gen-unique-object-name', { type }),
     checkUniqueObjectName: (type, name) => http.request('POST', '/api/game/check-unique-object-name', { type, name }),
     placeSpawn: (room, x, y, name) => http.request('POST', '/api/game/place-spawn', { room, x, y, ...(name ? { name } : {}) }),
-    createConstruction: (room, x, y, structureType, name) => http.request('POST', '/api/game/create-construction', { room, x, y, structureType, ...(name ? { name } : {}) }),
+    createConstruction: (room, x, y, structureType, name, shard) => http.request('POST', '/api/game/create-construction', withShard({ room, x, y, structureType, ...(name ? { name } : {}) }, shard)),
+    removeConstructionSite: (room, ids, shard) => http.request('POST', '/api/game/add-object-intent', withShard({ _id: 'room', room, name: 'removeConstructionSite', intent: ids.map(id => ({ id, roomName: room })) }, shard)),
     addObjectIntent: (id, room, name, intent) => http.request('POST', '/api/game/add-object-intent', { _id: id, room, name, intent }),
     addGlobalIntent: (name, intent) => http.request('POST', '/api/game/add-global-intent', { name, intent }),
     setNotifyWhenAttacked: (id, enabled) => http.request('POST', '/api/game/set-notify-when-attacked', { _id: id, enabled }),

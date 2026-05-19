@@ -3,8 +3,10 @@ import { SelectionList } from '~/components/SelectionList.js'
 import { RoomInfoPanel } from '~/components/RoomInfoPanel.js'
 import { MapInfoPanel } from '~/components/MapInfoPanel.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
-import {flagDraft, roomViewMode, setFlagDraft, pendingTile} from "~/stores/roomViewStore";
+import {flagDraft, roomViewMode, setFlagDraft, pendingTile, buildDraft, setBuildDraft, CONTROLLER_STRUCTURES, confirmBuild} from "~/stores/roomViewStore";
 import { client, userFlags } from '~/stores/clientStore.js'
+import { controllerLevel, structureCounts } from '~/stores/roomDataStore.js'
+
 import { FLAG_COLORS as FLAG_COLOR_HEXES } from '~/renderer/colors.js'
 
 const DENSITY_LABELS = ['Low', 'Medium', 'High', 'Ultra'] as const
@@ -348,21 +350,166 @@ function FlagForm() {
     )
 }
 
-function BuildPanel() {
+function BuildPanel(props: { room: string; shard: string | null }) {
+    const structureTypes = Object.keys(CONTROLLER_STRUCTURES)
+
+    const getMaxForLevel = (type: string, rcl: number): number => {
+        const levels = CONTROLLER_STRUCTURES[type]
+        if (!levels) return 0
+        return levels[rcl] ?? 0
+    }
+
+    const getRemaining = (type: string, rcl: number): number => {
+        const max = getMaxForLevel(type, rcl)
+        if (max === 2500) return Infinity
+        const current = structureCounts()[type] ?? 0
+        return Math.max(0, max - current)
+    }
+
+    const handleSelectType = (type: string) => {
+        setBuildDraft({ structureType: type, structureName: '' })
+    }
+
+    const handleBuild = () => {
+        confirmBuild(props.room, props.shard)
+    }
+
     return (
         <div style={{ flex: 1, overflow: 'auto', 'min-height': 0, padding: '8px' }}>
-            <div style={{ color: '#484f58', 'font-style': 'italic', 'font-size': '12px' }}>
-                Build mode is not implemented yet.
+            <div
+                style={{
+                    'border-radius': '6px',
+                    border: '1px solid #30363d',
+                    overflow: 'hidden',
+                    background: '#0d1117',
+                    'margin-bottom': '8px',
+                }}
+            >
+                <div
+                    style={{
+                        padding: '6px 8px',
+                        background: '#161b22',
+                        'border-bottom': '1px solid #21262d',
+                        'font-size': '11px',
+                        'font-weight': 600,
+                        color: '#c9d1d9',
+                    }}
+                >
+                    Controller Level {controllerLevel() ?? '?'}
+                </div>
+                <div style={{ padding: '8px', 'font-size': '11px', color: '#8b949e' }}>
+                    {controllerLevel() != null
+                        ? `RCL ${controllerLevel()} — Select a structure type below, then click a tile in the room.`
+                        : 'No controller — roads and containers only.'}
+                </div>
             </div>
+
+            <div
+                    style={{
+                        'border-radius': '6px',
+                        border: '1px solid #30363d',
+                        overflow: 'hidden',
+                        background: '#0d1117',
+                    }}
+                >
+                    <div
+                        style={{
+                            padding: '6px 8px',
+                            background: '#161b22',
+                            'border-bottom': '1px solid #21262d',
+                            'font-size': '11px',
+                            'font-weight': 600,
+                            color: '#c9d1d9',
+                        }}
+                    >
+                        Structures
+                    </div>
+                    <For each={structureTypes}>
+                        {(type) => {
+                            const rcl = () => controllerLevel() ?? 0
+                            const max = () => getMaxForLevel(type, rcl())
+                            const current = () => structureCounts()[type] ?? 0
+                            const isSelected = () => buildDraft().structureType === type
+                            const isUnlimited = () => max() === 2500
+                            const isMaxed = () => !isUnlimited() && getRemaining(type, rcl()) <= 0
+
+                            return (
+                                <Show when={max() > 0}>
+                                    <div
+                                        onClick={() => !isMaxed() && handleSelectType(type)}
+                                        style={{
+                                            padding: '6px 8px',
+                                            display: 'flex',
+                                            'justify-content': 'space-between',
+                                            'align-items': 'center',
+                                            'border-bottom': '1px solid #21262d',
+                                            background: isSelected() ? '#1f3158' : 'transparent',
+                                            cursor: isMaxed() ? 'default' : 'pointer',
+                                            opacity: isMaxed() ? 0.5 : 1,
+                                            'font-size': '11px',
+                                            color: '#c9d1d9',
+                                        }}
+                                    >
+                                        <span style={{ 'text-transform': 'capitalize' }}>
+                                            {type.replace(/([A-Z])/g, ' $1').trim()}
+                                            {isSelected() && ' ✓'}
+                                        </span>
+                                        <span style={{ color: '#8b949e' }}>
+                                            {isUnlimited()
+                                                ? `${current()}/∞`
+                                                : `${current()}/${max()}`}
+                                            {isMaxed() && ' (Max)'}
+                                        </span>
+                                    </div>
+                                </Show>
+                            )
+                        }}
+                    </For>
+                </div>
+
+                <div style={{ 'margin-top': '8px', padding: '0 4px' }}>
+                    <Show when={pendingTile()} fallback={
+                        <div style={{ color: '#484f58', 'font-style': 'italic', 'font-size': '12px' }}>
+                            {buildDraft().structureType
+                                ? 'Click a tile in the room to place construction site.'
+                                : 'Select a structure type, then click a tile.'}
+                        </div>
+                    }>
+                        {(p) => (
+                            <div style={{ color: '#8b949e', 'font-size': '11px' }}>
+                                Pending at: x={p().tx}, y={p().ty}
+                            </div>
+                        )}
+                    </Show>
+
+                    <Show when={buildDraft().structureType && pendingTile()}>
+                        <button
+                            onClick={handleBuild}
+                            style={{
+                                'margin-top': '8px',
+                                width: '100%',
+                                padding: '6px 12px',
+                                'border-radius': '4px',
+                                border: '1px solid #238636',
+                                background: '#1a3a2a',
+                                color: '#3fb950',
+                                'font-size': '12px',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            Build {buildDraft().structureType.replace(/([A-Z])/g, ' $1').trim()}
+                        </button>
+                    </Show>
+                </div>
         </div>
     )
 }
 
-function RoomModePanel() {
+function RoomModePanel(props: { room: string; shard: string | null }) {
     return (
         <Show when={roomViewMode() === 'flag'} fallback={
             <Show when={roomViewMode() === 'build'} fallback={<SelectionList />}>
-                <BuildPanel />
+                <BuildPanel room={props.room} shard={props.shard} />
             </Show>
         }>
             <FlagForm />
@@ -479,7 +626,7 @@ export function Sidebar(props: SidebarProps) {
 
         <Show
           when={props.mapMode}
-          fallback={<RoomModePanel />}
+          fallback={<RoomModePanel room={props.room ?? '—'} shard={props.shard ?? null} />}
         >
           <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
             <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />

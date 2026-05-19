@@ -9,12 +9,12 @@ import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBound
 import { showCreepLabels } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff, createSelectedObject } from '~/stores/selectionStore.js'
 import { addToast } from '~/stores/toastStore.js'
-import { setRoomObjectCount, setRoomOwner } from '~/stores/roomDataStore.js'
+import { setRoomObjectCount, setRoomOwner, setControllerLevel, setStructureCounts } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from '@bastianh/screeps-connectivity'
 import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
-import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft, modeHint, overlayAction, clearOverlayAction} from '~/stores/roomViewStore';
+import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft, modeHint, overlayAction, clearOverlayAction, buildDraft, confirmBuild} from '~/stores/roomViewStore';
 
 interface RoomViewerProps {
   room: string
@@ -67,6 +67,8 @@ export function RoomViewer(props: RoomViewerProps) {
     clearSelection()
     setRoomObjectCount(null)
     setRoomOwner(null)
+    setControllerLevel(null)
+    setStructureCounts({})
 
     const group = new SubscriptionGroup()
 
@@ -87,6 +89,10 @@ export function RoomViewer(props: RoomViewerProps) {
     group.add(c.stores.room.on('room:update', (data) => {
       // Use for...in to count keys without allocating an array, avoiding memory allocations on hot path
       let objectCount = 0
+      // Structure counts for build mode: track actual structures + construction sites
+      const structCounts: Record<string, number> = {}
+      let ctrlLevel = 0
+
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for (const _k in data.objects) { objectCount++ }
 
@@ -99,17 +105,38 @@ export function RoomViewer(props: RoomViewerProps) {
       recordGameTime(data.gameTime)
       setRoomObjectCount(objectCount)
 
-      // Extract room owner from controller
+      // Extract room owner from controller and count structures
       let owner: { userId: string; username: string } | null = null
       for (const obj of Object.values(data.objects)) {
-        if (obj?.type === 'controller' && typeof obj.user === 'string') {
+        if (!obj) continue
+
+        // Count structures by type
+        const objType = obj.type
+        if (typeof objType === 'string') {
+          if (objType === 'constructionSite') {
+            // Count construction sites by their structureType
+            const structureType = obj.structureType
+            if (typeof structureType === 'string') {
+              structCounts[structureType] = (structCounts[structureType] || 0) + 1
+            }
+          } else {
+            structCounts[objType] = (structCounts[objType] || 0) + 1
+          }
+        }
+
+        // Extract controller info
+        if (objType === 'controller' && typeof obj.user === 'string') {
           const userId = obj.user
           const username = data.users?.[userId]?.username ?? userId
           owner = { userId, username }
-          break
+          if (typeof obj.level === 'number') {
+            ctrlLevel = obj.level
+          }
         }
       }
       setRoomOwner(owner)
+      setControllerLevel(ctrlLevel || null)
+      setStructureCounts(structCounts)
     }))
 
     onCleanup(() => {
@@ -195,6 +222,18 @@ export function RoomViewer(props: RoomViewerProps) {
     const r = renderer()
     if (mode === 'view' && r) {
       clearPendingTile()
+      r.hoverLayer.clearPendingTile()
+    }
+  })
+
+  // Sync pending tile changes to hoverLayer (e.g., when cleared from Sidebar)
+  createEffect(() => {
+    const r = renderer()
+    const pending = pendingTile()
+    if (!r) return
+    if (pending) {
+      r.hoverLayer.setPendingTile(pending.tx, pending.ty)
+    } else {
       r.hoverLayer.clearPendingTile()
     }
   })
@@ -304,15 +343,38 @@ export function RoomViewer(props: RoomViewerProps) {
             }
 
             if (mode === 'build') {
+              if (ctrlKey) {
+                if (!objLayer) return
+                const hits = objLayer.getObjectsAtTile(tx, ty)
+                const sites = hits.filter(({ obj }) => obj.type === 'constructionSite')
+                if (sites.length === 0) {
+                  addToast('No construction sites on this tile', 'error')
+                  return
+                }
+                const c = client()
+                if (!c) return
+                c.http.game.removeConstructionSite(props.room, sites.map(({ id }) => id), props.shard ?? undefined)
+                  .then(() => {
+                    addToast(`Removed ${sites.length} construction site${sites.length > 1 ? 's' : ''}`, 'success')
+                    clearPendingTile()
+                    r.hoverLayer.clearPendingTile()
+                  })
+                  .catch((err) => {
+                    console.error('[room] remove construction sites failed:', err)
+                    addToast(`Failed to remove construction sites: ${err.message}`, 'error')
+                  })
+                return
+              }
+
               const pending = pendingTile()
+              console.log('[room] build mode click', { tx, ty, pending, draft: buildDraft() })
               if (!pending || pending.tx !== tx || pending.ty !== ty) {
                 setPendingTile({ tx, ty })
                 r.hoverLayer.setPendingTile(tx, ty)
                 return
               }
-              // Second click on same tile in build mode — not implemented yet
-              clearPendingTile()
-              r.hoverLayer.clearPendingTile()
+              // Second click on same tile in build mode — confirm and build
+              confirmBuild(props.room, props.shard)
               return
             }
 
