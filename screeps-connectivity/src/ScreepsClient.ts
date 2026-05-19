@@ -27,6 +27,8 @@ export interface ScreepsClientOptions {
   storage?: StorageAdapter | null
   WebSocket?: WsConstructor
   debug?: boolean | LogFn
+  /** Required when the server is started with `SERVER_PASSWORD`. Sent as `X-Server-Password` on every HTTP request. */
+  serverPassword?: string
   map2?: {
     maxSubscriptions?: number
     maxCacheEntries?: number
@@ -68,7 +70,7 @@ export class ScreepsClient {
     this.logger = Logger.create(opts.debug)
     this.logger.log(`[screeps:client] init ${opts.url}`)
     this.cache = new Cache(namespace, opts.storage ?? null)
-    this.http = new HttpClient({ url: opts.url, auth: opts.auth, logger: this.logger.child('http') })
+    this.http = new HttpClient({ url: opts.url, auth: opts.auth, logger: this.logger.child('http'), serverPassword: opts.serverPassword })
     this.socket = new SocketClient({ url: opts.url, WebSocket: opts.WebSocket, logger: this.logger.child('socket') })
     const map2Storage = new Map2Storage({
       adapter: opts.storage ?? null,

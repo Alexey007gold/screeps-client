@@ -151,7 +151,14 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     this.logger.log('subscribe', room, shard, `(refs: ${count + 1})`)
 
     const channel = shard ? `room:${shard}/${room}` : `room:${room}`
+    const errChannel = shard ? `err@room:${shard}/${room}` : `err@room:${room}`
     const socketSub = this.socket.subscribe(channel)
+
+    const errListenerSub = this.socket.on(errChannel, (data) => {
+      const msg = typeof data === 'string' ? data : JSON.stringify(data)
+      this.logger.log('room error', room, shard, msg)
+      this.emit('room:error', { room, shard, message: msg })
+    })
 
     const listenerSub = this.socket.on(channel, (data) => {
       const update = data as { objects: RoomObjectDiff; gameTime?: number; visual?: string; flags?: string; users?: Record<string, { _id: string; username: string }> }
@@ -214,6 +221,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       dispose: () => {
         socketSub.dispose()
         listenerSub.dispose()
+        errListenerSub.dispose()
         const remaining = (this.roomSubCount.get(mapKey) ?? 1) - 1
         if (remaining <= 0) {
           this.logger.log('unsubscribe', room, shard, '(last ref)')

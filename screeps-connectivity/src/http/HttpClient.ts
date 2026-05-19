@@ -19,6 +19,7 @@ export class HttpClient extends EventTarget {
   readonly baseUrl: string
   private readonly authStrategy: AuthStrategy
   private readonly logger: Logger
+  private readonly serverPassword: string | null
   token: string | null = null
   readonly rateLimits = new Map<string, RateLimitInfo>()
   private authenticating = false
@@ -29,11 +30,12 @@ export class HttpClient extends EventTarget {
   readonly leaderboard: LeaderboardEndpoints
   readonly experimental: ExperimentalEndpoints
 
-  constructor(opts: { url: string; auth: AuthStrategy; logger?: Logger }) {
+  constructor(opts: { url: string; auth: AuthStrategy; logger?: Logger; serverPassword?: string }) {
     super()
     this.baseUrl = opts.url.endsWith('/') ? opts.url : `${opts.url}/`
     this.authStrategy = opts.auth
     this.logger = opts.logger ?? Logger.create()
+    this.serverPassword = opts.serverPassword ?? null
     this.auth = createAuthEndpoints(this)
     this.game = createGameEndpoints(this)
     this.user = createUserEndpoints(this)
@@ -81,7 +83,9 @@ export class HttpClient extends EventTarget {
 
     if (this.token) {
       headers['X-Token'] = this.token
-      headers['X-Username'] = this.token
+    }
+    if (this.serverPassword) {
+      headers['X-Server-Password'] = this.serverPassword
     }
 
     const init: RequestInit = { method, headers }

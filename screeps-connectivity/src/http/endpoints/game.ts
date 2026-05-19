@@ -3,6 +3,7 @@ import type { ApiRoomTerrainResponse, ApiRoomObjectsResponse, ApiShardsInfoRespo
 
 export interface GameEndpoints {
   roomTerrain(room: string, shard?: string | null): Promise<ApiRoomTerrainResponse>
+  /** @deprecated Not available on private servers (backend-local). Room objects are delivered via the `room:<name>` WebSocket channel. */
   roomObjects(room: string, shard?: string | null): Promise<ApiRoomObjectsResponse>
   roomStatus(room: string, shard?: string | null): Promise<{ ok: number; status: string; novice?: string }>
   roomOverview(room: string, interval?: number, shard?: string | null): Promise<unknown>

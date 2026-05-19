@@ -22,7 +22,7 @@ describe('HttpClient', () => {
     vi.unstubAllGlobals()
   })
 
-  it('attaches X-Token and X-Username headers after authenticate()', async () => {
+  it('attaches X-Token header after authenticate()', async () => {
     fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
     const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 'tok123' }) })
     await http.authenticate()
@@ -30,7 +30,25 @@ describe('HttpClient', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     const headers = init.headers as Record<string, string>
     expect(headers['X-Token']).toBe('tok123')
-    expect(headers['X-Username']).toBe('tok123')
+    expect(headers['X-Username']).toBeUndefined()
+  })
+
+  it('attaches X-Server-Password header when serverPassword is set', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }), serverPassword: 'secret' })
+    await http.request('GET', '/api/version')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-Server-Password']).toBe('secret')
+  })
+
+  it('omits X-Server-Password header when serverPassword is not set', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    await http.request('GET', '/api/version')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-Server-Password']).toBeUndefined()
   })
 
   it('sends GET params as query string', async () => {

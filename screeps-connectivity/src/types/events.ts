@@ -23,6 +23,7 @@ export interface RoomStoreEvents {
         users?: Record<string, { _id: string; username: string }>
     }
     'room:terrainavailable': { room: string; shard: string | null; terrain: RoomTerrain }
+    'room:error': { room: string; shard: string | null; message: string }
 }
 
 export type Map2SubscriptionStatus = 'pending' | 'active'
