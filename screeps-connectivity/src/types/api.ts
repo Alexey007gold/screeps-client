@@ -146,3 +146,27 @@ export interface ApiChangeFlagColorResponse {
 export interface ApiRemoveFlagResponse {
   ok: number
 }
+
+export interface ApiUserFindResponse {
+  ok: number
+  user: {
+    _id: string
+    username: string
+    badge: import('./game.js').Badge
+    gcl: number
+  }
+}
+
+export interface ApiUserMoneyHistoryResponse {
+  ok: number
+  page: number
+  list: Array<{
+    _id: string
+    date: string
+    tick: number
+    type: string
+    balance: number
+    change: number
+    market?: unknown
+  }>
+}
