@@ -7,7 +7,7 @@ import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo } from '~/stores/clientStore.js'
 import { showCreepLabels } from '~/stores/settingsStore.js'
-import { setSelection, clearSelection, selection, updateSelectionWithDiff } from '~/stores/selectionStore.js'
+import { setSelection, clearSelection, selection, updateSelectionWithDiff, createSelectedObject } from '~/stores/selectionStore.js'
 import { addToast } from '~/stores/toastStore.js'
 import { setRoomObjectCount, setRoomOwner } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
@@ -320,26 +320,12 @@ export function RoomViewer(props: RoomViewerProps) {
                 // Add all objects on this tile
                 const toAdd = hits
                     .filter(({ id }) => !nextSelection.some(s => s.id === id))
-                    .map(({ id, obj }) => ({
-                      id,
-                      type: obj.type,
-                      name: typeof obj.name === 'string' ? obj.name : undefined,
-                      x: obj.x,
-                      y: obj.y,
-                      raw: obj,
-                    }))
+                    .map(({ id, obj }) => createSelectedObject(id, obj))
                 nextSelection = [...nextSelection, ...toAdd]
               }
             } else {
               // Normal click: replace selection with objects on this tile
-              nextSelection = hits.map(({ id, obj }) => ({
-                id,
-                type: obj.type,
-                name: typeof obj.name === 'string' ? obj.name : undefined,
-                x: obj.x,
-                y: obj.y,
-                raw: obj,
-              }))
+              nextSelection = hits.map(({ id, obj }) => createSelectedObject(id, obj))
             }
 
             setSelection(nextSelection)

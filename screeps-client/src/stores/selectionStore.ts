@@ -1,13 +1,24 @@
 import { createSignal } from 'solid-js'
+import { createStore, reconcile } from 'solid-js/store'
 import type { RoomObject } from '@bastianh/screeps-connectivity'
 
 export interface SelectedObject {
   id: string
   type: string
-  name?: string
-  x: number
-  y: number
   raw: RoomObject
+}
+
+const setters = new WeakMap<SelectedObject, (value: RoomObject) => void>()
+
+export function createSelectedObject(id: string, obj: RoomObject): SelectedObject {
+  const [raw, setRaw] = createStore<RoomObject>(obj)
+  const wrapper: SelectedObject = {
+    id,
+    type: obj.type,
+    raw,
+  }
+  setters.set(wrapper, (value) => setRaw(reconcile(value, { key: '_id', merge: false })))
+  return wrapper
 }
 
 const [selection, setSelection] = createSignal<SelectedObject[]>([])
@@ -26,29 +37,23 @@ export function updateSelectionWithDiff(
   diff: Record<string, Partial<RoomObject> | null>,
   objects: Record<string, RoomObject>
 ): void {
-  setSelection((prev) => {
-    let changed = false
-    const next = prev.map((item) => {
-      const itemDiff = diff[item.id]
-      if (itemDiff !== undefined) {
-        if (itemDiff === null) {
-          changed = true
-          return null
-        } else {
-          changed = true
-          const updatedRaw = objects[item.id]
-          return {
-            ...item,
-            raw: updatedRaw,
-            x: updatedRaw.x,
-            y: updatedRaw.y,
-            name: typeof updatedRaw.name === 'string' ? updatedRaw.name : undefined,
-          }
-        }
+  const current = selection()
+  let removed = false
+  const next: SelectedObject[] = []
+  for (const item of current) {
+    const itemDiff = diff[item.id]
+    if (itemDiff === null) {
+      removed = true
+      continue
+    }
+    if (itemDiff !== undefined) {
+      const updated = objects[item.id]
+      if (updated) {
+        const setRaw = setters.get(item)
+        setRaw?.(updated)
       }
-      return item
-    }).filter((item) => item !== null) as SelectedObject[]
-
-    return changed ? next : prev
-  })
+    }
+    next.push(item)
+  }
+  if (removed) setSelection(next)
 }

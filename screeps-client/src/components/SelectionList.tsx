@@ -194,11 +194,11 @@ function StoreDetails(props: { store?: Record<string, number> }) {
 }
 
 function CreepDetails(props: { item: SelectedObject }) {
-  const store = props.item.raw.store as Record<string, number> | undefined
+  const store = () => props.item.raw.store as Record<string, number> | undefined
   return (
     <>
       <DefaultDetails item={props.item} />
-      <StoreDetails store={store} />
+      <StoreDetails store={store()} />
     </>
   )
 }
@@ -217,23 +217,24 @@ const FLAG_COLOR_OPTIONS = [
 ]
 
 function FlagDetails(props: { item: SelectedObject }) {
-  const raw = props.item.raw as Record<string, unknown>
-  const name = typeof raw.name === 'string' ? raw.name : ''
-  const room = typeof raw.room === 'string' ? raw.room : ''
-  const currentColor = typeof raw.color === 'number' ? raw.color : 1
-  const currentSecondaryColor = typeof raw.secondaryColor === 'number' ? raw.secondaryColor : 1
+  const raw = () => props.item.raw as Record<string, unknown>
+  const name = () => (typeof raw().name === 'string' ? (raw().name as string) : '')
+  const room = () => (typeof raw().room === 'string' ? (raw().room as string) : '')
+  const currentColor = () => (typeof raw().color === 'number' ? (raw().color as number) : 1)
+  const currentSecondaryColor = () =>
+    typeof raw().secondaryColor === 'number' ? (raw().secondaryColor as number) : 1
 
   const handleColorChange = (color: number, secondaryColor: number) => {
     const c = client()
     if (!c) return
-    c.http.game.changeFlagColor(room, name, color, secondaryColor).catch(() => {})
+    c.http.game.changeFlagColor(room(), name(), color, secondaryColor).catch(() => {})
   }
 
   const handleDelete = () => {
-    if (!window.confirm(`Delete flag "${name}"?`)) return
+    if (!window.confirm(`Delete flag "${name()}"?`)) return
     const c = client()
     if (!c) return
-    c.http.game.removeFlag(room, name)
+    c.http.game.removeFlag(room(), name())
       .then(() => {
         deselectItem(props.item.id)
       })
@@ -263,8 +264,8 @@ function FlagDetails(props: { item: SelectedObject }) {
       <label style={labelStyle}>
         Primary color
         <select
-          value={currentColor}
-          onChange={(e) => handleColorChange(Number(e.currentTarget.value), currentSecondaryColor)}
+          value={currentColor()}
+          onChange={(e) => handleColorChange(Number(e.currentTarget.value), currentSecondaryColor())}
           style={selectStyle}
         >
           <For each={FLAG_COLOR_OPTIONS}>
@@ -276,8 +277,8 @@ function FlagDetails(props: { item: SelectedObject }) {
       <label style={labelStyle}>
         Secondary color
         <select
-          value={currentSecondaryColor}
-          onChange={(e) => handleColorChange(currentColor, Number(e.currentTarget.value))}
+          value={currentSecondaryColor()}
+          onChange={(e) => handleColorChange(currentColor(), Number(e.currentTarget.value))}
           style={selectStyle}
         >
           <For each={FLAG_COLOR_OPTIONS}>
@@ -361,14 +362,16 @@ function SelectionItem(props: { item: SelectedObject }) {
           }}
         >
           {label()}
-          {props.item.name && (
-            <span style={{ 'font-weight': 400, color: '#8b949e', 'margin-left': '5px' }}>
-              {props.item.name}
-            </span>
-          )}
+          <Show when={typeof props.item.raw.name === 'string' && props.item.raw.name}>
+            {(name) => (
+              <span style={{ 'font-weight': 400, color: '#8b949e', 'margin-left': '5px' }}>
+                {name() as string}
+              </span>
+            )}
+          </Show>
         </span>
         <span style={{ 'font-size': '10px', color: '#484f58', 'flex-shrink': 0, 'margin-right': '2px' }}>
-          ({props.item.x},{props.item.y})
+          ({props.item.raw.x},{props.item.raw.y})
         </span>
         <button
           onClick={() => deselectItem(props.item.id)}
