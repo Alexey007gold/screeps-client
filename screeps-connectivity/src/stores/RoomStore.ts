@@ -15,6 +15,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly roomObjects = new Map<string, RoomObjectMap>()
   private readonly roomUsers = new Map<string, Record<string, { _id: string; username: string }>>()
   private readonly roomSubCount = new Map<string, number>()
+  private readonly lastFlagsString = new Map<string, string>()
 
   private parseFlagsString(flagsStr: string | undefined, roomName: string): RoomObject[] {
     if (!flagsStr || flagsStr.length === 0) return []
@@ -174,37 +175,49 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
         }
       }
 
-      // Parse and inject flags from the dedicated flags field
-      if ('flags' in update) {
-        const flags = this.parseFlagsString(update.flags, room)
-        // Remove old flag objects first
-        for (const id in current) {
-          if (current[id]?.type === 'flag') {
-            delete current[id]
-          }
-        }
-        // Add new flags
-        for (const flag of flags) {
-          const name = flag.name as string
-          current[name] = flag
-          this.logger.log(`[flag:room] ${name} @ ${room} (${flag.x},${flag.y})`)
-        }
-      }
-
       // Build diff that includes flags so ObjectLayer can incremental-update them
       const diff: RoomObjectDiff = { ...update.objects }
-      for (const id in current) {
-        const obj = current[id]
-        if (obj?.type === 'flag' && !(id in update.objects)) {
-          diff[id] = obj
-        }
-      }
-      // Mark removed flags in diff
-      const prevMap = this.roomObjects.get(mapKey)
-      if (prevMap) {
-        for (const id in prevMap) {
-          if (prevMap[id]?.type === 'flag' && !current[id]) {
-            diff[id] = null
+
+      // Parse and inject flags from the dedicated flags field — only when the
+      // server-sent flag string actually changed. The flags field is included
+      // on every tick even when nothing about the flags changed, so without
+      // this guard every selected flag would get a fresh object each tick and
+      // re-trigger UI subscriptions for no reason.
+      if ('flags' in update) {
+        const newFlagsString = update.flags ?? ''
+        const prevFlagsString = this.lastFlagsString.get(mapKey) ?? ''
+
+        if (newFlagsString !== prevFlagsString) {
+          this.lastFlagsString.set(mapKey, newFlagsString)
+
+          const parsed = this.parseFlagsString(newFlagsString, room)
+          const newFlags = new Map<string, RoomObject>()
+          for (const f of parsed) newFlags.set(f.name as string, f)
+
+          // Emit removed flags as null in diff and drop them from current
+          for (const id in current) {
+            const obj = current[id]
+            if (obj?.type === 'flag' && !newFlags.has(id)) {
+              delete current[id]
+              diff[id] = null
+              this.logger.log(`[flag:room] removed ${id} @ ${room}`)
+            }
+          }
+
+          // Emit added/changed flags
+          for (const [id, flag] of newFlags) {
+            const prev = current[id]
+            const changed =
+              !prev ||
+              prev.x !== flag.x ||
+              prev.y !== flag.y ||
+              prev.color !== flag.color ||
+              prev.secondaryColor !== flag.secondaryColor
+            if (changed) {
+              current[id] = flag
+              diff[id] = flag
+              this.logger.log(`[flag:room] ${prev ? 'changed' : 'added'} ${id} @ ${room} (${flag.x},${flag.y})`)
+            }
           }
         }
       }
@@ -227,6 +240,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
           this.logger.log('unsubscribe', room, shard, '(last ref)')
           this.roomSubCount.delete(mapKey)
           this.roomObjects.delete(mapKey)
+          this.lastFlagsString.delete(mapKey)
         } else {
           this.logger.log('unsubscribe', room, shard, `(refs: ${remaining})`)
           this.roomSubCount.set(mapKey, remaining)

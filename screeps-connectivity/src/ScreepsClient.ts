@@ -157,7 +157,7 @@ export class ScreepsClient {
     this.refreshInFlight = true
     try {
       this.logger.log('[screeps:client] token refresh (idle)')
-      await this.http.auth.me()
+      await this.stores.user.refreshWorldStatus()
     } catch (err) {
       this.logger.log('[screeps:client] token refresh failed', err)
     } finally {
