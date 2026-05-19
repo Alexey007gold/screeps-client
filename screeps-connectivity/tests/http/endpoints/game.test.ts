@@ -122,6 +122,14 @@ describe('game endpoints', () => {
     expect(body).toEqual({ room: 'W1N1', x: 10, y: 20, name: 'Spawn1' })
   })
 
+  it('placeSpawn includes shard when provided', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    await http.game.placeSpawn('W1N1', 10, 20, 'Spawn1', 'shard0')
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body).toEqual({ room: 'W1N1', x: 10, y: 20, name: 'Spawn1', shard: 'shard0' })
+  })
+
   it('createConstruction sends POST with required fields', async () => {
     fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
     const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })

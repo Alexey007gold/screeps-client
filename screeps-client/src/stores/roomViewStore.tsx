@@ -1,7 +1,7 @@
-// screeps-client/src/stores/roomViewStore.ts
-import { createSignal } from 'solid-js'
+// screeps-client/src/stores/roomViewStore.tsx
+import { createEffect, createSignal, type JSX } from 'solid-js'
 import { controllerLevel, structureCounts } from './roomDataStore.js'
-import { client } from './clientStore.js'
+import { client, worldStatus } from './clientStore.js'
 import { addToast } from './toastStore.js'
 
 export type RoomViewMode = 'view' | 'flag' | 'build'
@@ -78,6 +78,24 @@ const [buildDraft, setBuildDraft] = createSignal<BuildDraft>({
   structureName: '',
 })
 
+// Auto-deselect the selected structure type when its max is reached
+createEffect(() => {
+  const type = buildDraft().structureType
+  if (!type) return
+  const rcl = controllerLevel() ?? 0
+  const levels = CONTROLLER_STRUCTURES[type]
+  if (!levels) return
+  const max = worldStatus() === 'empty' && type === 'spawn'
+    ? Math.max(levels[rcl] ?? 0, 1)
+    : (levels[rcl] ?? 0)
+  if (max === 2500) return
+  const current = structureCounts()[type] ?? 0
+  if (current >= max) {
+    setBuildDraft({ structureType: '', structureName: '' })
+    clearPendingTile()
+  }
+})
+
 export { roomViewMode, setRoomViewMode, flagDraft, setFlagDraft, pendingTile, setPendingTile, overlayAction, setOverlayAction, buildDraft, setBuildDraft }
 
 export function clearPendingTile(): void {
@@ -99,6 +117,34 @@ export function confirmBuild(room: string, shard: string | null): void {
 
   if (!c || !draft.structureType || !pending) {
     console.warn('[build] missing requirements', { hasClient: !!c, structureType: draft.structureType, pending })
+    return
+  }
+
+  if (worldStatus() === 'empty' && draft.structureType === 'spawn') {
+    console.log('[build] placing spawn', {
+      room,
+      x: pending.tx,
+      y: pending.ty,
+      name: draft.structureName || undefined,
+      shard: shard ?? undefined,
+    })
+
+    c.http.game.placeSpawn(
+      room,
+      pending.tx,
+      pending.ty,
+      draft.structureName || 'Spawn 1',
+      shard ?? undefined
+    )
+      .then(() => {
+        console.log('[build] spawn placed')
+        addToast('Spawn placed successfully', 'success')
+        clearPendingTile()
+      })
+      .catch((err: Error) => {
+        console.error('[build] place spawn failed:', err)
+        addToast(`Failed to place spawn: ${err.message}`, 'error')
+      })
     return
   }
 
@@ -137,17 +183,41 @@ export function resetRoomViewMode(): void {
     clearBuildDraft()
 }
 
-export function modeHint(): string | null {
+export function modeHint(): JSX.Element | null {
   const mode = roomViewMode()
   const pending = pendingTile()
   const overlay = overlayAction()
+  const worldStatusValue = worldStatus()
+
+  if (worldStatusValue === 'empty') {
+    return (
+      <div style={{ 'text-align': 'center' }}>
+        <div style={{ 'font-size': '14px', 'font-weight': 600, color: '#f85149' }}>
+          You have no rooms!
+        </div>
+        <div style={{ 'font-size': '11px', color: '#8b949e', 'margin-top': '2px' }}>
+          Place a spawn to get started
+        </div>
+      </div>
+    )
+  }
+
+  if (worldStatusValue === 'lost') {
+    return (
+      <div style={{ 'text-align': 'center' }}>
+        <div style={{ 'font-size': '14px', 'font-weight': 600, color: '#f85149' }}>
+          You lost all your spawns!
+        </div>
+      </div>
+    )
+  }
 
   if (overlay?.type === 'moveFlag') {
-    return 'Choose new flag position'
+    return <span>Choose new flag position</span>
   }
 
   if (mode === 'flag') {
-    return pending ? 'Confirm position' : 'Choose position'
+    return <span>{pending ? 'Confirm position' : 'Choose position'}</span>
   }
 
   if (mode === 'build') {
@@ -159,7 +229,7 @@ export function modeHint(): string | null {
     const ctrlHint = ' — Ctrl+click to remove construction sites'
 
     if (!type) {
-      return pending ? `Confirm position${ctrlHint}` : `Choose position${ctrlHint}`
+      return <span>{pending ? `Confirm position${ctrlHint}` : `Choose position${ctrlHint}`}</span>
     }
 
     const levels = CONTROLLER_STRUCTURES[type]
@@ -169,10 +239,10 @@ export function modeHint(): string | null {
     const positionText = pending ? 'Confirm position' : 'Choose position'
 
     if (max === 2500) {
-      return `${positionText} to build ${display} (${current}/∞)${ctrlHint}`
+      return <span>{`${positionText} to build ${display} (${current}/∞)${ctrlHint}`}</span>
     }
 
-    return `${positionText} to build ${display} (${current}/${max})${ctrlHint}`
+    return <span>{`${positionText} to build ${display} (${current}/${max})${ctrlHint}`}</span>
   }
 
   return null

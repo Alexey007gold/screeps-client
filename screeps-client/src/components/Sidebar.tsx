@@ -4,7 +4,7 @@ import { RoomInfoPanel } from '~/components/RoomInfoPanel.js'
 import { MapInfoPanel } from '~/components/MapInfoPanel.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
 import {flagDraft, roomViewMode, setFlagDraft, pendingTile, buildDraft, setBuildDraft, CONTROLLER_STRUCTURES, confirmBuild} from "~/stores/roomViewStore";
-import { client, userFlags } from '~/stores/clientStore.js'
+import { client, userFlags, worldStatus } from '~/stores/clientStore.js'
 import { controllerLevel, structureCounts } from '~/stores/roomDataStore.js'
 
 import { FLAG_COLORS as FLAG_COLOR_HEXES } from '~/renderer/colors.js'
@@ -356,6 +356,9 @@ function BuildPanel(props: { room: string; shard: string | null }) {
     const getMaxForLevel = (type: string, rcl: number): number => {
         const levels = CONTROLLER_STRUCTURES[type]
         if (!levels) return 0
+        if (worldStatus() === 'empty' && type === 'spawn') {
+            return Math.max(levels[rcl] ?? 0, 1)
+        }
         return levels[rcl] ?? 0
     }
 
@@ -398,9 +401,14 @@ function BuildPanel(props: { room: string; shard: string | null }) {
                     Controller Level {controllerLevel() ?? '?'}
                 </div>
                 <div style={{ padding: '8px', 'font-size': '11px', color: '#8b949e' }}>
-                    {controllerLevel() != null
-                        ? `RCL ${controllerLevel()} — Select a structure type below, then click a tile in the room.`
-                        : 'No controller — roads and containers only.'}
+                    {(() => {
+                        const status = worldStatus()
+                        if (status === 'empty') return 'World is empty — place a spawn to claim this room.'
+                        if (status === 'lost') return 'You lost all your spawns — respawn to continue.'
+                        return controllerLevel() != null
+                            ? `RCL ${controllerLevel()} — Select a structure type below, then click a tile in the room.`
+                            : 'No controller — roads and containers only.'
+                    })()}
                 </div>
             </div>
 

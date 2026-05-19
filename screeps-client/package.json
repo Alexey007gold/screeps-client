@@ -18,7 +18,11 @@
   },
   "dependencies": {
     "@bastianh/screeps-connectivity": "workspace:*",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "codemirror": "^6.0.2",
     "pixi.js": "^8.9.0",
+    "solid-codemirror": "^2.3.3",
     "solid-js": "^1.9.0",
     "vite-plugin-singlefile": "^2.3.3"
   },

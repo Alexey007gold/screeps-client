@@ -34,7 +34,7 @@ export interface GameEndpoints {
   removeFlag(room: string, name: string): Promise<ApiRemoveFlagResponse>
   genUniqueObjectName(type: string): Promise<ApiGenUniqueObjectNameResponse>
   checkUniqueObjectName(type: string, name: string): Promise<ApiCheckUniqueObjectNameResponse>
-  placeSpawn(room: string, x: number, y: number, name?: string): Promise<{ ok: number }>
+  placeSpawn(room: string, x: number, y: number, name?: string, shard?: string | null): Promise<{ ok: number }>
   createConstruction(room: string, x: number, y: number, structureType: string, name?: string, shard?: string | null): Promise<{ ok: number }>
   removeConstructionSite(room: string, ids: string[], shard?: string | null): Promise<{ ok: number }>
   addObjectIntent(id: string, room: string, name: string, intent: unknown): Promise<{ ok: number }>
@@ -80,7 +80,7 @@ export function createGameEndpoints(http: HttpClient): GameEndpoints {
     removeFlag: (room, name) => http.request('POST', '/api/game/remove-flag', { room, name }),
     genUniqueObjectName: (type) => http.request('POST', '/api/game/gen-unique-object-name', { type }),
     checkUniqueObjectName: (type, name) => http.request('POST', '/api/game/check-unique-object-name', { type, name }),
-    placeSpawn: (room, x, y, name) => http.request('POST', '/api/game/place-spawn', { room, x, y, ...(name ? { name } : {}) }),
+    placeSpawn: (room, x, y, name, shard) => http.request('POST', '/api/game/place-spawn', withShard({ room, x, y, ...(name ? { name } : {}) }, shard)),
     createConstruction: (room, x, y, structureType, name, shard) => http.request('POST', '/api/game/create-construction', withShard({ room, x, y, structureType, ...(name ? { name } : {}) }, shard)),
     removeConstructionSite: (room, ids, shard) => http.request('POST', '/api/game/add-object-intent', withShard({ _id: 'room', room, name: 'removeConstructionSite', intent: ids.map(id => ({ id, roomName: room })) }, shard)),
     addObjectIntent: (id, room, name, intent) => http.request('POST', '/api/game/add-object-intent', { _id: id, room, name, intent }),

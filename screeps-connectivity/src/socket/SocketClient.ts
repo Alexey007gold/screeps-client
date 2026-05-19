@@ -96,14 +96,20 @@ export class SocketClient {
     this.queue.length = 0
   }
 
+  private activeSubs(): string {
+    return Array.from(this.subs.entries())
+      .map(([ch, count]) => `${ch}(${count})`)
+      .join(', ') || '(none)'
+  }
+
   subscribe(channel: string): Subscription {
     const count = this.subs.get(channel) ?? 0
     this.subs.set(channel, count + 1)
     if (count === 0) {
-      this.logger.log('subscribe', channel)
+      this.logger.log('subscribe', channel, 'active:', this.activeSubs())
       this.sendOrQueue(`subscribe ${channel}`)
     } else {
-      this.logger.log('subscribe', channel, `(refs: ${count + 1})`)
+      this.logger.log('subscribe', channel, `(refs: ${count + 1})`, 'active:', this.activeSubs())
     }
     return { dispose: () => this.doUnsubscribe(channel) }
   }
@@ -123,12 +129,12 @@ export class SocketClient {
   private doUnsubscribe(channel: string): void {
     const count = this.subs.get(channel) ?? 0
     if (count <= 1) {
-      this.logger.log('unsubscribe', channel)
       this.subs.delete(channel)
       if (this.authed) this.rawSend(`unsubscribe ${channel}`)
+      this.logger.log('unsubscribe', channel, 'active:', this.activeSubs())
     } else {
-      this.logger.log('unsubscribe', channel, `(refs: ${count - 1})`)
       this.subs.set(channel, count - 1)
+      this.logger.log('unsubscribe', channel, `(refs: ${count - 1})`, 'active:', this.activeSubs())
     }
   }
 

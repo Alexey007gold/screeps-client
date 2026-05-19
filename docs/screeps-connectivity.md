@@ -702,6 +702,11 @@ http.game.genUniqueFlagName(): Promise<ApiGenUniqueFlagNameResponse>
 http.game.checkUniqueFlagName(name): Promise<ApiCheckUniqueFlagNameResponse>
 http.game.changeFlagColor(room, name, color, secondaryColor): Promise<ApiChangeFlagColorResponse>
 http.game.removeFlag(room, name): Promise<ApiRemoveFlagResponse>
+http.game.genUniqueObjectName(type): Promise<ApiGenUniqueObjectNameResponse>
+http.game.checkUniqueObjectName(type, name): Promise<ApiCheckUniqueObjectNameResponse>
+http.game.placeSpawn(room, x, y, name?, shard?): Promise<{ ok: number }>
+http.game.createConstruction(room, x, y, structureType, name?, shard?): Promise<{ ok: number }>
+http.game.removeConstructionSite(room, ids, shard?): Promise<{ ok: number }>
 http.game.market.ordersIndex(shard?): Promise<unknown>
 http.game.market.myOrders(): Promise<unknown>
 http.game.market.orders(resourceType, shard?): Promise<unknown>

@@ -1,7 +1,8 @@
 import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
-import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo } from '@bastianh/screeps-connectivity'
+import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus } from '@bastianh/screeps-connectivity'
 import { addToast } from './toastStore.js'
+
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
@@ -27,6 +28,7 @@ const [tickDuration, setTickDuration] = createSignal<number | null>(null)
 const [isGuest, setIsGuest] = createSignal(false)
 const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
 const [userFlags, setUserFlags] = createSignal<Record<string, UserFlag>>({})
+const [worldStatus, setWorldStatus] = createSignal<WorldStatus | null>(null)
 
 let lastGameTime = -1
 let lastTickTimestamp = -1
@@ -45,7 +47,7 @@ export function recordGameTime(gt: number | undefined): void {
       }
       const avg = tickDurations.reduce((a, b) => a + b, 0) / tickDurations.length
       setTickDuration(Math.round(avg))
-      log(`tick ${lastGameTime} → ${gt}  elapsed ${elapsed}ms  avg ${Math.round(avg)}ms`)
+      // log(`tick ${lastGameTime} → ${gt}  elapsed ${elapsed}ms  avg ${Math.round(avg)}ms`)
     }
   }
   lastGameTime = gt
@@ -65,7 +67,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds, setWorldBounds, userFlags }
+export { client, status, error, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, worldBounds, setWorldBounds, userFlags, worldStatus }
 
 export async function connect(opts: {
   url: string
@@ -101,7 +103,7 @@ export async function connect(opts: {
       url: opts.url,
       auth: authStrategy,
       storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
-      debug: import.meta.env.DEV,
+      debug: import.meta.env.DEV ? (...args: unknown[]) => console.log('[screeps]', ...args) : false,
       serverPassword: opts.serverPassword,
     })
 
@@ -148,6 +150,11 @@ export async function connect(opts: {
           setUserFlags(flags)
         }
       }
+    })
+
+    screepsClient.stores.user.on('user:worldStatus', ({ status }) => {
+      log(`world status: ${status}`)
+      setWorldStatus(status)
     })
 
     await screepsClient.connect()
@@ -213,6 +220,7 @@ export function disconnect(): void {
   setIsGuest(false)
   setWorldBounds(null)
   setUserFlags({})
+  setWorldStatus(null)
   resetTickTracking()
   localStorage.removeItem('screeps:token')
   localStorage.removeItem('screeps:serverPassword')

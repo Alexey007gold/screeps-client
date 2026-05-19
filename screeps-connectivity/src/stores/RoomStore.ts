@@ -145,11 +145,17 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     this.emit('room:update', { room, shard, gameTime: undefined, objects: map, diff: map, visual: '', users })
   }
 
+  private activeRooms(): string {
+    return Array.from(this.roomSubCount.entries())
+      .map(([key, count]) => `${key}(${count})`)
+      .join(', ') || '(none)'
+  }
+
   subscribe(room: string, shard: string | null): Subscription {
     const mapKey = `${room}/${shard}`
     const count = this.roomSubCount.get(mapKey) ?? 0
     this.roomSubCount.set(mapKey, count + 1)
-    this.logger.log('subscribe', room, shard, `(refs: ${count + 1})`)
+    this.logger.log('subscribe', room, shard, `(refs: ${count + 1})`, 'active:', this.activeRooms())
 
     const channel = shard ? `room:${shard}/${room}` : `room:${room}`
     const errChannel = shard ? `err@room:${shard}/${room}` : `err@room:${room}`
@@ -237,13 +243,13 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
         errListenerSub.dispose()
         const remaining = (this.roomSubCount.get(mapKey) ?? 1) - 1
         if (remaining <= 0) {
-          this.logger.log('unsubscribe', room, shard, '(last ref)')
           this.roomSubCount.delete(mapKey)
           this.roomObjects.delete(mapKey)
           this.lastFlagsString.delete(mapKey)
+          this.logger.log('unsubscribe', room, shard, '(last ref)', 'active:', this.activeRooms())
         } else {
-          this.logger.log('unsubscribe', room, shard, `(refs: ${remaining})`)
           this.roomSubCount.set(mapKey, remaining)
+          this.logger.log('unsubscribe', room, shard, `(refs: ${remaining})`, 'active:', this.activeRooms())
         }
       },
     }

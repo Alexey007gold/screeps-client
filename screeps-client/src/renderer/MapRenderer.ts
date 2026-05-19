@@ -260,8 +260,20 @@ export class MapRenderer {
   }
 
   async setRoomTerrain(roomName: string, terrain: { raw: Uint8Array }): Promise<void> {
-    const entry = this.getOrCreate(roomName)
     const raw = terrain.raw
+
+    // Empty rooms (all-zero terrain) have no content — skip rendering entirely.
+    // Mark as baked so hasRoom() returns true and we don't request terrain again.
+    let hasContent = false
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] !== 0) { hasContent = true; break }
+    }
+    if (!hasContent) {
+      this.terrainBaked.add(roomName)
+      return
+    }
+
+    const entry = this.getOrCreate(roomName)
 
     const lod = this.getLOD()
 

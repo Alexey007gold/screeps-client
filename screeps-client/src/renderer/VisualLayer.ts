@@ -82,18 +82,28 @@ function parseFontFamily(font: string | number | undefined): string {
 
 export class VisualLayer {
   readonly container: Container
+  private readonly g: Graphics
 
   constructor() {
     this.container = new Container()
     this.container.label = 'visuals'
+    this.g = new Graphics()
+    this.container.addChild(this.g)
   }
 
   update(raw: string): void {
-    this.container.removeChildren()
+    // Destroy Text/background Graphics children from the previous tick to free their textures.
+    // The persistent Graphics (this.g) is kept and reused.
+    const children = this.container.removeChildren()
+    for (const child of children) {
+      if (child !== this.g) child.destroy()
+    }
+    this.g.clear()
+    this.container.addChild(this.g)
+
     if (!raw) return
 
-    const g = new Graphics()
-    this.container.addChild(g)
+    const g = this.g
 
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue
@@ -246,6 +256,11 @@ export class VisualLayer {
   }
 
   destroy(): void {
-    this.container.destroy({ children: true })
+    const children = this.container.removeChildren()
+    for (const child of children) {
+      if (child !== this.g) child.destroy()
+    }
+    this.g.destroy()
+    this.container.destroy()
   }
 }

@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { MapViewer } from '~/components/MapViewer.js'
@@ -8,6 +8,7 @@ import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar.js'
 import { StatsBar } from '~/components/StatsBar.js'
 import { SettingsPanel } from '~/components/SettingsPanel.js'
+import { CodePanel } from '~/components/CodePanel.js'
 import { client, disconnect, isGuest } from '~/stores/clientStore.js'
 import { widescreenMode } from '~/stores/settingsStore.js'
 import { toggleShowLog, toggleShowConsole } from '~/stores/consoleStore.js'
@@ -45,6 +46,15 @@ export function Dashboard() {
   const [mapMode, setMapMode] = createSignal(parseMapUrl() !== null)
 
   const [showSettings, setShowSettings] = createSignal(false)
+  const [showCode, setShowCode] = createSignal(false)
+  // Suppresses sidebar transition for one render cycle whenever showCode toggles,
+  // so both open and close are instant with no CSS animation.
+  const [suppressSidebarTransition, setSuppressSidebarTransition] = createSignal(false)
+  createEffect(() => {
+    showCode() // track
+    setSuppressSidebarTransition(true)
+    Promise.resolve().then(() => setSuppressSidebarTransition(false))
+  })
   const [mapOriginRoom, setMapOriginRoom] = createSignal<string | undefined>(undefined)
   const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
@@ -193,6 +203,11 @@ export function Dashboard() {
       const tag = (e.target as HTMLElement | null)?.tagName ?? ''
       const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
       if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+      if (e.key === 'o' || e.key === 'O') {
+        setShowCode((v) => !v)
+        setShowSettings(false)
+        return
+      }
       if (e.key === 'l' || e.key === 'L') {
         toggleShowLog()
       }
@@ -279,7 +294,22 @@ export function Dashboard() {
           {mapMode() ? 'Room View' : 'Map'}
         </button>
         <button
-          onClick={() => setShowSettings((v) => !v)}
+          onClick={() => { setShowCode((v) => !v); setShowSettings(false) }}
+          style={{
+            padding: '6px 14px',
+            'border-radius': '4px',
+            border: `1px solid ${showCode() ? '#388bfd' : '#30363d'}`,
+            background: showCode() ? '#1f3158' : '#21262d',
+            color: showCode() ? '#58a6ff' : '#c9d1d9',
+            'font-size': '13px',
+            cursor: 'pointer',
+            margin: '0 4px',
+          }}
+        >
+          Code
+        </button>
+        <button
+          onClick={() => { setShowSettings((v) => !v); setShowCode(false) }}
           style={{
             padding: '6px 14px',
             'border-radius': '4px',
@@ -322,6 +352,9 @@ export function Dashboard() {
                 <Show when={showSettings()}>
                   <SettingsPanel onClose={() => setShowSettings(false)} />
                 </Show>
+                <Show when={showCode()}>
+                  <CodePanel onClose={() => setShowCode(false)} />
+                </Show>
                 <Show
                   when={!mapMode()}
                   fallback={
@@ -346,9 +379,9 @@ export function Dashboard() {
               {/* Sidebar */}
               <div
                 style={{
-                  width: `${sidebarWidth()}px`,
+                  width: showCode() ? '0' : `${sidebarWidth()}px`,
                   'border-left': '1px solid #30363d',
-                  transition: sidebarDragging() ? 'none' : 'width 0.15s ease',
+                  transition: suppressSidebarTransition() || sidebarDragging() ? 'none' : 'width 0.15s ease',
                   overflow: 'hidden',
                   position: 'relative',
                 }}
@@ -399,6 +432,9 @@ export function Dashboard() {
               <Show when={showSettings()}>
                 <SettingsPanel onClose={() => setShowSettings(false)} />
               </Show>
+              <Show when={showCode()}>
+                <CodePanel onClose={() => setShowCode(false)} />
+              </Show>
               <Show
                 when={!mapMode()}
                 fallback={
@@ -442,9 +478,9 @@ export function Dashboard() {
           {/* Sidebar — full height */}
           <div
             style={{
-              width: `${sidebarWidth()}px`,
+              width: showCode() ? '0' : `${sidebarWidth()}px`,
               'border-left': '1px solid #30363d',
-              transition: sidebarDragging() ? 'none' : 'width 0.15s ease',
+              transition: 'none',
               overflow: 'hidden',
               position: 'relative',
             }}

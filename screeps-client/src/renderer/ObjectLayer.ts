@@ -1,6 +1,8 @@
 import { Container, Graphics, Text, Ticker, Sprite } from 'pixi.js'
 import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from '@bastianh/screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
+
+const sharedBadgeCache = new BadgeTextureCache()
 import { TILE_SIZE } from './RoomRenderer.js'
 import {
   BODY_PART_COLORS,
@@ -473,9 +475,9 @@ function createObjectVisual(
         const bsMask = new Graphics()
         bsMask.circle(cx, cy, CTRL_SEG_IN)
         bsMask.fill(0xffffff)
-        container.addChild(bsMask)
-        bs.mask = bsMask
         container.addChild(bs)
+        bs.mask = bsMask
+        container.addChild(bsMask)
         badgeCache.getOrCreate(ctrlBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
       }
 
@@ -777,6 +779,10 @@ type ContainerWithTarget = Container & {
   __flagSecondaryColor?: number
 }
 
+function destroyVisual(visual: ContainerWithTarget): void {
+  visual.destroy({ children: true })
+}
+
 interface ExtAnimation {
   visual: ContainerWithTarget
   fromRadius: number
@@ -806,7 +812,7 @@ export class ObjectLayer {
   private showLabels: boolean
   private currentUserId?: string
   private badge?: Badge
-  private badgeCache = new BadgeTextureCache()
+  private readonly badgeCache = sharedBadgeCache
   private users?: Record<string, { _id: string; username: string }>
 
   constructor(ticker?: Ticker, showLabels = true, currentUserId?: string, badge?: Badge, users?: Record<string, { _id: string; username: string }>) {
@@ -962,7 +968,7 @@ export class ObjectLayer {
           const visual = this.objects.get(id)
           if (visual) {
             this.container.removeChild(visual)
-            visual.destroy()
+            destroyVisual(visual)
             this.objects.delete(id)
             this.rawObjects.delete(id)
             this.extAnimations.delete(id)
@@ -1018,7 +1024,7 @@ export class ObjectLayer {
                 existing.__flagSecondaryColor !== newSecColorIdx
               if (colorChanged) {
                 this.container.removeChild(existing)
-                existing.destroy()
+                destroyVisual(existing)
                 this.objects.delete(id)
                 const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
                 visual.__tileX = obj.x
@@ -1119,7 +1125,7 @@ export class ObjectLayer {
               existing.__flagSecondaryColor !== newSecColorIdx
             if (colorChanged) {
               this.container.removeChild(existing)
-              existing.destroy()
+              destroyVisual(existing)
               this.objects.delete(id)
               const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
               visual.__tileX = obj.x
@@ -1177,7 +1183,7 @@ export class ObjectLayer {
       for (const [id, visual] of this.objects) {
         if (!seen.has(id)) {
           this.container.removeChild(visual)
-          visual.destroy()
+          destroyVisual(visual)
           this.objects.delete(id)
           this.rawObjects.delete(id)
           this.extAnimations.delete(id)
@@ -1405,7 +1411,7 @@ export class ObjectLayer {
 
   clear(): void {
     for (const visual of this.objects.values()) {
-      visual.destroy()
+      destroyVisual(visual)
     }
     this.objects.clear()
     this.rawObjects.clear()
@@ -1424,6 +1430,5 @@ export class ObjectLayer {
     }
     this.ticker = null
     this.tickerCallback = null
-    this.badgeCache.destroy()
   }
 }
