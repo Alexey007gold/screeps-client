@@ -1,4 +1,4 @@
-import { createSignal } from 'solid-js'
+import { createSignal, onCleanup } from 'solid-js'
 import { connect, status, error } from '~/stores/clientStore.js'
 
 export function LoginForm() {
@@ -8,6 +8,31 @@ export function LoginForm() {
   const [password, setPassword] = createSignal('')
   const [token, setToken] = createSignal('')
   const [serverPassword, setServerPassword] = createSignal('')
+
+  const handleSteamLogin = () => {
+    const serverUrl = url().replace(/\/$/, '')
+    const popup = window.open(`${serverUrl}/api/auth/steam`, 'screeps-steam-auth', 'width=800,height=600,left=200,top=100')
+
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { token?: string }
+        if (data.token) {
+          cleanup()
+          connect({ url: serverUrl, auth: 'token', token: data.token, serverPassword: serverPassword() || undefined, storage: null })
+        }
+      } catch { /* non-JSON messages from other sources */ }
+    }
+
+    const checkClosed = setInterval(() => { if (popup?.closed) cleanup() }, 500)
+
+    const cleanup = () => {
+      clearInterval(checkClosed)
+      window.removeEventListener('message', onMessage)
+    }
+
+    window.addEventListener('message', onMessage)
+    onCleanup(cleanup)
+  }
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault()
@@ -195,6 +220,30 @@ export function LoginForm() {
           }}
         >
           {isConnecting() ? 'Connecting…' : 'Connect'}
+        </button>
+
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', color: '#484f58', 'font-size': '12px' }}>
+          <div style={{ flex: 1, height: '1px', background: '#30363d' }} />
+          or
+          <div style={{ flex: 1, height: '1px', background: '#30363d' }} />
+        </div>
+
+        <button
+          type="button"
+          disabled={isConnecting()}
+          onClick={handleSteamLogin}
+          style={{
+            padding: '10px',
+            'border-radius': '6px',
+            border: 'none',
+            background: '#1b2838',
+            color: '#c7d5e0',
+            'font-weight': 600,
+            cursor: isConnecting() ? 'not-allowed' : 'pointer',
+            opacity: isConnecting() ? 0.6 : 1,
+          }}
+        >
+          Login with Steam
         </button>
 
         <button
