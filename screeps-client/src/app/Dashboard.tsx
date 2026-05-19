@@ -10,6 +10,8 @@ import { StatsBar } from '~/components/StatsBar.js'
 import { SettingsPanel } from '~/components/SettingsPanel.js'
 import { client, disconnect, isGuest } from '~/stores/clientStore.js'
 import { widescreenMode } from '~/stores/settingsStore.js'
+import { toggleShowLog, toggleShowConsole } from '~/stores/consoleStore.js'
+import { setRoomViewMode } from '~/stores/roomViewStore.js'
 
 import { parseRoomName } from '~/utils/roomName.js'
 
@@ -191,8 +193,17 @@ export function Dashboard() {
       const tag = (e.target as HTMLElement | null)?.tagName ?? ''
       const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
       if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
-      if (e.key === 'm' && !mapMode()) {
-        openMap(room())
+      if (e.key === 'l' || e.key === 'L') {
+        toggleShowLog()
+      }
+      if (e.key === 'c' || e.key === 'C') {
+        toggleShowConsole()
+      }
+      if (!mapMode()) {
+        if (e.key === '1') setRoomViewMode('view')
+        if (e.key === '2') setRoomViewMode('flag')
+        if (e.key === '3') setRoomViewMode('build')
+        if (e.key === 'm') openMap(room())
       }
     }
     window.addEventListener('keydown', onKeyDown)

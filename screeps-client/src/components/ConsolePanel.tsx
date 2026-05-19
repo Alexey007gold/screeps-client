@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, For, Show } from 'solid
 import { client } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
 import type { ConsoleMessage } from '@bastianh/screeps-connectivity'
+import { showLog, showConsole, toggleShowLog, toggleShowConsole } from '~/stores/consoleStore.js'
 
 interface ConsoleEntry {
   id: number
@@ -14,8 +15,6 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
   const [entries, setEntries] = createSignal<ConsoleEntry[]>([])
   const [input, setInput] = createSignal('')
   const [autoScroll, setAutoScroll] = createSignal(true)
-  const [showLog, setShowLog] = createSignal(true)
-  const [showConsole, setShowConsole] = createSignal(true)
   const [splitPercent, setSplitPercent] = createSignal(
     Number(localStorage.getItem('screeps:consoleSplit')) || 50
   )
@@ -64,17 +63,9 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
     if (!bothOff && props.isCollapsed) props.onToggle?.()
   }
 
-  const toggleLog = () => {
-    const next = !showLog()
-    setShowLog(next)
-    syncCollapse(next, showConsole())
-  }
-
-  const toggleConsole = () => {
-    const next = !showConsole()
-    setShowConsole(next)
-    syncCollapse(showLog(), next)
-  }
+  createEffect(() => {
+    syncCollapse(showLog(), showConsole())
+  })
 
   const startSplitDrag = (e: PointerEvent) => {
     e.preventDefault()
@@ -143,8 +134,8 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
           gap: '6px',
         }}
       >
-        <button onClick={toggleLog} style={toggleBtnStyle(showLog())}>Log</button>
-        <button onClick={toggleConsole} style={toggleBtnStyle(showConsole())}>Console</button>
+        <button onClick={toggleShowLog} style={toggleBtnStyle(showLog())}>Log</button>
+        <button onClick={toggleShowConsole} style={toggleBtnStyle(showConsole())}>Console</button>
         <div style={{ 'margin-left': 'auto' }}>
           <button
             onClick={() => setEntries([])}
