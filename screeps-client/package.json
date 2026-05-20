@@ -1,6 +1,6 @@
 {
   "name": "@bastianh/screeps-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "repository": {
     "type": "git",

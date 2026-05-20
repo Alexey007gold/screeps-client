@@ -1,6 +1,6 @@
 {
   "name": "@bastianh/screeps-mod-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Screeps server mod that serves the @bastianh/screeps-client at /client and connects it to the same server.",
   "type": "commonjs",
   "main": "index.js",
