@@ -4,6 +4,10 @@ import { viteSingleFile } from 'vite-plugin-singlefile'
 
 export default defineConfig({
   plugins: [solid(), viteSingleFile()],
+  build: {
+    outDir: 'dist/bundle',
+    emptyOutDir: true,
+  },
   resolve: {
     alias: {
       '~/': '/src/',

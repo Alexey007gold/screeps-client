@@ -2,6 +2,7 @@ import { onMount } from 'solid-js'
 import { client, status, tryAutoConnect, connect } from '~/stores/clientStore.js'
 import { LoginForm } from '~/components/LoginForm.js'
 import { Dashboard } from './Dashboard.js'
+import { isEmbedded } from '~/utils/embedded.js'
 
 const log = import.meta.env.DEV
   ? (...args: unknown[]) => console.log('[app]', ...args)
@@ -20,7 +21,7 @@ export function App() {
   onMount(async () => {
     if (status() === 'idle') {
       await tryAutoConnect().catch(() => {})
-      if (status() !== 'connected') {
+      if (status() !== 'connected' && !isEmbedded()) {
         const guestUrl = guestAutoConnectUrl()
         if (guestUrl) {
           log(`?guest param — auto-connecting as guest to ${guestUrl}`)

@@ -2,6 +2,7 @@ import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus } from '@bastianh/screeps-connectivity'
 import { addToast } from './toastStore.js'
+import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
 
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
@@ -78,6 +79,9 @@ export async function connect(opts: {
   serverPassword?: string
   storage?: StorageAdapter | null
 }): Promise<void> {
+  if (isEmbedded()) {
+    opts = { ...opts, url: embeddedServerUrl() }
+  }
   log(`connecting to ${opts.url} (auth: ${opts.auth})`)
   setStatus('connecting')
   setError(null)
@@ -187,7 +191,7 @@ export async function connect(opts: {
 }
 
 export async function tryAutoConnect(): Promise<void> {
-  const url = localStorage.getItem('screeps:url')
+  const url = isEmbedded() ? embeddedServerUrl() : localStorage.getItem('screeps:url')
   const token = localStorage.getItem('screeps:token')
   if (!url || !token) return
 

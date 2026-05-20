@@ -13,6 +13,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:bundle": "tsc && vite build --config vite-singlefile.config.ts",
+    "build:embedded": "tsc && VITE_BASE=/client/ VITE_EMBEDDED=true VITE_OUT_DIR=dist/embedded vite build",
     "preview": "vite preview",
     "lint": "eslint src"
   },

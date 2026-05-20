@@ -1,9 +1,11 @@
-import { createSignal, onCleanup } from 'solid-js'
+import { createSignal, onCleanup, Show } from 'solid-js'
 import { connect, status, error } from '~/stores/clientStore.js'
+import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
 
 export function LoginForm() {
+  const embedded = isEmbedded()
   const [authType, setAuthType] = createSignal<'password' | 'token'>('password')
-  const [url, setUrl] = createSignal('http://localhost:5173')
+  const [url, setUrl] = createSignal(embedded ? embeddedServerUrl() : 'http://localhost:5173')
   const [email, setEmail] = createSignal('')
   const [password, setPassword] = createSignal('')
   const [token, setToken] = createSignal('')
@@ -117,24 +119,26 @@ export function LoginForm() {
           </button>
         </div>
 
-        <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
-          <span style={{ 'font-size': '12px', color: '#8b949e' }}>Server URL</span>
-          <input
-            type="url"
-            name="url"
-            autocomplete="url"
-            inputmode="url"
-            value={url()}
-            onInput={(e) => setUrl(e.currentTarget.value)}
-            style={{
-              padding: '8px 12px',
-              'border-radius': '6px',
-              border: '1px solid #30363d',
-              background: '#0d1117',
-              color: '#c9d1d9',
-            }}
-          />
-        </label>
+        <Show when={!embedded}>
+          <label style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+            <span style={{ 'font-size': '12px', color: '#8b949e' }}>Server URL</span>
+            <input
+              type="url"
+              name="url"
+              autocomplete="url"
+              inputmode="url"
+              value={url()}
+              onInput={(e) => setUrl(e.currentTarget.value)}
+              style={{
+                padding: '8px 12px',
+                'border-radius': '6px',
+                border: '1px solid #30363d',
+                background: '#0d1117',
+                color: '#c9d1d9',
+              }}
+            />
+          </label>
+        </Show>
 
         {authType() === 'password' ? (
           <>
@@ -261,25 +265,27 @@ export function LoginForm() {
           Login with Steam
         </button>
 
-        <button
-          type="button"
-          disabled={isConnecting()}
-          onClick={handleGuestConnect}
-          style={{
-            padding: '8px',
-            'border-radius': '6px',
-            border: '1px solid #30363d',
-            background: 'transparent',
-            color: '#8b949e',
-            'font-size': '12px',
-            cursor: isConnecting() ? 'not-allowed' : 'pointer',
-            opacity: isConnecting() ? 0.6 : 1,
-          }}
-          onMouseEnter={(e) => { if (!isConnecting()) e.currentTarget.style.borderColor = '#8b949e' }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#30363d' }}
-        >
-          Connect as Guest (read-only)
-        </button>
+        <Show when={!embedded}>
+          <button
+            type="button"
+            disabled={isConnecting()}
+            onClick={handleGuestConnect}
+            style={{
+              padding: '8px',
+              'border-radius': '6px',
+              border: '1px solid #30363d',
+              background: 'transparent',
+              color: '#8b949e',
+              'font-size': '12px',
+              cursor: isConnecting() ? 'not-allowed' : 'pointer',
+              opacity: isConnecting() ? 0.6 : 1,
+            }}
+            onMouseEnter={(e) => { if (!isConnecting()) e.currentTarget.style.borderColor = '#8b949e' }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#30363d' }}
+          >
+            Connect as Guest (read-only)
+          </button>
+        </Show>
       </form>
     </div>
   )
