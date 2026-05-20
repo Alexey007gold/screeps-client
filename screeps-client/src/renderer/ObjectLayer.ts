@@ -270,6 +270,7 @@ function createObjectVisual(
       const bodyParts = (obj.body as Array<{ type: string }> | undefined) ?? []
       let workCount = 0
       let moveCount = 0
+      let otherTotal = 0
       const otherOrder: string[] = []
       const otherCounts: Record<string, number> = {}
       for (const part of bodyParts) {
@@ -283,9 +284,9 @@ function createObjectVisual(
             otherCounts[part.type] = 0
           }
           otherCounts[part.type]!++
+          otherTotal++
         }
       }
-      const otherTotal = otherOrder.reduce((s, t) => s + (otherCounts[t] ?? 0), 0)
 
       // Proportional angle allocations (relative to MAX_BODY=50)
       const workAngle  = (workCount  / CREEP_MAX_BODY) * FULL

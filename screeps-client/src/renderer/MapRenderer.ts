@@ -203,9 +203,7 @@ export class MapRenderer {
 
     if (this.getLOD() !== prevLOD) this.applyLOD()
     if ((next >= LOD_ZOOM_THRESHOLD) !== prevZoomAboveThreshold) this.updateAllNameLabels()
-    this.updateBadgeSizes()
-    this.updateAllNameLabelScales()
-    this.updateAllMineralSizes()
+    this.updateAllRoomScales(next)
     this.callbacks.onZoomChanged?.(next)
     this.setSelectedRoom(this.selectedRoom)
     this.redrawSafeMode()
@@ -463,7 +461,7 @@ export class MapRenderer {
       if (entry.badgeSprite) {
         if (entry.badgeSprite.texture === texture) {
           entry.badgeLevel = level
-          this.applyBadgeSize(entry)
+          this.applyBadgeSize(entry, this.zoom)
           this.applyOverlayMode(entry)
           return
         }
@@ -480,27 +478,20 @@ export class MapRenderer {
       }
 
       entry.badgeLevel = level
-      this.applyBadgeSize(entry)
+      this.applyBadgeSize(entry, this.zoom)
       this.applyOverlayMode(entry)
     } catch (err) {
       console.warn('[MapRenderer] failed to load badge for', roomName, err)
     }
   }
 
-  private applyBadgeSize(entry: RoomEntry): void {
+  private applyBadgeSize(entry: RoomEntry, zoom: number): void {
     if (!entry.badgeSprite || entry.badgeLevel === undefined) return
-    const zoom = this.zoom
     const base = BADGE_SIZES[entry.badgeLevel - 1] ?? 24
     // Scale with zoom up to 100%, then stay constant.
     const screenSize = base * Math.min(1, zoom)
     entry.badgeSprite.width = screenSize / zoom
     entry.badgeSprite.height = screenSize / zoom
-  }
-
-  private updateBadgeSizes(): void {
-    for (const entry of this.activeRooms.values()) {
-      this.applyBadgeSize(entry)
-    }
   }
 
   setOverlayMode(mode: MapOverlayMode): void {
@@ -557,7 +548,7 @@ export class MapRenderer {
       entry.mineralLabel.text = mineral
     }
 
-    this.applyMineralSize(entry)
+    this.applyMineralSize(entry, this.zoom)
     this.applyOverlayMode(entry)
   }
 
@@ -573,9 +564,8 @@ export class MapRenderer {
     }
   }
 
-  private applyMineralSize(entry: RoomEntry): void {
+  private applyMineralSize(entry: RoomEntry, zoom: number): void {
     if (!entry.mineralCircle || !entry.mineralLabel || entry.mineralDensity === undefined || entry.mineralColor === undefined) return
-    const zoom = this.zoom
     const scaleFactor = Math.max(0.5, Math.min(1.5, zoom))
     const screenDiameter = (MINERAL_DENSITY_SIZES[entry.mineralDensity - 1] ?? 24) * scaleFactor
     const worldRadius = (screenDiameter / 2) / zoom
@@ -593,20 +583,18 @@ export class MapRenderer {
     entry.mineralLabel.scale.set(labelScale)
   }
 
-  private updateAllMineralSizes(): void {
-    for (const entry of this.activeRooms.values()) {
-      this.applyMineralSize(entry)
-    }
-  }
-
-  private updateNameLabelScale(entry: RoomEntry): void {
+  private updateNameLabelScale(entry: RoomEntry, zoom: number): void {
     const baseScale = 0.5
-    entry.nameLabel.scale.set(baseScale / this.zoom)
+    entry.nameLabel.scale.set(baseScale / zoom)
   }
 
-  private updateAllNameLabelScales(): void {
+  // Combine zooming scaling operations over activeRooms to reduce overhead on every zoom frame
+  // Avoid intermediate allocations by using for...of map.values()
+  private updateAllRoomScales(zoom: number): void {
     for (const entry of this.activeRooms.values()) {
-      this.updateNameLabelScale(entry)
+      this.applyBadgeSize(entry, zoom)
+      this.updateNameLabelScale(entry, zoom)
+      this.applyMineralSize(entry, zoom)
     }
   }
 
@@ -821,7 +809,7 @@ export class MapRenderer {
     entry.container.visible = true
     entry.nameLabel.text = roomName
     entry.nameLabel.visible = this.showRoomNames && this.zoom >= LOD_ZOOM_THRESHOLD && this.nameLabelShouldShow(coord.x, coord.y)
-    this.updateNameLabelScale(entry)
+    this.updateNameLabelScale(entry, this.zoom)
 
     // Reset pooled badge sprite so a stale badge from a previous room doesn't leak through
     if (entry.badgeSprite) {
@@ -964,9 +952,7 @@ export class MapRenderer {
       this.world.y = e.offsetY - wy * next
       if (this.getLOD() !== prevLOD) this.applyLOD()
       if ((next >= LOD_ZOOM_THRESHOLD) !== prevZoomAboveThreshold) this.updateAllNameLabels()
-      this.updateBadgeSizes()
-      this.updateAllNameLabelScales()
-      this.updateAllMineralSizes()
+      this.updateAllRoomScales(next)
       this.callbacks.onZoomChanged?.(next)
       this.setSelectedRoom(this.selectedRoom)
       this.redrawSafeMode()

@@ -176,9 +176,9 @@ export async function connect(opts: {
       localStorage.setItem('screeps:token', screepsClient.http.token)
     }
     if (opts.serverPassword) {
-      localStorage.setItem('screeps:serverPassword', opts.serverPassword)
+      sessionStorage.setItem('screeps:serverPassword', opts.serverPassword)
     } else {
-      localStorage.removeItem('screeps:serverPassword')
+      sessionStorage.removeItem('screeps:serverPassword')
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -195,7 +195,7 @@ export async function tryAutoConnect(): Promise<void> {
   const token = localStorage.getItem('screeps:token')
   if (!url || !token) return
 
-  const serverPassword = localStorage.getItem('screeps:serverPassword') ?? undefined
+  const serverPassword = sessionStorage.getItem('screeps:serverPassword') ?? undefined
   log(`auto-connect: ${url}`)
   try {
     if (token === 'guest') {
@@ -227,5 +227,5 @@ export function disconnect(): void {
   setWorldStatus(null)
   resetTickTracking()
   localStorage.removeItem('screeps:token')
-  localStorage.removeItem('screeps:serverPassword')
+  sessionStorage.removeItem('screeps:serverPassword')
 }
