@@ -69,6 +69,7 @@ jobs:
           if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
             echo "::notice::${PKG}@${VER} already published – skipping stable"
           else
+            node -e "const f='package.json',p=require('./'+f);delete p.devDependencies;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
             pnpm publish --no-git-checks --access public
             echo "::notice::Published ${PKG}@${VER} (stable)"
           fi
@@ -110,7 +111,7 @@ jobs:
         run: |
           BASE=$(node -p "require('./package.json').version")
           BETA="${BASE}-beta.${{ github.run_number }}"
-          node -e "const f='package.json',p=require('./'+f);p.version='${BETA}';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          node -e "const f='package.json',p=require('./'+f);p.version='${BETA}';delete p.devDependencies;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           pnpm publish --no-git-checks --access public --tag beta
           echo "::notice::Published $(node -p "require('./package.json').name")@${BETA} (beta)"
 
