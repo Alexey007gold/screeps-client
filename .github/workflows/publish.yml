@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
 
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@bastianh'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -30,43 +28,43 @@ jobs:
       # ── Build ────────────────────────────────────────────────────────────
 
       - name: Build screeps-connectivity
-        run: pnpm --filter @bastianh/screeps-connectivity build
+        run: pnpm --filter screeps-connectivity build
 
       - name: Test screeps-connectivity
-        run: pnpm --filter @bastianh/screeps-connectivity test
+        run: pnpm --filter screeps-connectivity test
 
       - name: Build screeps-client (standalone + embedded)
         run: |
-          pnpm --filter @bastianh/screeps-client build
-          pnpm --filter @bastianh/screeps-client build:embedded
+          pnpm --filter screeps-client build
+          pnpm --filter screeps-client build:embedded
 
       - name: Build screeps-mod-client (copy embedded assets + inject index.js)
         run: node screeps-mod-client/scripts/copy-dist.js
 
       # ── Publish stable (skip if version already in registry) ─────────────
 
-      - name: Publish stable @bastianh/screeps-connectivity
+      - name: Publish stable screeps-connectivity
         working-directory: screeps-connectivity
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG=$(node -p "require('./package.json').name")
           VER=$(node -p "require('./package.json').version")
-          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+          if npm view "${PKG}@${VER}" &>/dev/null; then
             echo "::notice::${PKG}@${VER} already published – skipping stable"
           else
             pnpm publish --no-git-checks --access public
             echo "::notice::Published ${PKG}@${VER} (stable)"
           fi
 
-      - name: Publish stable @bastianh/screeps-client
+      - name: Publish stable screeps-client
         working-directory: screeps-client
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG=$(node -p "require('./package.json').name")
           VER=$(node -p "require('./package.json').version")
-          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+          if npm view "${PKG}@${VER}" &>/dev/null; then
             echo "::notice::${PKG}@${VER} already published – skipping stable"
           else
             node -e "const f='package.json',p=require('./'+f);delete p.devDependencies;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
@@ -74,14 +72,14 @@ jobs:
             echo "::notice::Published ${PKG}@${VER} (stable)"
           fi
 
-      - name: Publish stable @bastianh/screeps-mod-client
+      - name: Publish stable screeps-mod-client
         working-directory: screeps-mod-client
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           PKG=$(node -p "require('./package.json').name")
           VER=$(node -p "require('./package.json').version")
-          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+          if npm view "${PKG}@${VER}" &>/dev/null; then
             echo "::notice::${PKG}@${VER} already published – skipping stable"
           else
             pnpm publish --no-git-checks --access public
@@ -91,12 +89,12 @@ jobs:
       # ── Publish beta (every push, tagged as @beta) ────────────────────────
       #
       # Version format: {base}-beta.{run_number}  e.g. 0.1.1-beta.42
-      # Install via:  npm install @bastianh/screeps-mod-client@beta
+      # Install via:  npm install screeps-mod-client@beta
 
-      - name: Publish beta @bastianh/screeps-connectivity
+      - name: Publish beta screeps-connectivity
         working-directory: screeps-connectivity
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           BASE=$(node -p "require('./package.json').version")
           BETA="${BASE}-beta.${{ github.run_number }}"
@@ -104,10 +102,10 @@ jobs:
           pnpm publish --no-git-checks --access public --tag beta
           echo "::notice::Published $(node -p "require('./package.json').name")@${BETA} (beta)"
 
-      - name: Publish beta @bastianh/screeps-client
+      - name: Publish beta screeps-client
         working-directory: screeps-client
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           BASE=$(node -p "require('./package.json').version")
           BETA="${BASE}-beta.${{ github.run_number }}"
@@ -115,10 +113,10 @@ jobs:
           pnpm publish --no-git-checks --access public --tag beta
           echo "::notice::Published $(node -p "require('./package.json').name")@${BETA} (beta)"
 
-      - name: Publish beta @bastianh/screeps-mod-client
+      - name: Publish beta screeps-mod-client
         working-directory: screeps-mod-client
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           BASE=$(node -p "require('./package.json').version")
           BETA="${BASE}-beta.${{ github.run_number }}"

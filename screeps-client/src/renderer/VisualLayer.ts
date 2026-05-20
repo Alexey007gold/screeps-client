@@ -1,6 +1,6 @@
 import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from 'pixi.js'
 import { TILE_SIZE } from './RoomRenderer.js'
-import type { RoomVisualEntry, VisualStyle } from '@bastianh/screeps-connectivity'
+import type { RoomVisualEntry, VisualStyle } from 'screeps-connectivity'
 
 // RoomVisual tile coords → pixel: tile (x,y) center aligns with ObjectLayer's TILE_SIZE/2 offset
 const tp = (c: number) => (c + 0.5) * TILE_SIZE

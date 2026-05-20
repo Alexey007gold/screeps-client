@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js'
-import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from '@bastianh/screeps-connectivity'
-import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus } from '@bastianh/screeps-connectivity'
+import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
+import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus } from 'screeps-connectivity'
 import { addToast } from './toastStore.js'
 import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
 

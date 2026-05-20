@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js'
 import { createStore, reconcile } from 'solid-js/store'
-import type { RoomObject } from '@bastianh/screeps-connectivity'
+import type { RoomObject } from 'screeps-connectivity'
 
 export interface SelectedObject {
   id: string

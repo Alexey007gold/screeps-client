@@ -7,7 +7,7 @@ const dst = resolve(__dirname, '../dist')
 
 if (!existsSync(src)) {
   console.error(`[screeps-mod-client] source not found: ${src}`)
-  console.error('Run "pnpm --filter @bastianh/screeps-client build:embedded" first.')
+  console.error('Run "pnpm --filter screeps-client build:embedded" first.')
   process.exit(1)
 }
 

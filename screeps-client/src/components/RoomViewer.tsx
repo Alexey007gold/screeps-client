@@ -12,8 +12,8 @@ import { addToast } from '~/stores/toastStore.js'
 import { setRoomObjectCount, setRoomOwner, setControllerLevel, setStructureCounts } from '~/stores/roomDataStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
-import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from '@bastianh/screeps-connectivity'
-import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
+import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
+import { SubscriptionGroup } from 'screeps-connectivity'
 import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft, modeHint, overlayAction, clearOverlayAction, buildDraft, confirmBuild} from '~/stores/roomViewStore';
 
 interface RoomViewerProps {

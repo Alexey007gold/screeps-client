@@ -1,4 +1,4 @@
-import { TerrainType } from '@bastianh/screeps-connectivity'
+import { TerrainType } from 'screeps-connectivity'
 
 const TERRAIN_PLAIN = 0x2d333b
 const TERRAIN_WALL  = 0x0d1117

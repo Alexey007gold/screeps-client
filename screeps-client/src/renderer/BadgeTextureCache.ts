@@ -1,5 +1,5 @@
 import { Texture } from 'pixi.js'
-import { badgeToSvg, type Badge } from '@bastianh/screeps-connectivity'
+import { badgeToSvg, type Badge } from 'screeps-connectivity'
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

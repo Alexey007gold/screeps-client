@@ -1,6 +1,6 @@
-# @bastianh/screeps-mod-client
+# screeps-mod-client
 
-Screeps private-server mod that serves [`@bastianh/screeps-client`](../screeps-client) at `/client` on the same server it runs on. The client connects to its own origin, so no separate hosting or CORS setup is required.
+Screeps private-server mod that serves [`screeps-client`](../screeps-client) at `/client` on the same server it runs on. The client connects to its own origin, so no separate hosting or CORS setup is required.
 
 ## Install
 
@@ -9,7 +9,7 @@ Add the package to your server's `mods.json`:
 ```json
 {
   "mods": [
-    "node_modules/@bastianh/screeps-mod-client"
+    "node_modules/screeps-mod-client"
   ]
 }
 ```
@@ -38,7 +38,7 @@ docker run -e SCREEPS_MOD_CLIENT_MOUNT_PATH=/play \
 ## Build
 
 ```sh
-pnpm --filter @bastianh/screeps-mod-client build
+pnpm --filter screeps-mod-client build
 ```
 
-This builds `@bastianh/screeps-client` in embedded mode (`base=/client/`) and copies the artifacts into `dist/`.
+This builds `screeps-client` in embedded mode (`base=/client/`) and copies the artifacts into `dist/`.

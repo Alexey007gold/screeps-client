@@ -1,7 +1,7 @@
 import { createEffect, createSignal, onCleanup, onMount, For, Show } from 'solid-js'
 import { client } from '~/stores/clientStore.js'
-import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
-import type { ConsoleMessage } from '@bastianh/screeps-connectivity'
+import { SubscriptionGroup } from 'screeps-connectivity'
+import type { ConsoleMessage } from 'screeps-connectivity'
 import { showLog, showConsole, toggleShowLog, toggleShowConsole } from '~/stores/consoleStore.js'
 
 interface ConsoleEntry {

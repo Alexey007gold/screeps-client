@@ -1,7 +1,7 @@
 {
-  "name": "@bastianh/screeps-mod-client",
+  "name": "screeps-mod-client",
   "version": "0.1.1",
-  "description": "Screeps server mod that serves the @bastianh/screeps-client at /client and connects it to the same server.",
+  "description": "Screeps server mod that serves the screeps-client at /client and connects it to the same server.",
   "type": "commonjs",
   "main": "index.js",
   "files": [
@@ -13,10 +13,10 @@
     "url": "git+https://github.com/bastianh/screeps-client.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org"
   },
   "scripts": {
-    "build": "pnpm --filter @bastianh/screeps-client build:embedded && node ./scripts/copy-dist.js",
+    "build": "pnpm --filter screeps-client build:embedded && node ./scripts/copy-dist.js",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "engines": {

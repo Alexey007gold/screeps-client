@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, Ticker, Sprite } from 'pixi.js'
-import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from '@bastianh/screeps-connectivity'
+import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 
 const sharedBadgeCache = new BadgeTextureCache()

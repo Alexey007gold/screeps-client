@@ -1,7 +1,7 @@
 import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { client, userInfo } from '~/stores/clientStore.js'
-import { SubscriptionGroup } from '@bastianh/screeps-connectivity'
-import type { CpuStats } from '@bastianh/screeps-connectivity'
+import { SubscriptionGroup } from 'screeps-connectivity'
+import type { CpuStats } from 'screeps-connectivity'
 
 interface StatsBarProps {
   mapZoom?: number | null
