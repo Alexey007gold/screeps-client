@@ -191,18 +191,41 @@ export class VisualLayer {
   }
 
   private drawPoly(g: Graphics, e: Extract<RoomVisualEntry, {t:'p'}>, s: VisualStyle, alpha: number): void {
-    const pxPts = e.points.map(([x, y]): [number, number] => [tp(x), tp(y)])
+    if (!e.points || e.points.length === 0) return
+
     const hasFill = !!(s.fill && s.fill !== 'transparent')
     const hasStroke = !!(s.stroke && s.strokeWidth)
+    if (!hasFill && !hasStroke) return
+
     const dashed = s.lineStyle && s.lineStyle !== 'solid'
 
+    // Performance optimization: avoid intermediate arrays by mapping directly to a flat array
+    // Only construct the array of point pairs if needed for dashed paths
+    const flatPxPts = new Array(e.points.length * 2)
+    let pxPts: [number, number][] | undefined
+
+    if (hasStroke && dashed) {
+      pxPts = new Array(e.points.length)
+    }
+
+    for (let i = 0; i < e.points.length; i++) {
+      const [x, y] = e.points[i]
+      const px = tp(x)
+      const py = tp(y)
+      flatPxPts[i * 2] = px
+      flatPxPts[i * 2 + 1] = py
+      if (pxPts) {
+        pxPts[i] = [px, py]
+      }
+    }
+
     if (hasFill) {
-      g.poly(pxPts.flatMap(([x, y]) => [x, y]), true)
+      g.poly(flatPxPts, true)
       g.fill({ color: s.fill!, alpha })
     }
     if (hasStroke) {
       const strokeWidth = s.strokeWidth! * TILE_SIZE
-      if (dashed) {
+      if (dashed && pxPts) {
         const [dash, gap] = DASH_PX[s.lineStyle!]
         // Ensure path is closed for stroke
         const first = pxPts[0]
@@ -210,7 +233,7 @@ export class VisualLayer {
         const closed = first[0] === last[0] && first[1] === last[1]
         drawDashedPath(g, closed ? pxPts : [...pxPts, first], dash, gap)
       } else {
-        g.poly(pxPts.flatMap(([x, y]) => [x, y]), true)
+        g.poly(flatPxPts, true)
       }
       g.stroke({ color: s.stroke!, width: strokeWidth, alpha })
     }
