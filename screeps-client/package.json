@@ -9,6 +9,9 @@
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

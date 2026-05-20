@@ -1,0 +1,85 @@
+name: Build & Publish
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@bastianh'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Build ────────────────────────────────────────────────────────────
+
+      - name: Build screeps-connectivity
+        run: pnpm --filter @bastianh/screeps-connectivity build
+
+      - name: Test screeps-connectivity
+        run: pnpm --filter @bastianh/screeps-connectivity test
+
+      - name: Build screeps-client (standalone + embedded)
+        run: |
+          pnpm --filter @bastianh/screeps-client build
+          pnpm --filter @bastianh/screeps-client build:embedded
+
+      - name: Build screeps-mod-client (copy embedded assets + inject index.js)
+        run: node screeps-mod-client/scripts/copy-dist.js
+
+      # ── Publish (skip if version already exists) ─────────────────────────
+
+      - name: Publish @bastianh/screeps-connectivity
+        working-directory: screeps-connectivity
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+            echo "::notice::${PKG}@${VER} already published – skipping"
+          else
+            pnpm publish --no-git-checks --access public
+          fi
+
+      - name: Publish @bastianh/screeps-client
+        working-directory: screeps-client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+            echo "::notice::${PKG}@${VER} already published – skipping"
+          else
+            pnpm publish --no-git-checks --access public
+          fi
+
+      - name: Publish @bastianh/screeps-mod-client
+        working-directory: screeps-mod-client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if npm view "${PKG}@${VER}" --registry https://npm.pkg.github.com &>/dev/null; then
+            echo "::notice::${PKG}@${VER} already published – skipping"
+          else
+            pnpm publish --no-git-checks --access public
+          fi
