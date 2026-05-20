@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "pnpm --filter screeps-client dev",
     "build": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build",
-    "test": "pnpm --filter screeps-connectivity test",
+    "test": "pnpm -r test",
     "lint": "pnpm -r lint"
   },
   "pnpm": {
