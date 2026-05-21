@@ -457,6 +457,11 @@ export function RoomViewer(props: RoomViewerProps) {
           const target = actionLog.upgradeController
           animLayer.addUpgradeController(obj.x, obj.y, target.x, target.y, duration)
         }
+        if (actionLog.build) {
+          const target = actionLog.build
+          animLayer.addBuild(obj.x, obj.y, target.x, target.y, duration)
+          objLayer?.triggerBuildAt(target.x, target.y, duration)
+        }
       }
     }
   })

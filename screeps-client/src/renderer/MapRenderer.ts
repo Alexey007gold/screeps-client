@@ -6,7 +6,7 @@ import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, imageBitm
 import TerrainWorker from './terrain.worker.ts?worker'
 import {
   TERRAIN_WALL, TERRAIN_ROAD, TERRAIN_BORDER,
-  OBJ_GOLD, OBJ_BLUE, OBJ_CYAN, OBJ_ORANGE,
+  OBJ_BLUE, OBJ_CYAN, OBJ_ORANGE, ENERGY_FILL,
 } from '~/renderer/colors.js'
 import { createLogger } from '~/utils/log.js'
 
@@ -34,7 +34,7 @@ const VISIBLE_DEBOUNCE_MS = 5
 const MIN_ZOOM = 0.2
 const MAX_ZOOM = 5
 
-const COLOR_SOURCE     = OBJ_GOLD    // sources
+const COLOR_SOURCE     = ENERGY_FILL // sources
 const COLOR_CONTROLLER = OBJ_BLUE    // controllers
 const COLOR_MINERAL    = OBJ_CYAN    // minerals
 const COLOR_KEEPER     = OBJ_ORANGE  // source keeper lairs

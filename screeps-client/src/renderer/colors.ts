@@ -6,10 +6,16 @@ export const BG_SURFACE = 0x34343B  // terrain plain
 
 // ── Terrain ────────────────────────────────────────────────────────────────
 export const TERRAIN_PLAIN  = BG_SURFACE
-export const TERRAIN_WALL   = BG_DEEP
-export const TERRAIN_SWAMP  = 0x334933
-export const TERRAIN_ROAD   = 0x6B6969 // also used for room exits
+export const TERRAIN_WALL   = BG_DEEP            // void background (outside-room areas)
+export const TERRAIN_SWAMP  = 0x334933           // legacy export, no longer used for in-room rendering
+export const TERRAIN_ROAD   = 0x6B6969           // also used for room exits
 export const TERRAIN_BORDER = 0x30363d
+
+// In-room terrain fill + outer border (border drawn with stroke alignment=0 / outside)
+export const TERRAIN_WALL_FILL    = 0x1A1F26
+export const TERRAIN_WALL_BORDER  = 0x0A0D11
+export const TERRAIN_SWAMP_FILL   = 0x223822
+export const TERRAIN_SWAMP_BORDER = 0x132213
 
 // ── Body parts ─────────────────────────────────────────────────────────────
 export const BP_TOUGH         = 0x4c4c4c
@@ -44,6 +50,10 @@ export const OBJ_ORANGE = 0xf0883e  // creep fallback, powerSpawn, powerBank
 export const OBJ_WALL   = 0x21262d
 export const OBJ_ROAD   = TERRAIN_ROAD
 export const OBJ_DEFAULT = 0xc9d1d9  // unknown type fallback
+
+// Unified foreign-owner indicator color: replaces ST_OUTLINE on foreign structures,
+// and is used for the creep ring/label of foreign creeps. Matches CS_FOREIGN.
+export const OBJ_FOREIGN = 0xBB6E6E
 
 // ── Flag colors (Screeps canonical) ───────────────────────────────────────
 export const FLAG_COLORS: number[] = [
@@ -88,11 +98,21 @@ export const OBJECT_COLORS: Record<string, number> = {
 }
 
 // ── Resources ──────────────────────────────────────────────────────────────
-export const ENERGY_FILL = 0xffe066  // extension fill, dropped energy, harvest beam
+export const ENERGY_FILL = 0xFFE87B  // extension fill, source, dropped energy, harvest beam (same as ST_ENERGY)
 
 // ── Animations ─────────────────────────────────────────────────────────────
 export const ANIM_HARVEST = ENERGY_FILL
 export const ANIM_UPGRADE = OBJ_CYAN
+export const ANIM_BUILD   = ENERGY_FILL
+
+// ── Construction sites ────────────────────────────────────────────────────
+// Base (used for the static pie fill); the ring pulses between *_DARK and *_LIGHT.
+export const CS_OWN          = 0x8FBB93  // own construction site (muted green)
+export const CS_OWN_DARK     = 0x6E8F72
+export const CS_OWN_LIGHT    = 0xB8E3BC
+export const CS_FOREIGN      = 0xBB6E6E  // foreign construction site (muted red)
+export const CS_FOREIGN_DARK = 0x955858
+export const CS_FOREIGN_LIGHT = 0xE0A0A0
 
 // ── Creep rendering ────────────────────────────────────────────────────────
 export const CREEP_RING_DARK = BG_MEDIUM

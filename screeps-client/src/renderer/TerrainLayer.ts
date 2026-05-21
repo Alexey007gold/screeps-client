@@ -1,26 +1,37 @@
-import { Graphics } from 'pixi.js'
+import { Graphics, type StrokeStyle } from 'pixi.js'
 import { TerrainType, RoomTerrain } from 'screeps-connectivity'
 import { TILE_SIZE } from './RoomRenderer.js'
-import { TERRAIN_PLAIN, TERRAIN_WALL, TERRAIN_SWAMP, TERRAIN_ROAD, TERRAIN_BORDER } from './colors.js'
+import {
+  TERRAIN_PLAIN, TERRAIN_ROAD, TERRAIN_BORDER,
+  TERRAIN_WALL_FILL, TERRAIN_WALL_BORDER,
+  TERRAIN_SWAMP_FILL, TERRAIN_SWAMP_BORDER,
+} from './colors.js'
 
-const TERRAIN_COLORS: Record<TerrainType, number> = {
-  [TerrainType.Plain]: TERRAIN_PLAIN,
-  [TerrainType.Wall]:  TERRAIN_WALL,
-  [TerrainType.Swamp]: TERRAIN_SWAMP,
-}
+type ApplyStyle = (g: Graphics) => void
 
-function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: TerrainType) {
-  const color = TERRAIN_COLORS[targetType]
+// Border widths (relative to TILE_SIZE = 12). Swamp is thicker per design.
+const WALL_BORDER_W  = TILE_SIZE * 0.125
+const SWAMP_BORDER_W = TILE_SIZE * 0.20
+
+// Walks every quadrant of every tile of `targetType` and calls `apply(g)`
+// after each sub-path. Used to apply either a stroke (border pass) or fill
+// (inner pass) to the same shape geometry.
+function drawTerrainQuadrants(
+  g: Graphics,
+  terrain: RoomTerrain,
+  targetType: TerrainType,
+  apply: ApplyStyle,
+) {
   const T = TILE_SIZE
   const R = T / 2
 
   for (let y = 0; y < 50; y++) {
     for (let x = 0; x < 50; x++) {
       const center = terrain.get(x, y) === targetType
-      const top = y > 0 && terrain.get(x, y - 1) === targetType
+      const top    = y > 0  && terrain.get(x, y - 1) === targetType
       const bottom = y < 49 && terrain.get(x, y + 1) === targetType
-      const left = x > 0 && terrain.get(x - 1, y) === targetType
-      const right = x < 49 && terrain.get(x + 1, y) === targetType
+      const left   = x > 0  && terrain.get(x - 1, y) === targetType
+      const right  = x < 49 && terrain.get(x + 1, y) === targetType
 
       const cx = x * T + R
       const cy = y * T + R
@@ -31,10 +42,11 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.moveTo(cx, y * T)
           g.arc(cx, cy, R, -Math.PI / 2, Math.PI, true)
           g.lineTo(cx, cy)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         } else {
           g.rect(x * T, y * T, R, R)
-          g.fill(color)
+          apply(g)
         }
       } else {
         if (top && left && terrain.get(x - 1, y - 1) === targetType) {
@@ -42,7 +54,8 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.lineTo(x * T, y * T)
           g.lineTo(x * T, cy)
           g.arc(cx, cy, R, Math.PI, -Math.PI / 2, false)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         }
       }
 
@@ -52,10 +65,11 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.moveTo(cx, y * T)
           g.arc(cx, cy, R, -Math.PI / 2, 0, false)
           g.lineTo(cx, cy)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         } else {
           g.rect(cx, y * T, R, R)
-          g.fill(color)
+          apply(g)
         }
       } else {
         if (top && right && terrain.get(x + 1, y - 1) === targetType) {
@@ -63,7 +77,8 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.lineTo(x * T + T, y * T)
           g.lineTo(x * T + T, cy)
           g.arc(cx, cy, R, 0, -Math.PI / 2, true)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         }
       }
 
@@ -73,10 +88,11 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.moveTo(x * T, cy)
           g.arc(cx, cy, R, Math.PI, Math.PI / 2, true)
           g.lineTo(cx, cy)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         } else {
           g.rect(x * T, cy, R, R)
-          g.fill(color)
+          apply(g)
         }
       } else {
         if (bottom && left && terrain.get(x - 1, y + 1) === targetType) {
@@ -84,7 +100,8 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.lineTo(x * T, y * T + T)
           g.lineTo(cx, y * T + T)
           g.arc(cx, cy, R, Math.PI / 2, Math.PI, false)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         }
       }
 
@@ -94,10 +111,11 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.moveTo(cx, y * T + T)
           g.arc(cx, cy, R, Math.PI / 2, 0, true)
           g.lineTo(cx, cy)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         } else {
           g.rect(cx, cy, R, R)
-          g.fill(color)
+          apply(g)
         }
       } else {
         if (bottom && right && terrain.get(x + 1, y + 1) === targetType) {
@@ -105,7 +123,8 @@ function drawTerrainLayer(g: Graphics, terrain: RoomTerrain, targetType: Terrain
           g.lineTo(x * T + T, y * T + T)
           g.lineTo(x * T + T, cy)
           g.arc(cx, cy, R, 0, Math.PI / 2, false)
-          g.fill(color)
+          g.closePath()
+          apply(g)
         }
       }
     }
@@ -119,10 +138,10 @@ function drawExits(g: Graphics, terrain: RoomTerrain) {
   const drawArrow = (x: number, y: number, dir: 'up' | 'down' | 'left' | 'right') => {
     const cx = x * T + T / 2
     const cy = y * T + T / 2
-    const size = T * 0.3 // Arrow size
+    const size = T * 0.3
 
-    g.moveTo(cx, cy) // start point
-    
+    g.moveTo(cx, cy)
+
     if (dir === 'up') {
       g.moveTo(cx, cy - size)
       g.lineTo(cx + size, cy + size)
@@ -140,16 +159,16 @@ function drawExits(g: Graphics, terrain: RoomTerrain) {
       g.lineTo(cx - size, cy - size)
       g.lineTo(cx - size, cy + size)
     }
-    
+
     g.fill(exitColor)
   }
 
   for (let x = 0; x < 50; x++) {
-    if (terrain.get(x, 0) !== TerrainType.Wall) drawArrow(x, 0, 'up')
+    if (terrain.get(x, 0)  !== TerrainType.Wall) drawArrow(x, 0,  'up')
     if (terrain.get(x, 49) !== TerrainType.Wall) drawArrow(x, 49, 'down')
   }
   for (let y = 0; y < 50; y++) {
-    if (terrain.get(0, y) !== TerrainType.Wall) drawArrow(0, y, 'left')
+    if (terrain.get(0,  y) !== TerrainType.Wall) drawArrow(0,  y, 'left')
     if (terrain.get(49, y) !== TerrainType.Wall) drawArrow(49, y, 'right')
   }
 }
@@ -157,15 +176,26 @@ function drawExits(g: Graphics, terrain: RoomTerrain) {
 export function createTerrainLayer(terrain: RoomTerrain): Graphics {
   const g = new Graphics()
 
-  // Base Plain Layer
+  // Base plain layer
   g.rect(0, 0, 50 * TILE_SIZE, 50 * TILE_SIZE)
-  g.fill(TERRAIN_COLORS[TerrainType.Plain])
+  g.fill(TERRAIN_PLAIN)
 
-  // Draw Swamps and Walls with rounded corners
-  drawTerrainLayer(g, terrain, TerrainType.Swamp)
-  drawTerrainLayer(g, terrain, TerrainType.Wall)
+  // Per terrain type, two passes:
+  //   Pass 1: outside-aligned stroke (border) — paints a halo around the path
+  //   Pass 2: fill (inner) — covers any stroke that landed inside the connected shape,
+  //           leaving only the outer halo visible as a border.
+  // cap/join: 'round' — quadrant paths are open, so each ends with a stroke cap
+  // at a side midpoint (top-center, left-center, …). With butt caps the strokes
+  // from the two neighbouring quadrants don't quite meet, leaving 1-px notches
+  // at every convex apex. Round caps/joins make them overlap cleanly.
+  const swampStroke: StrokeStyle = { color: TERRAIN_SWAMP_BORDER, width: SWAMP_BORDER_W, alignment: 0, cap: 'round', join: 'round' }
+  drawTerrainQuadrants(g, terrain, TerrainType.Swamp, (gg) => gg.stroke(swampStroke))
+  drawTerrainQuadrants(g, terrain, TerrainType.Swamp, (gg) => gg.fill(TERRAIN_SWAMP_FILL))
 
-  // Draw exits
+  const wallStroke: StrokeStyle = { color: TERRAIN_WALL_BORDER, width: WALL_BORDER_W, alignment: 0, cap: 'round', join: 'round' }
+  drawTerrainQuadrants(g, terrain, TerrainType.Wall, (gg) => gg.stroke(wallStroke))
+  drawTerrainQuadrants(g, terrain, TerrainType.Wall, (gg) => gg.fill(TERRAIN_WALL_FILL))
+
   drawExits(g, terrain)
 
   // Room border

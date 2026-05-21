@@ -8,11 +8,12 @@ import {
   BODY_PART_COLORS,
   OBJECT_COLORS,
   BG_DEEP, BG_DARK,
-  OBJ_DEFAULT, OBJ_ROAD, OBJ_GOLD,
+  OBJ_DEFAULT, OBJ_ROAD, OBJ_FOREIGN,
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
   ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART,
   FLAG_COLORS,
+  CS_OWN, CS_FOREIGN, CS_OWN_DARK, CS_OWN_LIGHT, CS_FOREIGN_DARK, CS_FOREIGN_LIGHT,
 } from './colors.js'
 
 const CREEP_OUTER_R = TILE_SIZE * 0.44
@@ -28,6 +29,84 @@ const LABEL_GAP_PX    = 2
 const EXT_OUTER_R = TILE_SIZE * 0.42
 const EXT_INNER_R = TILE_SIZE * 0.30
 const EXT_STROKE_W = Math.max(1, TILE_SIZE * 0.08)
+
+// Source: shrinks with energy level, but stays visible as a small spot when empty
+const SRC_MAX_SIZE = TILE_SIZE - 4
+const SRC_MIN_SIZE = TILE_SIZE * 0.28
+
+function calcSourceSize(energy: number, capacity: number): number {
+  if (capacity <= 0) return SRC_MAX_SIZE
+  const ratio = Math.max(0, Math.min(1, energy / capacity))
+  return SRC_MIN_SIZE + (SRC_MAX_SIZE - SRC_MIN_SIZE) * ratio
+}
+
+function drawSourceVisual(g: Graphics, size: number): void {
+  const half = size / 2
+  const cx = TILE_SIZE / 2
+  const cy = TILE_SIZE / 2
+  const radius = size * 0.25
+  g.clear()
+  g.roundRect(cx - half, cy - half, size, size, radius)
+  g.fill(ST_ENERGY)
+}
+
+function updateSourceVisual(visual: ContainerWithTarget, size: number): void {
+  const g = visual.__sourceGraphics
+  if (!g) return
+  drawSourceVisual(g, size)
+}
+
+function getSourceEnergy(obj: RoomObject): { energy: number; capacity: number } {
+  const energy = typeof obj.energy === 'number' ? obj.energy : 0
+  const capacity = typeof obj.energyCapacity === 'number' ? obj.energyCapacity : 3000
+  return { energy, capacity }
+}
+
+// ── Construction site helpers ──────────────────────────────────────────────
+// Ring sized to roughly match the small extension (outer R ≈ 0.294 * TILE),
+// stroke 50% thicker than the previous CS look.
+const CS_RADIUS    = TILE_SIZE * 0.30
+const CS_STROKE    = Math.max(1, TILE_SIZE * 0.12)
+const CS_FILL_R    = CS_RADIUS - CS_STROKE / 2
+const CS_GLOW_R    = TILE_SIZE * 0.42
+const CS_PULSE_MS  = 1500  // ring pulsation period
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff
+  const r = Math.round(ar + (br - ar) * t)
+  const g = Math.round(ag + (bg - ag) * t)
+  const bl = Math.round(ab + (bb - ab) * t)
+  return (r << 16) | (g << 8) | bl
+}
+
+function drawCSRing(g: Graphics, color: number): void {
+  g.clear()
+  g.circle(TILE_SIZE / 2, TILE_SIZE / 2, CS_RADIUS)
+  g.stroke({ width: CS_STROKE, color, alpha: 0.95 })
+}
+
+function drawCSProgress(
+  g: Graphics,
+  cx: number, cy: number, r: number,
+  progress: number, total: number, color: number,
+): void {
+  g.clear()
+  if (total <= 0 || progress <= 0) return
+  const ratio = Math.min(1, progress / total)
+  if (ratio >= 1) {
+    g.circle(cx, cy, r)
+    g.fill({ color, alpha: 0.55 })
+    return
+  }
+  const start = -Math.PI / 2  // top
+  const end   = start + ratio * Math.PI * 2
+  g.moveTo(cx, cy)
+  g.lineTo(cx + r * Math.cos(start), cy + r * Math.sin(start))
+  g.arc(cx, cy, r, start, end)
+  g.closePath()
+  g.fill({ color, alpha: 0.55 })
+}
 
 // Converts screeps tile-relative coords (tile center = origin, 1 unit = TILE_SIZE px) to flat pixel array
 function spts(cx: number, cy: number, pts: ReadonlyArray<readonly [number, number]>): number[] {
@@ -114,7 +193,7 @@ function calcExtensionFillRadius(energy: number, capacity: number): number {
   return EXT_INNER_R * extScale(capacity) * Math.min(1, energy / capacity)
 }
 
-function drawExtensionVisual(container: Container, energy: number, capacity: number): void {
+function drawExtensionVisual(container: Container, energy: number, capacity: number, outlineColor: number): void {
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
   const scale = extScale(capacity)
@@ -122,7 +201,7 @@ function drawExtensionVisual(container: Container, energy: number, capacity: num
   g.circle(cx, cy, EXT_OUTER_R * scale)
   g.fill(ST_DARK)
   g.circle(cx, cy, EXT_OUTER_R * scale)
-  g.stroke({ width: EXT_STROKE_W * scale, color: ST_OUTLINE })
+  g.stroke({ width: EXT_STROKE_W * scale, color: outlineColor })
   g.circle(cx, cy, EXT_INNER_R * scale)
   g.fill(ST_LIGHT)
   container.addChild(g)
@@ -245,6 +324,11 @@ function createObjectVisual(
   const cx = TILE_SIZE / 2
   const cy = TILE_SIZE / 2
 
+  // Foreign-owned structures swap their outline (normally ST_OUTLINE green) for OBJ_FOREIGN red.
+  const ownedByUser = typeof obj.user === 'string' ? obj.user : undefined
+  const isForeignOwned = ownedByUser !== undefined && currentUserId !== undefined && ownedByUser !== currentUserId
+  const outlineColor = isForeignOwned ? OBJ_FOREIGN : ST_OUTLINE
+
   switch (obj.type) {
     case 'creep': {
       const FULL = 2 * Math.PI
@@ -257,7 +341,7 @@ function createObjectVisual(
       if (isForeign) {
         const borderG = new Graphics()
         borderG.circle(0, 0, CREEP_OUTER_R + 0.75)
-        borderG.stroke({ width: 1.5, color: 0xff2222 })
+        borderG.stroke({ width: 1.5, color: OBJ_FOREIGN })
         bodyContainer.addChild(borderG)
       }
 
@@ -366,7 +450,7 @@ function createObjectVisual(
       } else if (isForeign) {
         const markG = new Graphics()
         markG.circle(0, 0, CREEP_INNER_R * 0.82)
-        markG.fill({ color: 0xcc1111, alpha: 0.8 })
+        markG.fill({ color: OBJ_FOREIGN, alpha: 0.9 })
         bodyContainer.addChild(markG)
       }
 
@@ -400,7 +484,7 @@ function createObjectVisual(
     }
     case 'extension': {
       const { energy, capacity } = getExtensionEnergy(obj)
-      drawExtensionVisual(container, energy, capacity)
+      drawExtensionVisual(container, energy, capacity, outlineColor)
       ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extEnergy = energy
       ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extCapacity = capacity
       break
@@ -423,7 +507,50 @@ function createObjectVisual(
       g.fill(ST_ENERGY)
       break
     }
-    case 'source':
+    case 'source': {
+      const { energy, capacity } = getSourceEnergy(obj)
+      const srcG = new Graphics()
+      drawSourceVisual(srcG, calcSourceSize(energy, capacity))
+      container.addChild(srcG)
+      ;(container as ContainerWithTarget).__sourceGraphics = srcG
+      ;(container as ContainerWithTarget).__sourceEnergy = energy
+      ;(container as ContainerWithTarget).__sourceCapacity = capacity
+      break
+    }
+    case 'constructionSite': {
+      const csUser = typeof obj.user === 'string' ? obj.user : undefined
+      const isMine = csUser !== undefined && csUser === currentUserId
+      const csColor = isMine ? CS_OWN : CS_FOREIGN
+      const csDark  = isMine ? CS_OWN_DARK  : CS_FOREIGN_DARK
+      const csLight = isMine ? CS_OWN_LIGHT : CS_FOREIGN_LIGHT
+      const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
+
+      // Build glow (under the ring, animated by tick)
+      const glowG = new Graphics()
+      container.addChild(glowG)
+      ;(container as ContainerWithTarget).__csBuildGlow = glowG
+
+      // Progress pie fill (static color)
+      const fillG = new Graphics()
+      drawCSProgress(fillG, cx, cy, CS_FILL_R, progress, progressTotal, csColor)
+      container.addChild(fillG)
+      ;(container as ContainerWithTarget).__csFillGraphics = fillG
+
+      // Ring outline — color is redrawn each tick for the pulsation
+      const ringG = new Graphics()
+      drawCSRing(ringG, csColor)
+      container.addChild(ringG)
+      ;(container as ContainerWithTarget).__csRingGraphics = ringG
+
+      ;(container as ContainerWithTarget).__csProgress      = progress
+      ;(container as ContainerWithTarget).__csProgressTotal = progressTotal
+      ;(container as ContainerWithTarget).__csUser          = csUser
+      ;(container as ContainerWithTarget).__csColor         = csColor
+      ;(container as ContainerWithTarget).__csColorDark     = csDark
+      ;(container as ContainerWithTarget).__csColorLight    = csLight
+      break
+    }
     case 'mineral':
     case 'deposit': {
       g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
@@ -486,7 +613,7 @@ function createObjectVisual(
     }
     case 'energy': {
       g.circle(cx, cy, TILE_SIZE * 0.2)
-      g.fill(OBJ_GOLD)
+      g.fill(ST_ENERGY)
       break
     }
     case 'road': {
@@ -514,7 +641,7 @@ function createObjectVisual(
       towerBase.circle(cx, cy, TILE_SIZE * 0.6)
       towerBase.fill(ST_DARK)
       towerBase.circle(cx, cy, TILE_SIZE * 0.6)
-      towerBase.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      towerBase.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       container.addChild(towerBase)
 
       // Rotating turret: body rect + energy fill + barrel — pivot at tile center
@@ -557,7 +684,7 @@ function createObjectVisual(
       g.poly(storagePts)
       g.fill(ST_DARK)
       g.poly(storagePts)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
       g.fill(ST_GRAY)
       g.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
@@ -576,7 +703,7 @@ function createObjectVisual(
       g.poly(termOuter)
       g.fill(ST_DARK)
       g.poly(termOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.poly(termInner)
       g.fill(ST_LIGHT)
       g.rect(cx - TILE_SIZE * 0.45, cy - TILE_SIZE * 0.45, TILE_SIZE * 0.9, TILE_SIZE * 0.9)
@@ -591,7 +718,7 @@ function createObjectVisual(
       g.poly(linkOuter)
       g.fill(ST_DARK)
       g.poly(linkOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.poly(linkInner)
       g.fill(ST_GRAY)
       break
@@ -601,13 +728,13 @@ function createObjectVisual(
       g.circle(cx, labCy, TILE_SIZE * 0.55)
       g.fill(ST_DARK)
       g.circle(cx, labCy, TILE_SIZE * 0.55)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.circle(cx, labCy, TILE_SIZE * 0.4)
       g.fill(ST_GRAY)
       g.rect(cx - TILE_SIZE * 0.45, cy + TILE_SIZE * 0.3, TILE_SIZE * 0.9, TILE_SIZE * 0.25)
       g.fill(ST_DARK)
       g.poly(spts(cx, cy, [[-0.45, 0.3], [-0.45, 0.55], [0.45, 0.55], [0.45, 0.3]]))
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       break
     }
     case 'container': {
@@ -621,9 +748,9 @@ function createObjectVisual(
       g.circle(cx, cy, TILE_SIZE * 0.45)
       g.fill(ST_DARK)
       g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.circle(cx + TILE_SIZE * 0.225, cy, TILE_SIZE * 0.2)
-      g.fill(ST_OUTLINE)
+      g.fill(outlineColor)
       break
     }
     case 'nuker': {
@@ -636,11 +763,11 @@ function createObjectVisual(
       g.poly(nukerOuter)
       g.fill(ST_DARK)
       g.poly(nukerOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.poly(nukerInner)
       g.fill(ST_GRAY)
       g.poly(nukerInner)
-      g.stroke({ width: TILE_SIZE * 0.01, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.01, color: outlineColor })
       break
     }
     case 'factory':
@@ -649,7 +776,7 @@ function createObjectVisual(
       g.circle(cx, cy, TILE_SIZE * 0.45)
       g.fill(ST_DARK)
       g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.stroke({ width: TILE_SIZE * 0.05, color: ST_OUTLINE })
+      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
       g.circle(cx, cy, TILE_SIZE * 0.35)
       g.fill(ST_GRAY)
       break
@@ -718,7 +845,7 @@ function createObjectVisual(
     }
   }
 
-  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller' && obj.type !== 'flag') {
+  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller' && obj.type !== 'flag' && obj.type !== 'source' && obj.type !== 'constructionSite') {
     container.addChild(g)
   }
 
@@ -734,7 +861,7 @@ function createObjectVisual(
     } else {
       labelText = obj.name as string
     }
-    const labelColor = isForeign ? 0xff2222 : 0xffffff
+    const labelColor = isForeign ? OBJ_FOREIGN : 0xffffff
     const label = new Text({
       text: labelText,
       style: { fontSize: LABEL_FONT_SIZE, fill: labelColor },
@@ -778,6 +905,18 @@ type ContainerWithTarget = Container & {
   __ctrlProgressTotal?: number
   __flagColor?: number
   __flagSecondaryColor?: number
+  __sourceGraphics?: Graphics
+  __sourceEnergy?: number
+  __sourceCapacity?: number
+  __csBuildGlow?: Graphics
+  __csFillGraphics?: Graphics
+  __csRingGraphics?: Graphics
+  __csProgress?: number
+  __csProgressTotal?: number
+  __csUser?: string
+  __csColor?: number
+  __csColorDark?: number
+  __csColorLight?: number
 }
 
 function destroyVisual(visual: ContainerWithTarget): void {
@@ -808,6 +947,8 @@ export class ObjectLayer {
   private extAnimations = new Map<string, ExtAnimation>()
   private creepFillAnimations = new Map<string, ExtAnimation>()
   private towerFillAnimations = new Map<string, ExtAnimation>()
+  private sourceAnimations = new Map<string, ExtAnimation>()
+  private buildGlowAnimations = new Map<string, { startTime: number; duration: number }>()
   private readonly EXT_ANIM_DURATION = 300
   private lastWorldScale = 1
   private showLabels: boolean
@@ -859,19 +1000,8 @@ export class ObjectLayer {
     const worldScale = this.container.parent?.scale.x ?? 1
     if (worldScale !== this.lastWorldScale) {
       this.lastWorldScale = worldScale
-      const s      = LABEL_FONT_SCALE / worldScale
-      const labelY = LABEL_CREEP_TOP - LABEL_GAP_PX / worldScale
       for (const visual of this.objects.values()) {
-        if (visual.__nameLabel) {
-          visual.__nameLabel.scale.set(s)
-          if (visual.__nameLabel.anchor.y === 0) {
-            // Flag label — anchored at top, positioned below the flag
-            visual.__nameLabel.y = TILE_SIZE / 2 + TILE_SIZE * 0.55
-          } else {
-            // Creep label — anchored at bottom, positioned above the creep
-            visual.__nameLabel.y = labelY
-          }
-        }
+        this.applyLabelScale(visual)
       }
     }
 
@@ -879,10 +1009,14 @@ export class ObjectLayer {
     const now = performance.now()
     const t_sec = now / 1000
 
-    // Tower barrel rotation
+    // Tower barrel rotation + construction-site ring pulsation
+    const pulse = 0.5 + 0.5 * Math.sin(now * 2 * Math.PI / CS_PULSE_MS)
     for (const visual of this.objects.values()) {
       if (visual.__barrelContainer) {
         visual.__barrelContainer.rotation = t_sec * 0.4  // ~23°/s idle sweep
+      }
+      if (visual.__csRingGraphics && visual.__csColorDark !== undefined && visual.__csColorLight !== undefined) {
+        drawCSRing(visual.__csRingGraphics, lerpColor(visual.__csColorDark, visual.__csColorLight, pulse))
       }
     }
 
@@ -907,6 +1041,37 @@ export class ObjectLayer {
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
       updateTowerFill(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
       if (t >= 1) this.towerFillAnimations.delete(id)
+    }
+    for (const [id, anim] of this.sourceAnimations) {
+      const elapsed = now - anim.startTime
+      const t = Math.min(1, elapsed / this.EXT_ANIM_DURATION)
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+      updateSourceVisual(anim.visual, anim.fromRadius + (anim.toRadius - anim.fromRadius) * ease)
+      if (t >= 1) this.sourceAnimations.delete(id)
+    }
+
+    // Construction-site build glow: fade in during beam build phase, hold, fade out
+    for (const [id, anim] of this.buildGlowAnimations) {
+      const visual = this.objects.get(id)
+      const glow = visual?.__csBuildGlow
+      if (!visual || !glow) {
+        this.buildGlowAnimations.delete(id)
+        continue
+      }
+      const t = (now - anim.startTime) / anim.duration
+      let alpha: number
+      if (t <= 0)      alpha = 0
+      else if (t < 0.5) alpha = t / 0.5
+      else if (t < 0.7) alpha = 1
+      else if (t < 1)   alpha = 1 - (t - 0.7) / 0.3
+      else              alpha = 0
+
+      glow.clear()
+      if (alpha > 0) {
+        glow.circle(TILE_SIZE / 2, TILE_SIZE / 2, CS_GLOW_R)
+        glow.fill({ color: ST_ENERGY, alpha: alpha * 0.75 })
+      }
+      if (t >= 1) this.buildGlowAnimations.delete(id)
     }
   }
 
@@ -952,6 +1117,20 @@ export class ObjectLayer {
     this.towerFillAnimations.set(id, { visual, fromRadius: fromH, toRadius: toH, startTime: performance.now() })
   }
 
+  private startSourceAnimation(
+    id: string,
+    visual: ContainerWithTarget,
+    fromEnergy: number,
+    fromCapacity: number,
+    toEnergy: number,
+    toCapacity: number,
+  ): void {
+    const fromSize = calcSourceSize(fromEnergy, fromCapacity)
+    const toSize = calcSourceSize(toEnergy, toCapacity)
+    if (fromSize === toSize) return
+    this.sourceAnimations.set(id, { visual, fromRadius: fromSize, toRadius: toSize, startTime: performance.now() })
+  }
+
   update(objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string }>): void {
     if (users) {
       this.users = users
@@ -975,6 +1154,8 @@ export class ObjectLayer {
             this.extAnimations.delete(id)
             this.creepFillAnimations.delete(id)
             this.towerFillAnimations.delete(id)
+            this.sourceAnimations.delete(id)
+            this.buildGlowAnimations.delete(id)
           }
         } else {
           const obj = objects[id]
@@ -993,6 +1174,7 @@ export class ObjectLayer {
             const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
+            this.applyLabelScale(visual)
             this.objects.set(id, visual)
             this.container.addChild(visual)
           } else {
@@ -1030,6 +1212,7 @@ export class ObjectLayer {
                 const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
                 visual.__tileX = obj.x
                 visual.__tileY = obj.y
+                this.applyLabelScale(visual)
                 this.objects.set(id, visual)
                 this.container.addChild(visual)
               } else {
@@ -1076,6 +1259,25 @@ export class ObjectLayer {
                 existing.__ctrlProgressTotal = progressTotal
               }
             }
+            if (obj.type === 'source') {
+              const { energy, capacity } = getSourceEnergy(obj)
+              if (existing.__sourceEnergy !== energy || existing.__sourceCapacity !== capacity) {
+                this.startSourceAnimation(id, existing, existing.__sourceEnergy ?? 0, existing.__sourceCapacity ?? capacity, energy, capacity)
+                existing.__sourceEnergy = energy
+                existing.__sourceCapacity = capacity
+              }
+            }
+            if (obj.type === 'constructionSite') {
+              const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+              const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
+              if (existing.__csProgress !== progress || existing.__csProgressTotal !== progressTotal) {
+                if (existing.__csFillGraphics) {
+                  drawCSProgress(existing.__csFillGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CS_FILL_R, progress, progressTotal, existing.__csColor ?? CS_OWN)
+                }
+                existing.__csProgress      = progress
+                existing.__csProgressTotal = progressTotal
+              }
+            }
           }
         }
       }
@@ -1094,6 +1296,7 @@ export class ObjectLayer {
           const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
           visual.__tileX = obj.x
           visual.__tileY = obj.y
+          this.applyLabelScale(visual)
           this.objects.set(id, visual)
           this.container.addChild(visual)
         } else {
@@ -1131,6 +1334,7 @@ export class ObjectLayer {
               const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
               visual.__tileX = obj.x
               visual.__tileY = obj.y
+              this.applyLabelScale(visual)
               this.objects.set(id, visual)
               this.container.addChild(visual)
             } else {
@@ -1177,6 +1381,25 @@ export class ObjectLayer {
               existing.__ctrlProgressTotal = progressTotal
             }
           }
+          if (obj.type === 'source') {
+            const { energy, capacity } = getSourceEnergy(obj)
+            if (existing.__sourceEnergy !== energy || existing.__sourceCapacity !== capacity) {
+              this.startSourceAnimation(id, existing, existing.__sourceEnergy ?? 0, existing.__sourceCapacity ?? capacity, energy, capacity)
+              existing.__sourceEnergy = energy
+              existing.__sourceCapacity = capacity
+            }
+          }
+          if (obj.type === 'constructionSite') {
+            const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+            const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
+            if (existing.__csProgress !== progress || existing.__csProgressTotal !== progressTotal) {
+              if (existing.__csFillGraphics) {
+                drawCSProgress(existing.__csFillGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CS_FILL_R, progress, progressTotal, existing.__csColor ?? CS_OWN)
+              }
+              existing.__csProgress      = progress
+              existing.__csProgressTotal = progressTotal
+            }
+          }
         }
       }
 
@@ -1189,6 +1412,9 @@ export class ObjectLayer {
           this.rawObjects.delete(id)
           this.extAnimations.delete(id)
           this.creepFillAnimations.delete(id)
+          this.towerFillAnimations.delete(id)
+          this.sourceAnimations.delete(id)
+          this.buildGlowAnimations.delete(id)
         }
       }
 
@@ -1199,6 +1425,7 @@ export class ObjectLayer {
     if (roadsChanged) {
       this.redrawRoads()
     }
+    this.refreshForeignCreepLabels()
   }
 
   private redrawRoads(): void {
@@ -1398,6 +1625,56 @@ export class ObjectLayer {
     return result
   }
 
+  /**
+   * Apply the current world-scale to a visual's name label.
+   * Run after creating a visual so newly-spawned creeps get the right label scale
+   * even when the room is already zoomed (lastWorldScale ≠ 1).
+   */
+  private applyLabelScale(visual: ContainerWithTarget): void {
+    if (!visual.__nameLabel) return
+    const worldScale = this.lastWorldScale || 1
+    visual.__nameLabel.scale.set(LABEL_FONT_SCALE / worldScale)
+    if (visual.__nameLabel.anchor.y === 0) {
+      // Flag label — anchored at top, positioned below the flag
+      visual.__nameLabel.y = TILE_SIZE / 2 + TILE_SIZE * 0.55
+    } else {
+      // Creep label — anchored at bottom, positioned above the creep
+      visual.__nameLabel.y = LABEL_CREEP_TOP - LABEL_GAP_PX / worldScale
+    }
+  }
+
+  /**
+   * Refresh foreign-creep labels from the current users map. When a foreign creep
+   * spawns into an already-watched room the users map may not yet contain the
+   * owner's username; once it does, we update the label from <userId> to <username>.
+   */
+  private refreshForeignCreepLabels(): void {
+    if (!this.currentUserId) return
+    for (const [id, visual] of this.objects) {
+      const obj = this.rawObjects.get(id)
+      if (!obj || obj.type !== 'creep') continue
+      if (!visual.__nameLabel) continue
+      if (!isForeignCreep(obj, this.currentUserId)) continue
+      const userId = typeof obj.user === 'string' ? obj.user : undefined
+      const labelText = userId ? (this.users?.[userId]?.username ?? userId) : 'Hostile'
+      if (visual.__nameLabel.text !== labelText) {
+        visual.__nameLabel.text = labelText
+      }
+    }
+  }
+
+  /** Trigger the yellow build-glow on the construction site at the given tile, if any. */
+  triggerBuildAt(tx: number, ty: number, durationMs: number): void {
+    for (const [id, visual] of this.objects) {
+      const obj = this.rawObjects.get(id)
+      if (!obj || obj.type !== 'constructionSite') continue
+      if (obj.x !== tx || obj.y !== ty) continue
+      if (!visual.__csBuildGlow) continue
+      this.buildGlowAnimations.set(id, { startTime: performance.now(), duration: durationMs })
+      return
+    }
+  }
+
   setShowLabels(show: boolean): void {
     this.showLabels = show
     for (const visual of this.objects.values()) {
@@ -1419,6 +1696,8 @@ export class ObjectLayer {
     this.extAnimations.clear()
     this.creepFillAnimations.clear()
     this.towerFillAnimations.clear()
+    this.sourceAnimations.clear()
+    this.buildGlowAnimations.clear()
     this.roadGraphics.clear()
     this.rampartGraphics.clear()
     this.container.removeChildren()
