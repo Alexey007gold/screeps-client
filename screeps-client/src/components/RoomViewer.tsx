@@ -487,66 +487,12 @@ export function RoomViewer(props: RoomViewerProps) {
             'font-size': '13px',
             'font-weight': 500,
             color: '#c9d1d9',
-            'pointer-events': 'none',
+            'pointer-events': (worldStatus() === 'empty' || worldStatus() === 'lost') ? 'auto' : 'none',
             'user-select': 'none',
             'z-index': 10,
           }}
         >
           {modeHint()}
-        </div>
-      )}
-      {worldStatus() === 'lost' && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            'z-index': 20,
-            display: 'flex',
-            'flex-direction': 'column',
-            'align-items': 'center',
-            gap: '12px',
-          }}
-        >
-          <button
-            onClick={() => {
-              const c = client()
-              if (!c) return
-              c.http.user.respawn()
-                .then(() => {
-                  addToast('Respawn successful', 'success')
-                  void c.stores.user.refreshWorldStatus()
-                })
-                .catch((err: Error) => {
-                  addToast(`Respawn failed: ${err.message}`, 'error')
-                })
-            }}
-            style={{
-              padding: '14px 48px',
-              'font-size': '18px',
-              'font-weight': 700,
-              color: '#fff',
-              background: '#da3633',
-              border: '2px solid #f85149',
-              'border-radius': '8px',
-              cursor: 'pointer',
-              'text-transform': 'uppercase',
-              'letter-spacing': '0.08em',
-              'box-shadow': '0 4px 20px rgba(218, 54, 51, 0.4)',
-              transition: 'transform 100ms ease, box-shadow 100ms ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'scale(1.05)'
-              e.currentTarget.style.boxShadow = '0 6px 28px rgba(218, 54, 51, 0.6)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)'
-              e.currentTarget.style.boxShadow = '0 4px 20px rgba(218, 54, 51, 0.4)'
-            }}
-          >
-            Respawn
-          </button>
         </div>
       )}
       {gameTime() !== null && (

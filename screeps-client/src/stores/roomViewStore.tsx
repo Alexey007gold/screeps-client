@@ -191,23 +191,62 @@ export function modeHint(): JSX.Element | null {
 
   if (worldStatusValue === 'empty') {
     return (
-      <div style={{ 'text-align': 'center' }}>
+      <div style={{ 'text-align': 'center', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '6px' }}>
         <div style={{ 'font-size': '14px', 'font-weight': 600, color: '#f85149' }}>
           You have no rooms!
         </div>
-        <div style={{ 'font-size': '11px', color: '#8b949e', 'margin-top': '2px' }}>
-          Place a spawn to get started
-        </div>
+        <button
+          onClick={() => {
+            setRoomViewMode('build')
+            setBuildDraft({ structureType: 'spawn', structureName: '' })
+          }}
+          style={{
+            padding: '4px 12px',
+            'border-radius': '4px',
+            border: '1px solid #238636',
+            background: '#1a3a2a',
+            color: '#3fb950',
+            'font-size': '12px',
+            cursor: 'pointer',
+          }}
+        >
+          Place Spawn
+        </button>
       </div>
     )
   }
 
   if (worldStatusValue === 'lost') {
     return (
-      <div style={{ 'text-align': 'center' }}>
+      <div style={{ 'text-align': 'center', display: 'flex', 'flex-direction': 'column', 'align-items': 'center', gap: '6px' }}>
         <div style={{ 'font-size': '14px', 'font-weight': 600, color: '#f85149' }}>
           You lost all your spawns!
         </div>
+        <button
+          onClick={() => {
+            const c = client()
+            if (!c) return
+            c.http.user.respawn()
+              .then(() => {
+                addToast('Respawn successful', 'success')
+                void c.stores.user.refreshWorldStatus()
+              })
+              .catch((err: Error) => {
+                addToast(`Respawn failed: ${err.message}`, 'error')
+              })
+          }}
+          style={{
+            padding: '4px 12px',
+            'border-radius': '4px',
+            border: '1px solid #da3633',
+            background: '#3d1a1a',
+            color: '#f85149',
+            'font-size': '12px',
+            cursor: 'pointer',
+          }}
+        >
+          Respawn
+        </button>
       </div>
     )
   }
