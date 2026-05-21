@@ -229,20 +229,19 @@ export function modeHint(): JSX.Element | null {
     const ctrlHint = ' — Ctrl+click to remove construction sites'
 
     if (!type) {
-      return <span>{pending ? `Confirm position${ctrlHint}` : `Choose position${ctrlHint}`}</span>
+      return <span>{`Select structure type, then click to build${ctrlHint}`}</span>
     }
 
     const levels = CONTROLLER_STRUCTURES[type]
     const max = levels?.[level ?? 0] ?? 0
     const current = counts[type] ?? 0
     const display = type.replace(/([A-Z])/g, ' $1').trim()
-    const positionText = pending ? 'Confirm position' : 'Choose position'
 
     if (max === 2500) {
-      return <span>{`${positionText} to build ${display} (${current}/∞)${ctrlHint}`}</span>
+      return <span>{`Click to build ${display} (${current}/∞)${ctrlHint}`}</span>
     }
 
-    return <span>{`${positionText} to build ${display} (${current}/${max})${ctrlHint}`}</span>
+    return <span>{`Click to build ${display} (${current}/${max})${ctrlHint}`}</span>
   }
 
   return null

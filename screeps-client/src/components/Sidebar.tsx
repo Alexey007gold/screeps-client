@@ -3,7 +3,7 @@ import { SelectionList } from '~/components/SelectionList.js'
 import { RoomInfoPanel } from '~/components/RoomInfoPanel.js'
 import { MapInfoPanel } from '~/components/MapInfoPanel.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
-import {flagDraft, roomViewMode, setFlagDraft, pendingTile, buildDraft, setBuildDraft, CONTROLLER_STRUCTURES, confirmBuild} from "~/stores/roomViewStore";
+import {flagDraft, roomViewMode, setFlagDraft, pendingTile, buildDraft, setBuildDraft, CONTROLLER_STRUCTURES} from "~/stores/roomViewStore";
 import { client, userFlags, worldStatus } from '~/stores/clientStore.js'
 import { controllerLevel, structureCounts } from '~/stores/roomDataStore.js'
 
@@ -350,7 +350,7 @@ function FlagForm() {
     )
 }
 
-function BuildPanel(props: { room: string; shard: string | null }) {
+function BuildPanel() {
     const structureTypes = Object.keys(CONTROLLER_STRUCTURES)
 
     const getMaxForLevel = (type: string, rcl: number): number => {
@@ -371,10 +371,6 @@ function BuildPanel(props: { room: string; shard: string | null }) {
 
     const handleSelectType = (type: string) => {
         setBuildDraft({ structureType: type, structureName: '' })
-    }
-
-    const handleBuild = () => {
-        confirmBuild(props.room, props.shard)
     }
 
     return (
@@ -406,7 +402,7 @@ function BuildPanel(props: { room: string; shard: string | null }) {
                         if (status === 'empty') return 'World is empty — place a spawn to claim this room.'
                         if (status === 'lost') return 'You lost all your spawns — respawn to continue.'
                         return controllerLevel() != null
-                            ? `RCL ${controllerLevel()} — Select a structure type below, then click a tile in the room.`
+                            ? `RCL ${controllerLevel()} — Select a structure type and click a tile to build.`
                             : 'No controller — roads and containers only.'
                     })()}
                 </div>
@@ -476,48 +472,21 @@ function BuildPanel(props: { room: string; shard: string | null }) {
                 </div>
 
                 <div style={{ 'margin-top': '8px', padding: '0 4px' }}>
-                    <Show when={pendingTile()} fallback={
-                        <div style={{ color: '#484f58', 'font-style': 'italic', 'font-size': '12px' }}>
-                            {buildDraft().structureType
-                                ? 'Click a tile in the room to place construction site.'
-                                : 'Select a structure type, then click a tile.'}
-                        </div>
-                    }>
-                        {(p) => (
-                            <div style={{ color: '#8b949e', 'font-size': '11px' }}>
-                                Pending at: x={p().tx}, y={p().ty}
-                            </div>
-                        )}
-                    </Show>
-
-                    <Show when={buildDraft().structureType && pendingTile()}>
-                        <button
-                            onClick={handleBuild}
-                            style={{
-                                'margin-top': '8px',
-                                width: '100%',
-                                padding: '6px 12px',
-                                'border-radius': '4px',
-                                border: '1px solid #238636',
-                                background: '#1a3a2a',
-                                color: '#3fb950',
-                                'font-size': '12px',
-                                cursor: 'pointer',
-                            }}
-                        >
-                            Build {buildDraft().structureType.replace(/([A-Z])/g, ' $1').trim()}
-                        </button>
-                    </Show>
+                    <div style={{ color: '#484f58', 'font-style': 'italic', 'font-size': '12px' }}>
+                        {buildDraft().structureType
+                            ? 'Click a tile in the room to build.'
+                            : 'Select a structure type, then click a tile.'}
+                    </div>
                 </div>
         </div>
     )
 }
 
-function RoomModePanel(props: { room: string; shard: string | null }) {
+function RoomModePanel() {
     return (
         <Show when={roomViewMode() === 'flag'} fallback={
             <Show when={roomViewMode() === 'build'} fallback={<SelectionList />}>
-                <BuildPanel room={props.room} shard={props.shard} />
+                <BuildPanel />
             </Show>
         }>
             <FlagForm />
@@ -634,7 +603,7 @@ export function Sidebar(props: SidebarProps) {
 
         <Show
           when={props.mapMode}
-          fallback={<RoomModePanel room={props.room ?? '—'} shard={props.shard ?? null} />}
+          fallback={<RoomModePanel />}
         >
           <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
             <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />
