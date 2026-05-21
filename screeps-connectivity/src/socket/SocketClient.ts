@@ -40,7 +40,11 @@ export class SocketClient {
 
   connect(token: string): Promise<void> {
     this.logger.log('connect', this.wsUrl)
-    this._intentionalClose = false
+    // Note: do NOT reset _intentionalClose here. If disconnect() ran while a
+    // reconnect attempt was awaiting this connect(), resetting the flag would
+    // silently re-open the socket the user already asked to close. The flag
+    // is only cleared on an explicit external connect (see below).
+    if (!this.reconnecting) this._intentionalClose = false
     this.token = token
     this.authSub?.dispose()
     this.authSub = null
@@ -165,13 +169,19 @@ export class SocketClient {
     if (!this.token) { this.reconnecting = false; return }
     this.reconnecting = true
     let retries = 0
-    while (retries < this.MAX_RETRIES && this.reconnecting) {
+    while (retries < this.MAX_RETRIES && this.reconnecting && !this._intentionalClose) {
       const delay = Math.min(Math.pow(2, retries) * 100, this.MAX_DELAY_MS)
       this.logger.log(`reconnect attempt ${retries + 1}/${this.MAX_RETRIES} in ${delay}ms`)
       await new Promise(r => setTimeout(r, delay))
-      if (!this.reconnecting) return
+      if (!this.reconnecting || this._intentionalClose) return
       try {
         await this.connect(this.token!)
+        // disconnect() may have run while connect() was in flight — honor it
+        if (this._intentionalClose) {
+          this.ws?.close()
+          this.ws = null
+          return
+        }
         for (const channel of this.subs.keys()) {
           this.rawSend(`subscribe ${channel}`)
         }
@@ -181,7 +191,7 @@ export class SocketClient {
       }
     }
     this.reconnecting = false
-    if (retries >= this.MAX_RETRIES) {
+    if (retries >= this.MAX_RETRIES && !this._intentionalClose) {
       this.emit('socket:error', new Error(`WebSocket reconnection failed after ${this.MAX_RETRIES} retries`))
     }
   }
