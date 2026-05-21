@@ -5,10 +5,12 @@ import type { ServerVersion, ShardInfo, WorldInfo } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
+import type { Subscription } from '../subscription/index.js'
 
 export class ServerStore extends TypedStore<ServerStoreEvents> {
   private readonly http: HttpClient
   private readonly cache: Cache
+  private readonly socketSubs: Subscription[] = []
   private _version: ServerVersion | null = null
   get versionInfo(): ServerVersion | null { return this._version }
   get isPrivateServer(): boolean | null {
@@ -23,16 +25,22 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
     this.http = http
     this.cache = cache
 
-    socket.on('connected', () => {
+    this.socketSubs.push(socket.on('connected', () => {
       this.emit('server:connected', {})
-    })
-    socket.on('disconnected', (data) => {
+    }))
+    this.socketSubs.push(socket.on('disconnected', (data) => {
       const d = data as { willReconnect: boolean }
       this.emit('server:disconnected', { willReconnect: d.willReconnect })
-    })
-    socket.on('socket:error', (data) => {
+    }))
+    this.socketSubs.push(socket.on('socket:error', (data) => {
       this.emit('server:error', { error: data instanceof Error ? data : new Error(String(data)) })
-    })
+    }))
+  }
+
+  /** Release socket listeners owned by this store. Idempotent. */
+  destroy(): void {
+    for (const sub of this.socketSubs) sub.dispose()
+    this.socketSubs.length = 0
   }
 
   async version(): Promise<ServerVersion> {
