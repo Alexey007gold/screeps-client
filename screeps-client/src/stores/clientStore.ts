@@ -113,7 +113,7 @@ export async function connect(opts: {
 
     screepsClient.http.on('http:tokenRefresh', ({ token }) => {
       log('token refreshed')
-      localStorage.setItem('screeps:token', token)
+      sessionStorage.setItem('screeps:token', token)
     })
 
     screepsClient.http.on('http:error', ({ method, path, error }) => {
@@ -170,10 +170,9 @@ export async function connect(opts: {
       setWorldBounds(info)
       log(`world: ${info.width}x${info.height} x[${info.minX},${info.maxX}] y[${info.minY},${info.maxY}]`)
     }).catch(() => {})
-    // Persist credentials for auto-reconnect on reload
-    localStorage.setItem('screeps:url', opts.url)
+    sessionStorage.setItem('screeps:url', opts.url)
     if (screepsClient.http.token) {
-      localStorage.setItem('screeps:token', screepsClient.http.token)
+      sessionStorage.setItem('screeps:token', screepsClient.http.token)
     }
     if (opts.serverPassword) {
       sessionStorage.setItem('screeps:serverPassword', opts.serverPassword)
@@ -191,8 +190,8 @@ export async function connect(opts: {
 }
 
 export async function tryAutoConnect(): Promise<void> {
-  const url = isEmbedded() ? embeddedServerUrl() : localStorage.getItem('screeps:url')
-  const token = localStorage.getItem('screeps:token')
+  const url = isEmbedded() ? embeddedServerUrl() : sessionStorage.getItem('screeps:url')
+  const token = sessionStorage.getItem('screeps:token')
   if (!url || !token) return
 
   const serverPassword = sessionStorage.getItem('screeps:serverPassword') ?? undefined
@@ -205,7 +204,7 @@ export async function tryAutoConnect(): Promise<void> {
     }
   } catch {
     log('auto-connect failed — clearing stored token')
-    localStorage.removeItem('screeps:token')
+    sessionStorage.removeItem('screeps:token')
   }
 }
 
@@ -226,6 +225,7 @@ export function disconnect(): void {
   setUserFlags({})
   setWorldStatus(null)
   resetTickTracking()
-  localStorage.removeItem('screeps:token')
+  sessionStorage.removeItem('screeps:token')
+  sessionStorage.removeItem('screeps:url')
   sessionStorage.removeItem('screeps:serverPassword')
 }

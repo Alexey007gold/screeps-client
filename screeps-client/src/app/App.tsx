@@ -12,7 +12,7 @@ function guestAutoConnectUrl(): string | null {
   const param = new URLSearchParams(window.location.search).get('guest')
   if (param === null) return null
   if (param.startsWith('http')) return param
-  return localStorage.getItem('screeps:url') ?? 'https://screeps.com'
+  return sessionStorage.getItem('screeps:url') ?? 'https://screeps.com'
 }
 
 export function App() {
