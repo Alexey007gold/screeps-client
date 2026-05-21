@@ -15,6 +15,9 @@ import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import type { RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft, modeHint, overlayAction, clearOverlayAction, buildDraft, confirmBuild, resetRoomViewMode} from '~/stores/roomViewStore';
+import { createLogger } from '~/utils/log.js'
+
+const { log, error } = createLogger('room')
 
 interface RoomViewerProps {
   room: string
@@ -59,7 +62,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const room = props.room
     const shard = props.shard
 
-    console.log(`[room] navigate → ${room} (shard=${shard ?? 'default'})`)
+    log(`navigate → ${room} (shard=${shard ?? 'default'})`)
     setTerrain(null)
     setObjectState(null)
     setVisualState('')
@@ -76,45 +79,32 @@ export function RoomViewer(props: RoomViewerProps) {
     c.stores.room.terrain(room, shard)
       .then((t) => {
         if (!terrainCancelled) {
-          console.log(`[room] terrain loaded — ${room}`)
+          log(`terrain loaded — ${room}`)
           setTerrain({ room, data: t })
         }
       })
-      .catch((err) => { if (!terrainCancelled) console.error(`[room] terrain load failed for ${room}:`, err) })
+      .catch((err) => { if (!terrainCancelled) error(`terrain load failed for ${room}:`, err) })
 
     group.add(c.stores.room.subscribe(room, shard))
     group.add(c.stores.room.on('room:error', (data) => {
       addToast(`Room subscription error (${data.room}): ${data.message}`, 'error', 8000)
     }))
     group.add(c.stores.room.on('room:update', (data) => {
-      // Use for...in to count keys without allocating an array, avoiding memory allocations on hot path
+      // Single for...in pass: count objects, sum structures, extract controller owner —
+      // avoids allocating Object.values() / Object.entries() arrays on the hot path.
       let objectCount = 0
-      // Structure counts for build mode: track actual structures + construction sites
       const structCounts: Record<string, number> = {}
       let ctrlLevel = 0
-
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      for (const _k in data.objects) { objectCount++ }
-
-      if (!data.diff) {
-        console.log(`[room] objects loaded — ${room}: ${objectCount} objects, tick=${data.gameTime}`)
-      }
-      setObjectState({ objects: data.objects, diff: data.diff, users: data.users })
-      setVisualState(data.visual)
-      setGameTime(data.gameTime ?? null)
-      recordGameTime(data.gameTime)
-      setRoomObjectCount(objectCount)
-
-      // Extract room owner from controller and count structures
       let owner: { userId: string; username: string } | null = null
-      for (const obj of Object.values(data.objects)) {
+
+      for (const id in data.objects) {
+        objectCount++
+        const obj = data.objects[id]
         if (!obj) continue
 
-        // Count structures by type
         const objType = obj.type
         if (typeof objType === 'string') {
           if (objType === 'constructionSite') {
-            // Count construction sites by their structureType
             const structureType = obj.structureType
             if (typeof structureType === 'string') {
               structCounts[structureType] = (structCounts[structureType] || 0) + 1
@@ -124,7 +114,6 @@ export function RoomViewer(props: RoomViewerProps) {
           }
         }
 
-        // Extract controller info
         if (objType === 'controller' && typeof obj.user === 'string') {
           const userId = obj.user
           const username = data.users?.[userId]?.username ?? userId
@@ -134,13 +123,22 @@ export function RoomViewer(props: RoomViewerProps) {
           }
         }
       }
+
+      if (!data.diff) {
+        log(`objects loaded — ${room}: ${objectCount} objects, tick=${data.gameTime}`)
+      }
+      setObjectState({ objects: data.objects, diff: data.diff, users: data.users })
+      setVisualState(data.visual)
+      setGameTime(data.gameTime ?? null)
+      recordGameTime(data.gameTime)
+      setRoomObjectCount(objectCount)
       setRoomOwner(owner)
       setControllerLevel(ctrlLevel || null)
       setStructureCounts(structCounts)
     }))
 
     onCleanup(() => {
-      console.log(`[room] leaving ${room}`)
+      log(`leaving ${room}`)
       terrainCancelled = true
       group.dispose()
     })
@@ -172,7 +170,7 @@ export function RoomViewer(props: RoomViewerProps) {
     // Apply terrain immediately if it arrived before this clear ran
     const t = untrack(terrain)
     if (t && t.room === props.room) {
-      console.log(`[room] terrain applied immediately (pre-loaded) — ${props.room}`)
+      log(`terrain applied immediately (pre-loaded) — ${props.room}`)
       terrainLayerRef = createTerrainLayer(t.data)
       r.world.addChildAt(terrainLayerRef, 0)
       r.bringNavOverlayToTop()
@@ -196,7 +194,7 @@ export function RoomViewer(props: RoomViewerProps) {
         !bounds || isRoomInWorld(tx, ty, bounds)
 
       const navTo = (target: string) => {
-        console.log(`[room] navigate requested: ${props.room} → ${target}`)
+        log(`navigate requested: ${props.room} → ${target}`)
         nav(target, shard)
       }
 
@@ -244,10 +242,10 @@ export function RoomViewer(props: RoomViewerProps) {
     if (!r || !t || t.room !== props.room) return
 
     if (terrainLayerRef?.parent) {
-      console.log(`[room] terrain already in scene, skipping — ${props.room}`)
+      log(`terrain already in scene, skipping — ${props.room}`)
       return
     }
-    console.log(`[room] terrain applied (async) — ${props.room}`)
+    log(`terrain applied (async) — ${props.room}`)
     terrainLayerRef = createTerrainLayer(t.data)
     r.world.addChildAt(terrainLayerRef, 0)
     r.bringNavOverlayToTop()
@@ -262,7 +260,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const { objects: objs, diff, users } = state
 
     if (!objLayer) {
-      console.log(`[room] object layer created — ${props.room}`)
+      log(`object layer created — ${props.room}`)
       objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge, users)
       objLayer.container.label = 'objects'
       r.world.addChild(objLayer.container)
@@ -301,7 +299,7 @@ export function RoomViewer(props: RoomViewerProps) {
                   clearOverlayAction()
                 })
                 .catch((err) => {
-                  console.error('[room] move flag failed:', err)
+                  error('move flag failed:', err)
                   addToast(`Failed to move flag "${name}"`, 'error')
                   clearOverlayAction()
                 })
@@ -335,9 +333,9 @@ export function RoomViewer(props: RoomViewerProps) {
                     r.hoverLayer.clearPendingTile()
                     c.http.game.genUniqueFlagName()
                         .then((res) => setFlagDraft(prev => ({ ...prev, name: res.name })))
-                        .catch((err) => console.error('[room] gen unique flag name failed:', err))
+                        .catch((err) => error('gen unique flag name failed:', err))
                   })
-                  .catch((err) => console.error('[room] create flag failed:', err))
+                  .catch((err) => error('create flag failed:', err))
               return
             }
 
@@ -364,7 +362,7 @@ export function RoomViewer(props: RoomViewerProps) {
                     r.hoverLayer.clearPendingTile()
                   })
                   .catch((err) => {
-                    console.error('[room] remove construction sites failed:', err)
+                    error('remove construction sites failed:', err)
                     addToast(`Failed to remove construction sites: ${err.message}`, 'error')
                   })
                 return

@@ -3,6 +3,9 @@ import { createEffect, createRoot, createSignal, type JSX } from 'solid-js'
 import { controllerLevel, structureCounts } from './roomDataStore.js'
 import { client, worldStatus } from './clientStore.js'
 import { addToast } from './toastStore.js'
+import { createLogger } from '~/utils/log.js'
+
+const { log, warn, error } = createLogger('build')
 
 export type RoomViewMode = 'view' | 'flag' | 'build'
 
@@ -119,12 +122,12 @@ export function confirmBuild(room: string, shard: string | null): void {
   const pending = pendingTile()
 
   if (!c || !draft.structureType || !pending) {
-    console.warn('[build] missing requirements', { hasClient: !!c, structureType: draft.structureType, pending })
+    warn('missing requirements', { hasClient: !!c, structureType: draft.structureType, pending })
     return
   }
 
   if (worldStatus() === 'empty' && draft.structureType === 'spawn') {
-    console.log('[build] placing spawn', {
+    log('placing spawn', {
       room,
       x: pending.tx,
       y: pending.ty,
@@ -140,19 +143,19 @@ export function confirmBuild(room: string, shard: string | null): void {
       shard ?? undefined
     )
       .then(() => {
-        console.log('[build] spawn placed')
+        log('spawn placed')
         addToast('Spawn placed successfully', 'success')
         clearPendingTile()
         return c.stores.user.refreshWorldStatus()
       })
       .catch((err: Error) => {
-        console.error('[build] place spawn failed:', err)
+        error('place spawn failed:', err)
         addToast(`Failed to place spawn: ${err.message}`, 'error')
       })
     return
   }
 
-  console.log('[build] creating construction site', {
+  log('creating construction site', {
     room,
     x: pending.tx,
     y: pending.ty,
@@ -170,12 +173,12 @@ export function confirmBuild(room: string, shard: string | null): void {
     shard ?? undefined
   )
     .then(() => {
-      console.log('[build] construction site created')
+      log('construction site created')
       addToast(`Construction site for ${draft.structureType} created`, 'success')
       clearPendingTile()
     })
     .catch((err: Error) => {
-      console.error('[build] create construction failed:', err)
+      error('create construction failed:', err)
       addToast(`Failed to create construction site: ${err.message}`, 'error')
     })
 }

@@ -2,7 +2,10 @@ import { For, Show, createSignal, createEffect } from 'solid-js'
 import { selection, deselectItem } from '~/stores/selectionStore.js'
 import { client, gameTime } from '~/stores/clientStore.js'
 import { overlayAction, setOverlayAction } from '~/stores/roomViewStore.js'
+import { createLogger } from '~/utils/log.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
+
+const { log, error } = createLogger('SelectionList')
 
 // Mirror the palette from ObjectLayer so colors match
 const OBJECT_COLORS: Record<string, string> = {
@@ -241,10 +244,10 @@ function FlagDetails(props: { item: SelectedObject }) {
     if (!c) return
     const primary = draftColor()
     const secondary = draftSecondaryColor()
-    console.log(`[SelectionList] changeFlagColor: name="${name()}" room=${room()} primary=${primary} secondary=${secondary}`)
+    log(`changeFlagColor: name="${name()}" room=${room()} primary=${primary} secondary=${secondary}`)
     c.http.game.changeFlagColor(room(), name(), primary, secondary)
-      .then(() => console.log(`[SelectionList] changeFlagColor OK`))
-      .catch((err: Error) => console.error(`[SelectionList] changeFlagColor FAILED:`, err))
+      .then(() => log('changeFlagColor OK'))
+      .catch((err: Error) => error('changeFlagColor FAILED:', err))
   }
 
   const isMovingThisFlag = () => {

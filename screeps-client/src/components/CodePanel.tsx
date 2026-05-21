@@ -6,6 +6,9 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from 'codemirror'
 import { client } from '~/stores/clientStore.js'
 import { addToast } from '~/stores/toastStore.js'
+import { createLogger } from '~/utils/log.js'
+
+const { error } = createLogger('code')
 
 interface Branch {
   _id: string
@@ -64,7 +67,7 @@ export function CodePanel(props: { onClose: () => void }) {
         if (active) setSelectedBranch(active.branch)
       })
       .catch((err) => {
-        console.error('[code] branches failed:', err)
+        error('branches failed:', err)
         addToast('Failed to load branches', 'error')
       })
   })
@@ -84,7 +87,7 @@ export function CodePanel(props: { onClose: () => void }) {
         setActiveModule(Object.keys(mods)[0] ?? '')
       })
       .catch((err) => {
-        console.error('[code] get failed:', err)
+        error('get failed:', err)
         addToast('Failed to load code', 'error')
       })
       .finally(() => setLoading(false))
@@ -101,7 +104,7 @@ export function CodePanel(props: { onClose: () => void }) {
         setDirty(false)
       })
       .catch((err) => {
-        console.error('[code] set failed:', err)
+        error('set failed:', err)
         addToast('Failed to save code', 'error')
       })
       .finally(() => setSaving(false))

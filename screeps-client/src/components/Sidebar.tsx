@@ -6,8 +6,11 @@ import type { RoomInfo } from '~/components/MapViewer.js'
 import {flagDraft, roomViewMode, setFlagDraft, pendingTile, buildDraft, setBuildDraft, CONTROLLER_STRUCTURES} from "~/stores/roomViewStore";
 import { client, userFlags, worldStatus } from '~/stores/clientStore.js'
 import { controllerLevel, structureCounts } from '~/stores/roomDataStore.js'
+import { createLogger } from '~/utils/log.js'
 
 import { FLAG_COLORS as FLAG_COLOR_HEXES } from '~/renderer/colors.js'
+
+const { error } = createLogger('flag')
 
 const DENSITY_LABELS = ['Low', 'Medium', 'High', 'Ultra'] as const
 
@@ -121,7 +124,7 @@ function FlagForm() {
                 setNameError(null)
             })
             .catch((err) => {
-                console.error('[flag] gen unique name failed:', err)
+                error('gen unique name failed:', err)
             })
     })
 

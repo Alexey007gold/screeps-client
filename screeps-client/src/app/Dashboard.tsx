@@ -16,6 +16,8 @@ import { setRoomViewMode } from '~/stores/roomViewStore.js'
 
 import { parseRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
+import { isTypingTarget } from '~/utils/dom.js'
+import { LS, getStr, setStr, removeLocal, getNum, setNum } from '~/utils/storage.js'
 
 function parseRoomUrl(): { room: string | null; shard: string | null } {
   const base = basePath()
@@ -43,8 +45,8 @@ function parseMapUrl(): { shard: string | null } | null {
 
 export function Dashboard() {
   const urlState = parseRoomUrl()
-  const [room, setRoom] = createSignal(urlState.room ?? localStorage.getItem('screeps:room') ?? 'W1N1')
-  const [shard, setShard] = createSignal<string | null>(urlState.shard ?? localStorage.getItem('screeps:shard'))
+  const [room, setRoom] = createSignal(urlState.room ?? getStr(LS.room) ?? 'W1N1')
+  const [shard, setShard] = createSignal<string | null>(urlState.shard ?? getStr(LS.shard))
   const [mapMode, setMapMode] = createSignal(parseMapUrl() !== null)
 
   const [showSettings, setShowSettings] = createSignal(false)
@@ -60,16 +62,16 @@ export function Dashboard() {
   const [mapOriginRoom, setMapOriginRoom] = createSignal<string | undefined>(undefined)
   const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
-  const savedMapZoom = localStorage.getItem('screeps:mapZoom')
+  const savedMapZoom = getStr(LS.mapZoom)
   const [mapZoom, setMapZoom] = createSignal<number | null>(savedMapZoom ? Number(savedMapZoom) : null)
   const [mapSubsActive, setMapSubsActive] = createSignal<boolean | null>(null)
   const [canBack, setCanBack] = createSignal(false)
   const [canForward, setCanForward] = createSignal(false)
 
-  const [sidebarWidth, setSidebarWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
-  const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(Number(localStorage.getItem('screeps:sidebarWidth')) || 260)
-  const [consoleHeight, setConsoleHeight] = createSignal(Number(localStorage.getItem('screeps:consoleHeight')) || 220)
-  const [consolePrevHeight, setConsolePrevHeight] = createSignal(Number(localStorage.getItem('screeps:consoleHeight')) || 220)
+  const [sidebarWidth, setSidebarWidth] = createSignal(getNum(LS.sidebarWidth, 260))
+  const [sidebarPrevWidth, setSidebarPrevWidth] = createSignal(getNum(LS.sidebarWidth, 260))
+  const [consoleHeight, setConsoleHeight] = createSignal(getNum(LS.consoleHeight, 220))
+  const [consolePrevHeight, setConsolePrevHeight] = createSignal(getNum(LS.consoleHeight, 220))
   const [sidebarDragging, setSidebarDragging] = createSignal(false)
   const [consoleDragging, setConsoleDragging] = createSignal(false)
 
@@ -107,7 +109,7 @@ export function Dashboard() {
 
     const onUp = () => {
       setSidebarDragging(false)
-      localStorage.setItem('screeps:sidebarWidth', String(sidebarWidth()))
+      setNum(LS.sidebarWidth, sidebarWidth())
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -129,7 +131,7 @@ export function Dashboard() {
 
     const onUp = () => {
       setConsoleDragging(false)
-      localStorage.setItem('screeps:consoleHeight', String(consoleHeight()))
+      setNum(LS.consoleHeight, consoleHeight())
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
@@ -193,18 +195,16 @@ export function Dashboard() {
         setSelectedRoomInfo(null)
         setCanBack(nav.canBack())
         setCanForward(nav.canForward())
-        localStorage.setItem('screeps:room', state.room)
-        if (state.shard) localStorage.setItem('screeps:shard', state.shard)
-        else localStorage.removeItem('screeps:shard')
+        setStr(LS.room, state.room)
+        if (state.shard) setStr(LS.shard, state.shard)
+        else removeLocal(LS.shard)
         history.pushState(null, '', buildRoomUrl(state.room, state.shard))
       })
       onCleanup(() => navSub.dispose())
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName ?? ''
-      const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+      if (isTypingTarget(e.target)) return
       if (e.key === 'o' || e.key === 'O') {
         setShowCode((v) => !v)
         setShowSettings(false)
@@ -369,7 +369,7 @@ export function Dashboard() {
                       onSelectedRoomChanged={setSelectedRoomInfo}
                       onZoomChanged={(z) => {
                         setMapZoom(z)
-                        localStorage.setItem('screeps:mapZoom', String(z))
+                        setNum(LS.mapZoom, z)
                       }}
                       onSubscriptionStateChanged={setMapSubsActive}
                     />
@@ -449,7 +449,7 @@ export function Dashboard() {
                     onSelectedRoomChanged={setSelectedRoomInfo}
                     onZoomChanged={(z) => {
                       setMapZoom(z)
-                      localStorage.setItem('screeps:mapZoom', String(z))
+                      setNum(LS.mapZoom, z)
                     }}
                     onSubscriptionStateChanged={setMapSubsActive}
                   />

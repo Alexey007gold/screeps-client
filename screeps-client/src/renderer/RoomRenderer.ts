@@ -39,14 +39,12 @@ export class RoomRenderer {
   }
 
   bringNavOverlayToTop(): void {
-    if (this.navOverlay.parent === this.world) {
-      this.world.removeChild(this.navOverlay)
-      this.world.addChild(this.navOverlay)
-    }
     // Keep hover layer just below nav overlay
     if (this.hoverLayer.container.parent === this.world) {
       this.world.removeChild(this.hoverLayer.container)
       this.world.addChild(this.hoverLayer.container)
+    }
+    if (this.navOverlay.parent === this.world) {
       this.world.removeChild(this.navOverlay)
       this.world.addChild(this.navOverlay)
     }

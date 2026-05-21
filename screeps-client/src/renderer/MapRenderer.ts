@@ -8,6 +8,9 @@ import {
   TERRAIN_WALL, TERRAIN_ROAD, TERRAIN_BORDER,
   OBJ_GOLD, OBJ_BLUE, OBJ_CYAN, OBJ_ORANGE,
 } from '~/renderer/colors.js'
+import { createLogger } from '~/utils/log.js'
+
+const { warn } = createLogger('MapRenderer')
 import type { MapOverlayMode } from '~/stores/mapOverlayStore.js'
 
 export const MAP_TILE_SIZE = 3
@@ -248,11 +251,11 @@ export class MapRenderer {
       // Save to Cache API asynchronously (don't block)
       imageBitmapToBlob(bitmap).then(blob => {
         saveTerrainCacheBlob(shard, roomName, lod, blob)
-      }).catch(err => console.warn('Failed to save to terrainCache:', err))
+      }).catch(err => warn('failed to save to terrainCache:', err))
 
       return bitmap
     } catch (e) {
-      console.warn('Error getting terrain bitmap:', e)
+      warn('error getting terrain bitmap:', e)
       return null
     }
   }
@@ -481,7 +484,7 @@ export class MapRenderer {
       this.applyBadgeSize(entry, this.zoom)
       this.applyOverlayMode(entry)
     } catch (err) {
-      console.warn('[MapRenderer] failed to load badge for', roomName, err)
+      warn('failed to load badge for', roomName, err)
     }
   }
 
@@ -762,7 +765,7 @@ export class MapRenderer {
     try {
       this.app.destroy(false, { children: true, texture: true, context: true })
     } catch (e) {
-      console.warn('[MapRenderer] destroy error (ignored):', e)
+      warn('destroy error (ignored):', e)
     }
   }
 

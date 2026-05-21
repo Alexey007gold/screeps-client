@@ -3,6 +3,8 @@ import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } f
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus } from 'screeps-connectivity'
 import { addToast } from './toastStore.js'
 import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
+import { createLogger } from '~/utils/log.js'
+import { SS, getSession, setSession, removeSession } from '~/utils/storage.js'
 
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error'
@@ -15,9 +17,7 @@ export interface UserFlag {
   secondaryColor?: number
 }
 
-const log = import.meta.env.DEV
-  ? (...args: unknown[]) => console.log('[client]', ...args)
-  : () => {}
+const { log } = createLogger('client')
 
 const [client, setClient] = createSignal<ScreepsClient | null>(null)
 const [status, setStatus] = createSignal<ConnectionStatus>('idle')
@@ -113,7 +113,7 @@ export async function connect(opts: {
 
     screepsClient.http.on('http:tokenRefresh', ({ token }) => {
       log('token refreshed')
-      sessionStorage.setItem('screeps:token', token)
+      setSession(SS.token, token)
     })
 
     screepsClient.http.on('http:error', ({ method, path, error }) => {
@@ -170,14 +170,14 @@ export async function connect(opts: {
       setWorldBounds(info)
       log(`world: ${info.width}x${info.height} x[${info.minX},${info.maxX}] y[${info.minY},${info.maxY}]`)
     }).catch(() => {})
-    sessionStorage.setItem('screeps:url', opts.url)
+    setSession(SS.url, opts.url)
     if (screepsClient.http.token) {
-      sessionStorage.setItem('screeps:token', screepsClient.http.token)
+      setSession(SS.token, screepsClient.http.token)
     }
     if (opts.serverPassword) {
-      sessionStorage.setItem('screeps:serverPassword', opts.serverPassword)
+      setSession(SS.serverPassword, opts.serverPassword)
     } else {
-      sessionStorage.removeItem('screeps:serverPassword')
+      removeSession(SS.serverPassword)
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -190,11 +190,11 @@ export async function connect(opts: {
 }
 
 export async function tryAutoConnect(): Promise<void> {
-  const url = isEmbedded() ? embeddedServerUrl() : sessionStorage.getItem('screeps:url')
-  const token = sessionStorage.getItem('screeps:token')
+  const url = isEmbedded() ? embeddedServerUrl() : getSession(SS.url)
+  const token = getSession(SS.token)
   if (!url || !token) return
 
-  const serverPassword = sessionStorage.getItem('screeps:serverPassword') ?? undefined
+  const serverPassword = getSession(SS.serverPassword) ?? undefined
   log(`auto-connect: ${url}`)
   try {
     if (token === 'guest') {
@@ -204,7 +204,7 @@ export async function tryAutoConnect(): Promise<void> {
     }
   } catch {
     log('auto-connect failed — clearing stored token')
-    sessionStorage.removeItem('screeps:token')
+    removeSession(SS.token)
   }
 }
 
@@ -225,7 +225,7 @@ export function disconnect(): void {
   setUserFlags({})
   setWorldStatus(null)
   resetTickTracking()
-  sessionStorage.removeItem('screeps:token')
-  sessionStorage.removeItem('screeps:url')
-  sessionStorage.removeItem('screeps:serverPassword')
+  removeSession(SS.token)
+  removeSession(SS.url)
+  removeSession(SS.serverPassword)
 }

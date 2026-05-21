@@ -5,7 +5,10 @@ import { showMapRoomNames } from '~/stores/settingsStore.js'
 import { mapOverlayMode } from '~/stores/mapOverlayStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
+import { createLogger } from '~/utils/log.js'
 import type { Map2Subscription } from 'screeps-connectivity'
+
+const { log, error } = createLogger('map')
 
 export interface RoomInfo {
   room: string
@@ -81,7 +84,7 @@ export function MapViewer(props: MapViewerProps) {
       .then(terrainMap => {
         for (const [room, terrain] of terrainMap) renderer?.setRoomTerrain(room, terrain)
       })
-      .catch(err => console.error('[map] terrain fetch failed:', err))
+      .catch(err => error('terrain fetch failed:', err))
       .finally(() => { if (terrainQueue.length > 0) terrainTimer = setTimeout(drainTerrain, TERRAIN_BATCH_MS) })
   }
 
@@ -118,9 +121,9 @@ export function MapViewer(props: MapViewerProps) {
           if (lastRoomsEmpty !== isEmpty) {
             lastRoomsEmpty = isEmpty
             if (isEmpty) {
-              console.log('[map] zoom out — too many rooms visible, terrain loading paused')
+              log('zoom out — too many rooms visible, terrain loading paused')
             } else {
-              console.log(`[map] zoom in — terrain loading active, ${rooms.length} rooms visible`)
+              log(`zoom in — terrain loading active, ${rooms.length} rooms visible`)
             }
           }
           setVisibleRooms(rooms)
@@ -158,7 +161,7 @@ export function MapViewer(props: MapViewerProps) {
               if (coord) renderer.centerOn(coord.x, coord.y)
             }
           } catch (err) {
-            console.error('[map] worldStartRoom failed:', err)
+            error('worldStartRoom failed:', err)
           }
         }
       }
@@ -283,10 +286,10 @@ export function MapViewer(props: MapViewerProps) {
     const shard = props.shard
     if (!c) return
     c.stores.server.worldInfo(shard ?? undefined).then((info) => {
-      console.log(`[map] worldInfo(shard=${shard ?? 'none'}) — x: [${info.minX}, ${info.maxX}]  y: [${info.minY}, ${info.maxY}]`)
+      log(`worldInfo(shard=${shard ?? 'none'}) — x: [${info.minX}, ${info.maxX}]  y: [${info.minY}, ${info.maxY}]`)
       setWorldBounds(info)
     }).catch((e) => {
-      console.log(`[map] worldInfo(shard=${shard ?? 'none'}) failed:`, e)
+      log(`worldInfo(shard=${shard ?? 'none'}) failed:`, e)
     })
   })
 
@@ -300,10 +303,10 @@ export function MapViewer(props: MapViewerProps) {
     const bounds = worldBounds()
     if (!bounds) {
       renderer?.clearBounds()
-      console.log(`[map] worldBounds — none (shard: ${props.shard ?? 'none'})`)
+      log(`worldBounds — none (shard: ${props.shard ?? 'none'})`)
     } else {
       renderer?.setBounds(bounds.minX, bounds.maxX, bounds.minY, bounds.maxY)
-      console.log(`[map] worldBounds applied — shard: ${props.shard ?? 'none'}  x: [${bounds.minX}, ${bounds.maxX}]  y: [${bounds.minY}, ${bounds.maxY}]  (fetched for shard: ${bounds.shard ?? 'none'})`)
+      log(`worldBounds applied — shard: ${props.shard ?? 'none'}  x: [${bounds.minX}, ${bounds.maxX}]  y: [${bounds.minY}, ${bounds.maxY}]  (fetched for shard: ${bounds.shard ?? 'none'})`)
     }
   })
 

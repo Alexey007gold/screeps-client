@@ -3,16 +3,16 @@ import { client, status, tryAutoConnect, connect } from '~/stores/clientStore.js
 import { LoginForm } from '~/components/LoginForm.js'
 import { Dashboard } from './Dashboard.js'
 import { isEmbedded } from '~/utils/embedded.js'
+import { createLogger } from '~/utils/log.js'
+import { SS, getSession } from '~/utils/storage.js'
 
-const log = import.meta.env.DEV
-  ? (...args: unknown[]) => console.log('[app]', ...args)
-  : () => {}
+const { log } = createLogger('app')
 
 function guestAutoConnectUrl(): string | null {
   const param = new URLSearchParams(window.location.search).get('guest')
   if (param === null) return null
   if (param.startsWith('http')) return param
-  return sessionStorage.getItem('screeps:url') ?? 'https://screeps.com'
+  return getSession(SS.url) ?? 'https://screeps.com'
 }
 
 export function App() {

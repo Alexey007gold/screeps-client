@@ -1,5 +1,6 @@
 import { onCleanup } from 'solid-js'
 import { parseRoomName, isRoomInWorld } from './roomName.js'
+import { isTypingTarget } from './dom.js'
 import type { WorldInfo } from 'screeps-connectivity'
 
 interface UseRoomNavigationKeysOptions {
@@ -10,9 +11,7 @@ interface UseRoomNavigationKeysOptions {
 
 export function useRoomNavigationKeys(opts: UseRoomNavigationKeysOptions): void {
   const onKeyDown = (e: KeyboardEvent) => {
-    const tag = (e.target as HTMLElement | null)?.tagName ?? ''
-    const editable = (e.target as HTMLElement | null)?.isContentEditable ?? false
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return
+    if (isTypingTarget(e.target)) return
 
     const cur = opts.currentRoom()
     const coord = cur ? parseRoomName(cur) : null

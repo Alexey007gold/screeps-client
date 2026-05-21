@@ -1,3 +1,7 @@
+import { createLogger } from '~/utils/log.js'
+
+const { warn } = createLogger('terrainCache')
+
 const CACHE_NAME = 'screeps-terrain-v1'
 
 export async function getTerrainCacheBlob(shard: string, roomName: string, lod: number): Promise<Blob | null> {
@@ -10,7 +14,7 @@ export async function getTerrainCacheBlob(shard: string, roomName: string, lod: 
       return await res.blob()
     }
   } catch (err) {
-    console.warn('[terrainCache] get failed:', err)
+    warn('get failed:', err)
   }
   return null
 }
@@ -23,7 +27,7 @@ export async function saveTerrainCacheBlob(shard: string, roomName: string, lod:
     const res = new Response(blob)
     await cache.put(req, res)
   } catch (err) {
-    console.warn('[terrainCache] save failed:', err)
+    warn('save failed:', err)
   }
 }
 

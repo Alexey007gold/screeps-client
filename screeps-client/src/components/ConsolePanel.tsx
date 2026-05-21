@@ -3,6 +3,10 @@ import { client } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import type { ConsoleMessage } from 'screeps-connectivity'
 import { showLog, showConsole, toggleShowLog, toggleShowConsole } from '~/stores/consoleStore.js'
+import { createLogger } from '~/utils/log.js'
+import { LS, getNum, setNum } from '~/utils/storage.js'
+
+const { error } = createLogger('console')
 
 interface ConsoleEntry {
   id: number
@@ -15,9 +19,7 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
   const [entries, setEntries] = createSignal<ConsoleEntry[]>([])
   const [input, setInput] = createSignal('')
   const [autoScroll, setAutoScroll] = createSignal(true)
-  const [splitPercent, setSplitPercent] = createSignal(
-    Number(localStorage.getItem('screeps:consoleSplit')) || 50
-  )
+  const [splitPercent, setSplitPercent] = createSignal(getNum(LS.consoleSplit, 50))
   const [splitDragging, setSplitDragging] = createSignal(false)
   // eslint-disable-next-line prefer-const, @typescript-eslint/no-explicit-any, no-unassigned-vars
   let logScrollRef: HTMLDivElement | any
@@ -77,7 +79,7 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
       const percent = ((ev.clientX - rect.left) / rect.width) * 100
       const clamped = Math.max(15, Math.min(85, percent))
       setSplitPercent(clamped)
-      localStorage.setItem('screeps:consoleSplit', String(clamped))
+      setNum(LS.consoleSplit, clamped)
     }
     const onUp = () => {
       setSplitDragging(false)
@@ -96,7 +98,7 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
       await c.http.user.console(input().trim(), props.shard ?? 'shard0')
       setInput('')
     } catch (err) {
-      console.error('Console command failed:', err)
+      error('command failed:', err)
     }
   }
 
