@@ -28,12 +28,16 @@ export type {
   WorldStatus,
   ConsoleMessage,
   ServerVersion,
+  ServerFeature,
+  ScreepsmodAuthFeature,
   ShardInfo,
   WorldInfo,
   Badge,
   VisualStyle,
   RoomVisualEntry,
 } from './types/game.js'
+
+export { fetchServerVersion, getServerFeature, getScreepsmodAuth } from './http/fetchServerVersion.js'
 
 export { badgeToSvg } from './badge/index.js'
 export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus, HttpClientEvents } from './types/events.js'

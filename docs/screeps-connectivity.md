@@ -9,6 +9,7 @@ TypeScript library for connecting to Screeps servers. Handles HTTP, WebSocket, a
 - [Architecture](#architecture)
 - [ScreepsClient](#screepsclient)
 - [Authentication](#authentication)
+- [Pre-login Server Info](#pre-login-server-info)
 - [Stores](#stores)
   - [UserStore](#userstore)
   - [ServerStore](#serverstore)
@@ -230,6 +231,96 @@ new ScreepsClient({
   auth: new TokenAuth({ token: '...' }),
   tokenRefresh: false,
 })
+```
+
+---
+
+## Pre-login Server Info
+
+Before a user logs in, you may want to know what kind of server they are connecting to — whether it supports password registration, which auth providers are available, and what the server's welcome message says. All of this is available from `GET /api/version`, which requires no authentication.
+
+### `fetchServerVersion(url)`
+
+```ts
+import { fetchServerVersion } from 'screeps-connectivity'
+
+const version = await fetchServerVersion('http://my-server:21025')
+console.log(version.serverData.welcomeText)
+console.log(version.serverData.features)
+```
+
+Results are cached in `sessionStorage` for 5 minutes (keyed by server hostname), so repeated calls for the same URL are instant and do not re-fetch.
+
+### `getServerFeature(version, name)`
+
+Extract a named feature entry from the `serverData.features` array:
+
+```ts
+import { getServerFeature } from 'screeps-connectivity'
+import type { ScreepsmodAuthFeature } from 'screeps-connectivity'
+
+const authMod = getServerFeature<ScreepsmodAuthFeature>(version, 'screepsmod-auth')
+// authMod?.authTypes → e.g. ['password', 'steam']
+```
+
+Returns `undefined` if the feature is not present.
+
+### `getScreepsmodAuth(version)`
+
+Convenience wrapper for the `screepsmod-auth` feature — the most common capability check:
+
+```ts
+import { getScreepsmodAuth } from 'screeps-connectivity'
+
+const auth = getScreepsmodAuth(version)
+
+if (auth) {
+  // Server runs screepsmod-auth
+  const supportsPassword = auth.authTypes.includes('password')
+  const supportsSteam   = auth.authTypes.includes('steam')
+  const supportsGithub  = auth.authTypes.includes('github')
+}
+```
+
+### Detecting registration support
+
+`screepsmod-auth` enables registration unless the server is started with a `SERVER_PASSWORD`. To check at runtime, combine `getScreepsmodAuth` with the dedicated `auth.modInfo()` endpoint (requires no auth on screepsmod-auth servers):
+
+```ts
+import { ScreepsClient, GuestAuth, getScreepsmodAuth } from 'screeps-connectivity'
+
+// Step 1: quick pre-login check — is screepsmod-auth installed?
+const version = await fetchServerVersion(url)
+const authMod = getScreepsmodAuth(version)
+
+// Step 2: if yes, query whether registration is currently allowed
+if (authMod) {
+  const http = new ScreepsClient({ url, auth: new GuestAuth() }).http
+  const info = await http.auth.modInfo()   // GET /api/authmod
+  if (info.allowRegistration) {
+    showRegistrationForm()
+  }
+}
+```
+
+### `ServerFeature` types
+
+```ts
+interface ServerFeature {
+  name: string
+  version?: string | number
+}
+
+interface ScreepsmodAuthFeature extends ServerFeature {
+  name: 'screepsmod-auth'
+  version: string
+  authTypes: Array<'password' | 'steam' | 'github' | 'gitlab' | string>
+  menuData?: Array<{
+    section: number
+    start: number
+    item: { label: string; href: string }
+  }>
+}
 ```
 
 ---

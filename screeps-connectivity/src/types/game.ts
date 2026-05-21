@@ -83,15 +83,36 @@ export interface ConsoleMessage {
     error: string[]
 }
 
+export interface ServerFeature {
+    name: string
+    version?: string | number
+}
+
+export interface ScreepsmodAuthFeature extends ServerFeature {
+    name: 'screepsmod-auth'
+    version: string
+    authTypes: Array<'password' | 'steam' | 'github' | 'gitlab' | string>
+    menuData?: Array<{
+        section: number
+        start: number
+        item: { label: string; href: string }
+    }>
+}
+
 export interface ServerVersion {
     ok: number
     package: number
     protocol: number
+    useNativeAuth?: boolean
     users: number
     serverData: {
         historyChunkSize: number
-        features: Array<{ name: string }>
-        shards: string[]
+        features: ServerFeature[]
+        shards: Array<string | null>
+        welcomeText?: string
+        socketUpdateThrottle?: number
+        customObjectTypes?: unknown
+        renderer?: unknown
     }
 }
 
