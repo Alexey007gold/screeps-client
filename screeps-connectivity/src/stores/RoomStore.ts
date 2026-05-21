@@ -126,8 +126,15 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     return result
   }
 
+  /**
+   * Snapshot of the room's current object map, or null if nothing has been
+   * received yet. Returns a shallow copy so callers cannot mutate the
+   * store's internal state. Each tick's update creates fresh object refs,
+   * so the shallow copy is sufficient.
+   */
   objects(room: string, shard: string | null): RoomObjectMap | null {
-    return this.roomObjects.get(`${room}/${shard}`) ?? null
+    const map = this.roomObjects.get(`${room}/${shard}`)
+    return map ? { ...map } : null
   }
 
   /** @deprecated Room objects are delivered via WebSocket on subscription. This endpoint is not supported by all servers and is not needed. */
