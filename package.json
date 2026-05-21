@@ -6,7 +6,8 @@
     "build": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build",
     "build:mod": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-mod-client build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "postinstall": "node scripts/fix-dev-links.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
