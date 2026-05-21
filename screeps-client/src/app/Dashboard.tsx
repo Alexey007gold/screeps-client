@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, onCleanup, onMount, Show, type JSX } from 'solid-js'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { MapViewer } from '~/components/MapViewer.js'
@@ -41,6 +41,51 @@ function parseMapUrl(): { shard: string | null } | null {
   if (!window.location.pathname.startsWith(`${basePath()}/map`)) return null
   const shard = new URLSearchParams(window.location.search).get('shard')
   return { shard }
+}
+
+function HeaderButton(props: {
+  active?: boolean
+  onClick: () => void
+  children: JSX.Element
+}) {
+  return (
+    <button
+      onClick={props.onClick}
+      style={{
+        padding: '6px 14px',
+        'border-radius': '4px',
+        border: `1px solid ${props.active ? '#388bfd' : '#30363d'}`,
+        background: props.active ? '#1f3158' : '#21262d',
+        color: props.active ? '#58a6ff' : '#c9d1d9',
+        'font-size': '13px',
+        cursor: 'pointer',
+        margin: '0 4px',
+      }}
+    >
+      {props.children}
+    </button>
+  )
+}
+
+function NavArrowButton(props: { disabled: boolean; onClick: () => void; children: JSX.Element }) {
+  return (
+    <button
+      disabled={props.disabled}
+      onClick={props.onClick}
+      style={{
+        padding: '6px 10px',
+        'border-radius': '4px',
+        border: '1px solid #30363d',
+        background: '#21262d',
+        color: props.disabled ? '#484f58' : '#c9d1d9',
+        'font-size': '14px',
+        cursor: props.disabled ? 'default' : 'pointer',
+        margin: '0 2px',
+      }}
+    >
+      {props.children}
+    </button>
+  )
 }
 
 export function Dashboard() {
@@ -227,6 +272,87 @@ export function Dashboard() {
     onCleanup(() => window.removeEventListener('keydown', onKeyDown))
   })
 
+  const canvasArea = () => (
+    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <Show when={showSettings()}>
+        <SettingsPanel onClose={() => setShowSettings(false)} />
+      </Show>
+      <Show when={showCode()}>
+        <CodePanel onClose={() => setShowCode(false)} />
+      </Show>
+      <Show
+        when={!mapMode()}
+        fallback={
+          <MapViewer
+            shard={shard()}
+            originRoom={mapOriginRoom()}
+            initialZoom={mapZoom() ?? undefined}
+            onNavigateToRoom={(r) => handleNavigate(r, shard())}
+            onHoveredRoomChanged={setHoveredRoomInfo}
+            onSelectedRoomChanged={setSelectedRoomInfo}
+            onZoomChanged={(z) => {
+              setMapZoom(z)
+              setNum(LS.mapZoom, z)
+            }}
+            onSubscriptionStateChanged={setMapSubsActive}
+          />
+        }
+      >
+        <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
+      </Show>
+    </div>
+  )
+
+  const consoleArea = () => (
+    <Show when={!isGuest()}>
+      <div
+        style={{
+          height: `${consoleHeight()}px`,
+          'border-top': '1px solid #30363d',
+          transition: consoleDragging() ? 'none' : 'height 0.15s ease',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        <div
+          onPointerDown={startConsoleDrag}
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', cursor: 'row-resize', 'z-index': 10, background: '#21262d' }}
+        />
+        <ConsolePanel shard={shard()} isCollapsed={consoleCollapsed()} onToggle={toggleConsole} />
+      </div>
+    </Show>
+  )
+
+  // `animate` is false in widescreen mode — the full-height sidebar should snap
+  // rather than animate width changes alongside other layout shifts.
+  const sidebarArea = (animate: boolean) => (
+    <div
+      style={{
+        width: showCode() ? '0' : `${sidebarWidth()}px`,
+        'border-left': '1px solid #30363d',
+        transition: animate && !(suppressSidebarTransition() || sidebarDragging()) ? 'width 0.15s ease' : 'none',
+        overflow: 'hidden',
+        position: 'relative',
+      }}
+    >
+      <div
+        onPointerDown={startSidebarDrag}
+        style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', cursor: 'col-resize', 'z-index': 10, background: '#21262d' }}
+      />
+      <Sidebar
+        isCollapsed={sidebarCollapsed()}
+        onToggle={toggleSidebar}
+        mapMode={mapMode()}
+        hoveredRoomInfo={hoveredRoomInfo()}
+        selectedRoomInfo={selectedRoomInfo()}
+        room={room()}
+        shard={shard()}
+        mapZoom={mapZoom()}
+        mapSubsActive={mapSubsActive()}
+      />
+    </div>
+  )
+
   return (
     <div
       style={{
@@ -248,83 +374,17 @@ export function Dashboard() {
           />
         </Show>
         <div style={{ flex: 1 }} />
-        <button
-          disabled={!canBack()}
-          onClick={() => client()?.stores.navigation.back()}
-          style={{
-            padding: '6px 10px',
-            'border-radius': '4px',
-            border: '1px solid #30363d',
-            background: '#21262d',
-            color: canBack() ? '#c9d1d9' : '#484f58',
-            'font-size': '14px',
-            cursor: canBack() ? 'pointer' : 'default',
-            margin: '0 2px',
-          }}
-        >
-          ←
-        </button>
-        <button
-          disabled={!canForward()}
-          onClick={() => client()?.stores.navigation.forward()}
-          style={{
-            padding: '6px 10px',
-            'border-radius': '4px',
-            border: '1px solid #30363d',
-            background: '#21262d',
-            color: canForward() ? '#c9d1d9' : '#484f58',
-            'font-size': '14px',
-            cursor: canForward() ? 'pointer' : 'default',
-            margin: '0 2px',
-          }}
-        >
-          →
-        </button>
-        <button
-          onClick={toggleMap}
-          style={{
-            padding: '6px 14px',
-            'border-radius': '4px',
-            border: `1px solid ${mapMode() ? '#388bfd' : '#30363d'}`,
-            background: mapMode() ? '#1f3158' : '#21262d',
-            color: mapMode() ? '#58a6ff' : '#c9d1d9',
-            'font-size': '13px',
-            cursor: 'pointer',
-            margin: '0 4px',
-          }}
-        >
+        <NavArrowButton disabled={!canBack()} onClick={() => client()?.stores.navigation.back()}>←</NavArrowButton>
+        <NavArrowButton disabled={!canForward()} onClick={() => client()?.stores.navigation.forward()}>→</NavArrowButton>
+        <HeaderButton active={mapMode()} onClick={toggleMap}>
           {mapMode() ? 'Room View' : 'Map'}
-        </button>
-        <button
-          onClick={() => { setShowCode((v) => !v); setShowSettings(false) }}
-          style={{
-            padding: '6px 14px',
-            'border-radius': '4px',
-            border: `1px solid ${showCode() ? '#388bfd' : '#30363d'}`,
-            background: showCode() ? '#1f3158' : '#21262d',
-            color: showCode() ? '#58a6ff' : '#c9d1d9',
-            'font-size': '13px',
-            cursor: 'pointer',
-            margin: '0 4px',
-          }}
-        >
+        </HeaderButton>
+        <HeaderButton active={showCode()} onClick={() => { setShowCode((v) => !v); setShowSettings(false) }}>
           Code
-        </button>
-        <button
-          onClick={() => { setShowSettings((v) => !v); setShowCode(false) }}
-          style={{
-            padding: '6px 14px',
-            'border-radius': '4px',
-            border: `1px solid ${showSettings() ? '#388bfd' : '#30363d'}`,
-            background: showSettings() ? '#1f3158' : '#21262d',
-            color: showSettings() ? '#58a6ff' : '#c9d1d9',
-            'font-size': '13px',
-            cursor: 'pointer',
-            margin: '0 4px',
-          }}
-        >
+        </HeaderButton>
+        <HeaderButton active={showSettings()} onClick={() => { setShowSettings((v) => !v); setShowCode(false) }}>
           Settings
-        </button>
+        </HeaderButton>
         <button
           onClick={disconnect}
           style={{
@@ -349,160 +409,20 @@ export function Dashboard() {
           /* Normal mode: console spans full width below canvas+sidebar */
           <div style={{ display: 'flex', 'flex-direction': 'column', flex: 1, overflow: 'hidden' }}>
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-              {/* Canvas */}
-              <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                <Show when={showSettings()}>
-                  <SettingsPanel onClose={() => setShowSettings(false)} />
-                </Show>
-                <Show when={showCode()}>
-                  <CodePanel onClose={() => setShowCode(false)} />
-                </Show>
-                <Show
-                  when={!mapMode()}
-                  fallback={
-                    <MapViewer
-                      shard={shard()}
-                      originRoom={mapOriginRoom()}
-                      initialZoom={mapZoom() ?? undefined}
-                      onNavigateToRoom={(r) => handleNavigate(r, shard())}
-                      onHoveredRoomChanged={setHoveredRoomInfo}
-                      onSelectedRoomChanged={setSelectedRoomInfo}
-                      onZoomChanged={(z) => {
-                        setMapZoom(z)
-                        setNum(LS.mapZoom, z)
-                      }}
-                      onSubscriptionStateChanged={setMapSubsActive}
-                    />
-                  }
-                >
-                  <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
-                </Show>
-              </div>
-              {/* Sidebar */}
-              <div
-                style={{
-                  width: showCode() ? '0' : `${sidebarWidth()}px`,
-                  'border-left': '1px solid #30363d',
-                  transition: suppressSidebarTransition() || sidebarDragging() ? 'none' : 'width 0.15s ease',
-                  overflow: 'hidden',
-                  position: 'relative',
-                }}
-              >
-                <div
-                  onPointerDown={startSidebarDrag}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', cursor: 'col-resize', 'z-index': 10, background: '#21262d' }}
-                />
-                <Sidebar
-                  isCollapsed={sidebarCollapsed()}
-                  onToggle={toggleSidebar}
-                  mapMode={mapMode()}
-                  hoveredRoomInfo={hoveredRoomInfo()}
-                  selectedRoomInfo={selectedRoomInfo()}
-                  room={room()}
-                  shard={shard()}
-                  mapZoom={mapZoom()}
-                  mapSubsActive={mapSubsActive()}
-                />
-              </div>
+              {canvasArea()}
+              {sidebarArea(true)}
             </div>
-            {/* Console — full width */}
-            <Show when={!isGuest()}>
-              <div
-                style={{
-                  height: `${consoleHeight()}px`,
-                  'border-top': '1px solid #30363d',
-                  transition: consoleDragging() ? 'none' : 'height 0.15s ease',
-                  overflow: 'hidden',
-                  position: 'relative',
-                }}
-              >
-                <div
-                  onPointerDown={startConsoleDrag}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', cursor: 'row-resize', 'z-index': 10, background: '#21262d' }}
-                />
-                <ConsolePanel shard={shard()} isCollapsed={consoleCollapsed()} onToggle={toggleConsole} />
-              </div>
-            </Show>
+            {consoleArea()}
           </div>
         }
       >
         {/* Widescreen mode: sidebar spans full height, console below canvas only */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ display: 'flex', 'flex-direction': 'column', flex: 1, overflow: 'hidden' }}>
-            {/* Canvas */}
-            <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-              <Show when={showSettings()}>
-                <SettingsPanel onClose={() => setShowSettings(false)} />
-              </Show>
-              <Show when={showCode()}>
-                <CodePanel onClose={() => setShowCode(false)} />
-              </Show>
-              <Show
-                when={!mapMode()}
-                fallback={
-                  <MapViewer
-                    shard={shard()}
-                    originRoom={mapOriginRoom()}
-                    initialZoom={mapZoom() ?? undefined}
-                    onNavigateToRoom={(r) => handleNavigate(r, shard())}
-                    onHoveredRoomChanged={setHoveredRoomInfo}
-                    onSelectedRoomChanged={setSelectedRoomInfo}
-                    onZoomChanged={(z) => {
-                      setMapZoom(z)
-                      setNum(LS.mapZoom, z)
-                    }}
-                    onSubscriptionStateChanged={setMapSubsActive}
-                  />
-                }
-              >
-                <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
-              </Show>
-            </div>
-            {/* Console — limited to canvas column width */}
-            <Show when={!isGuest()}>
-              <div
-                style={{
-                  height: `${consoleHeight()}px`,
-                  'border-top': '1px solid #30363d',
-                  transition: consoleDragging() ? 'none' : 'height 0.15s ease',
-                  overflow: 'hidden',
-                  position: 'relative',
-                }}
-              >
-                <div
-                  onPointerDown={startConsoleDrag}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '4px', cursor: 'row-resize', 'z-index': 10, background: '#21262d' }}
-                />
-                <ConsolePanel shard={shard()} isCollapsed={consoleCollapsed()} onToggle={toggleConsole} />
-              </div>
-            </Show>
+            {canvasArea()}
+            {consoleArea()}
           </div>
-          {/* Sidebar — full height */}
-          <div
-            style={{
-              width: showCode() ? '0' : `${sidebarWidth()}px`,
-              'border-left': '1px solid #30363d',
-              transition: 'none',
-              overflow: 'hidden',
-              position: 'relative',
-            }}
-          >
-            <div
-              onPointerDown={startSidebarDrag}
-              style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', cursor: 'col-resize', 'z-index': 10, background: '#21262d' }}
-            />
-            <Sidebar
-              isCollapsed={sidebarCollapsed()}
-              onToggle={toggleSidebar}
-              mapMode={mapMode()}
-              hoveredRoomInfo={hoveredRoomInfo()}
-              selectedRoomInfo={selectedRoomInfo()}
-              room={room()}
-              shard={shard()}
-              mapZoom={mapZoom()}
-              mapSubsActive={mapSubsActive()}
-            />
-          </div>
+          {sidebarArea(false)}
         </div>
       </Show>
       <ToastContainer />
