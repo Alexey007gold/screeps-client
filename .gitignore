@@ -3,3 +3,5 @@ reference
 .DS_Store
 /.mcp.json
 screeps-connectivity/test-live.mjs
+.env.local
+.env.*.local
