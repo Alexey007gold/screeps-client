@@ -41,6 +41,12 @@ module.exports = function (config) {
     })
 
     if (rootRedirect && mountPath !== '/') {
+      const alreadyRegistered = app._router?.stack?.some(
+        layer => layer.route?.path === '/' && layer.route?.methods?.get
+      )
+      if (alreadyRegistered) {
+        console.warn(`[screeps-mod-client] WARNING: GET / is already registered by another mod — redirect to ${mountPath}/ will not take effect. Move screeps-mod-client before other mods in mods.json to ensure priority.`)
+      }
       app.get('/', (_req, res) => {
         res.redirect(302, mountPath + '/')
       })
