@@ -312,11 +312,22 @@ export function LoginForm() {
     await connect({ url: url(), auth: 'guest', serverPassword: serverPassword() || undefined, storage: null })
   }
 
-  const handleRegistrationSuccess = (regEmail: string, regPassword: string) => {
-    setMode('login')
-    setAuthType('password')
-    setEmail(regEmail)
-    setPassword(regPassword)
+  const handleRegistrationSuccess = async (regEmail: string, regPassword: string) => {
+    try {
+      await connect({
+        url: url(),
+        auth: 'password',
+        email: regEmail,
+        password: regPassword,
+        serverPassword: serverPassword() || undefined,
+        storage: null,
+      })
+    } catch {
+      setMode('login')
+      setAuthType('password')
+      setEmail(regEmail)
+      setPassword(regPassword)
+    }
   }
 
   const isConnecting = () => status() === 'connecting'
