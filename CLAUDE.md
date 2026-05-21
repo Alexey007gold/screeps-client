@@ -4,13 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-Monorepo with two active packages and a `reference/` directory containing third-party source for reference only (do not edit):
+Monorepo with two active packages:
 
 - `screeps-connectivity/` — core TypeScript library: HTTP, WebSocket, stores, cache, storage
 - `screeps-client/` — SolidJS + PixiJS browser frontend that consumes `screeps-connectivity`
 - `docs/screeps-connectivity.md` — full API reference for the library
 - `docs/superpowers/` — design specs and plans (markdown, do not edit generated specs)
-- `reference/` — third-party source for reference only, never edit
 - `test-live.mjs` — ad-hoc live integration test script (Node.js)
 
 ## Commands
@@ -99,33 +98,56 @@ src/
 │   ├── App.tsx            # Root: auto-connects on mount, switches LoginForm ↔ Dashboard
 │   └── Dashboard.tsx      # Main layout: header, room canvas, console panel, sidebar with draggable splitters
 ├── components/
+│   ├── Sidebar/           # index.tsx + BuildPanel, FlagForm, RoomInfoBox subpanels
+│   ├── CodePanel.tsx      # Code editor panel (CodeMirror)
 │   ├── ConnectionStatus.tsx  # Color-coded status chip (idle/connecting/connected/error)
-│   ├── ConsolePanel.tsx      # Console I/O: Log and Console tabs, auto-scroll, input form
-│   ├── LoginForm.tsx         # Auth form: password or token mode, server URL
-│   ├── PixiCanvas.tsx        # Demo PixiJS canvas (tile grid prototype)
-│   ├── RoomNavigator.tsx     # Room name + shard input with Load button
-│   ├── RoomViewer.tsx        # Ties RoomRenderer to store subscriptions, manages terrain/object layers
-│   ├── Sidebar.tsx           # Collapsible right panel (properties placeholder)
-│   └── StatsBar.tsx          # Live CPU and memory stats via UserStore subscription
+│   ├── ConsolePanel.tsx   # Console I/O: Log and Console tabs, auto-scroll, input form
+│   ├── LoginForm.tsx      # Auth form: password or token mode, server URL, registration
+│   ├── MapInfoPanel.tsx   # Map-level info overlay
+│   ├── MapViewer.tsx      # World map PixiJS view
+│   ├── RoomInfoPanel.tsx  # Selected room info
+│   ├── RoomNavigator.tsx  # Room name + shard input with Load button
+│   ├── RoomViewer.tsx     # Ties RoomRenderer to store subscriptions
+│   ├── SelectionList.tsx  # Object selection list
+│   ├── SettingsPanel.tsx  # User settings UI
+│   ├── StatsBar.tsx       # Live CPU and memory stats via UserStore subscription
+│   └── ToastContainer.tsx # Toast notification display
 ├── renderer/
-│   ├── RoomRenderer.ts       # PixiJS Application: draggable/zoomable world container, navigation zones
-│   ├── TerrainLayer.ts       # Graphics layer: Plain (grey)/Wall (dark)/Swamp (green) tiles
-│   └── ObjectLayer.ts        # Object sprites: creeps, structures; smooth movement via ticker
+│   ├── RoomRenderer.ts          # PixiJS Application: draggable/zoomable world container, navigation zones
+│   ├── MapRenderer.ts           # World map renderer
+│   ├── TerrainLayer.ts          # Plain/Wall/Swamp tiles
+│   ├── ObjectLayer.ts           # Creeps, structures; smooth movement via ticker
+│   ├── VisualLayer.ts           # Screeps visual primitives
+│   ├── ActionAnimationLayer.ts  # Attack/heal/rangedAttack animations
+│   ├── HoverHighlightLayer.ts   # Hover highlight overlay
+│   ├── BadgeTextureCache.ts     # Player badge texture cache
+│   ├── StructureTextureCache.ts # Structure texture cache
+│   ├── terrainCache.ts          # Terrain tile texture cache
+│   ├── terrain.worker.ts        # Terrain decode web worker
+│   └── colors.ts                # Shared color constants
 ├── stores/
-│   └── clientStore.ts        # SolidJS signals (client, status, error) + connect/disconnect/tryAutoConnect
+│   ├── clientStore.ts      # SolidJS signals (client, status, error) + connect/disconnect/tryAutoConnect
+│   ├── roomViewStore.tsx   # Active room view state (room name, shard, viewport)
+│   ├── roomDataStore.ts    # Room objects and terrain reactive cache
+│   ├── selectionStore.ts   # Selected game object state
+│   ├── settingsStore.ts    # Persisted user settings
+│   ├── consoleStore.ts     # Console log history
+│   ├── mapOverlayStore.ts  # World map overlay mode
+│   └── toastStore.ts       # Toast notification queue
 ├── types/
-│   └── client.ts             # ClientState, RoomViewState type definitions
+│   └── client.ts           # ClientState, RoomViewState type definitions
 └── utils/
-    └── roomName.ts           # Parse/format room names (e.g. W7N7 ↔ {x, y} coordinates)
+    ├── roomName.ts          # Parse/format room names (e.g. W7N7 ↔ {x, y} coordinates)
+    ├── dom.ts               # DOM helpers
+    ├── embedded.ts          # Embedded/mod mode detection
+    ├── log.ts               # Logger instance
+    ├── storage.ts           # localStorage key constants and helpers
+    └── useRoomNavigationKeys.ts  # Keyboard shortcut hook for room navigation
 ```
 
-**State management**: `clientStore.ts` holds three SolidJS signals (`client`, `status`, `error`) and three functions (`connect`, `disconnect`, `tryAutoConnect`). On connect, credentials are persisted to `localStorage` (`screeps:url`, `screeps:token`) for auto-reconnect on page reload.
+**State management**: `clientStore.ts` holds SolidJS signals (`client`, `status`, `error`) and functions (`connect`, `disconnect`, `tryAutoConnect`). Credentials are persisted to `localStorage` for auto-reconnect on page reload. `App.tsx` calls `tryAutoConnect()` on mount.
 
-**`App.tsx`** calls `tryAutoConnect()` on mount to restore the previous session from `localStorage`. It switches between `<LoginForm>` and `<Dashboard>` based on connection state.
-
-**`Dashboard.tsx`** uses CSS flex layout with draggable splitters. The room canvas is the main content area; `ConsolePanel` sits below it; `Sidebar` is to the right.
-
-**`RoomViewer.tsx`** subscribes to `RoomStore` and `UserStore`, creates `TerrainLayer` and `ObjectLayer`, and hands them to `RoomRenderer`. Handles room navigation triggered from `RoomNavigator`.
+**`RoomViewer.tsx`** subscribes to `RoomStore` and `UserStore`, creates `TerrainLayer` and `ObjectLayer`, and hands them to `RoomRenderer`.
 
 **`RoomRenderer.ts`** wraps a PixiJS `Application` in a `world` container with pointer-drag panning and wheel zoom, navigation zones (edge-scroll regions), and a view-reset method.
 
@@ -142,6 +164,6 @@ src/
 
 Tests live in `screeps-connectivity/tests/`, mirroring the `src/` layout. `screeps-client` has no test suite currently.
 
-- Run all tests: `npm test` (from `screeps-connectivity/`)
+- Run all tests: `pnpm test` (from `screeps-connectivity/`)
 - Run one file: `npx vitest run tests/socket/SocketClient.test.ts`
 - Test environment: Node (Vitest); uses `fake-indexeddb` for storage tests

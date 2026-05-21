@@ -24,20 +24,18 @@ A browser-based client for [Screeps](https://screeps.com) — a real-time strate
 ### Prerequisites
 
 - Node.js 18 or later
-- npm 9 or later
+- pnpm 9 or later
 
 ### Install dependencies
 
 ```sh
-cd screeps-connectivity && npm install
-cd ../screeps-client && npm install
+pnpm install
 ```
 
 ### Run the dev server
 
 ```sh
-cd screeps-client
-npm run dev
+pnpm dev
 ```
 
 The Vite dev server resolves `screeps-connectivity` directly from `src/` — no build step needed for the library.
@@ -47,11 +45,7 @@ Open [http://localhost:5173](http://localhost:5173) and enter your Screeps serve
 ### Build for production
 
 ```sh
-# Build the library first
-cd screeps-connectivity && npm run build
-
-# Then build the frontend
-cd ../screeps-client && npm run build
+pnpm build
 # Output: screeps-client/dist/
 ```
 
@@ -160,10 +154,9 @@ screeps-client/          # monorepo root
 │       ├── stores/        # clientStore (SolidJS signals)
 │       ├── types/         # Client-side type definitions
 │       └── utils/         # roomName parser/formatter
-├── docs/superpowers/      # Design specs and plans
-└── reference/             # Third-party source (read-only)
+└── docs/                  # API reference and design specs
 ```
 
 ## License
 
-Private repository.
+[ISC](./LICENSE) © Bastian Hoyer
