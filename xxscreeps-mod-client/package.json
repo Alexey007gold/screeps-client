@@ -1,0 +1,33 @@
+{
+  "name": "xxscreeps-mod-client",
+  "version": "0.1.0",
+  "description": "xxscreeps mod that serves the screeps-client and connects it to the same server.",
+  "type": "module",
+  "xxscreeps": true,
+  "exports": {
+    ".": "./index.js",
+    "./*": "./*"
+  },
+  "files": [
+    "index.js",
+    "backend.js",
+    "dist/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bastianh/screeps-client.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "node ./scripts/build-client.js && node ./scripts/copy-dist.js",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "xxscreeps": "*"
+  }
+}

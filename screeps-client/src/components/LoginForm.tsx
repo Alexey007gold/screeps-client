@@ -1,6 +1,6 @@
 import { createSignal, createEffect, onCleanup, For, Show } from 'solid-js'
 import { connect, status, error } from '~/stores/clientStore.js'
-import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
+import { isEmbedded, isXxscreepsMode, embeddedServerUrl } from '~/utils/embedded.js'
 import {
   fetchServerVersion,
   fetchAuthModInfo,
@@ -268,6 +268,7 @@ function RegistrationForm(props: {
 
 export function LoginForm() {
   const embedded = isEmbedded()
+  const xxscreeps = isXxscreepsMode()
   const [mode, setMode] = createSignal<'login' | 'register'>('login')
   const [authType, setAuthType] = createSignal<'password' | 'token'>('password')
   const [url, setUrl] = createSignal(embedded ? embeddedServerUrl() : 'http://localhost:21025')
@@ -472,7 +473,7 @@ export function LoginForm() {
               </button>
             </Show>
 
-            <Show when={!embedded}>
+            <Show when={!embedded || xxscreeps}>
               <button
                 type="button"
                 disabled={isConnecting()}

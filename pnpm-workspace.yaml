@@ -2,3 +2,4 @@ packages:
   - 'screeps-connectivity'
   - 'screeps-client'
   - 'screeps-mod-client'
+  - 'xxscreeps-mod-client'

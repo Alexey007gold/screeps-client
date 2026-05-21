@@ -1,0 +1,55 @@
+# xxscreeps-mod-client
+
+[xxscreeps](https://github.com/laverdet/xxscreeps) mod that serves [`screeps-client`](../screeps-client) on the same server it runs on. The client connects to its own origin, so no separate hosting or CORS setup is required.
+
+## Install
+
+Add the package to your `.screepsrc.yaml`:
+
+```yaml
+mods:
+  - xxscreeps/mods/classic
+  - xxscreeps-mod-client
+```
+
+xxscreeps must be installed as a peer dependency.
+
+## Configuration
+
+Environment variables:
+
+| Setting | ENV | Default |
+| --- | --- | --- |
+| Mount path | `SCREEPS_MOD_CLIENT_MOUNT_PATH` | `/` |
+| Redirect `/` → mount path | `SCREEPS_MOD_CLIENT_ROOT_REDIRECT` | `true` if `mountPath !== '/'`, else `false` |
+
+When mounted at `/`, the mod only serves paths that map to an existing file in `dist/` or that look like an SPA route (no file extension). Requests to xxscreeps' own endpoints (`/api/`, `/socket/`, …) are passed through to subsequent middleware.
+
+### Example
+
+```sh
+SCREEPS_MOD_CLIENT_MOUNT_PATH=/play npx xxscreeps start
+```
+
+## Build
+
+```sh
+pnpm --filter xxscreeps-mod-client build
+```
+
+This builds `screeps-client` with `base=/` (absolute asset URLs at the server root) and copies the artifacts into `dist/`. The shipped bundle is tied to its build-time base path — overriding `SCREEPS_MOD_CLIENT_MOUNT_PATH` at runtime requires a rebuild with a matching base:
+
+```sh
+SCREEPS_MOD_CLIENT_BUILD_BASE=/play/ pnpm --filter xxscreeps-mod-client build
+SCREEPS_MOD_CLIENT_MOUNT_PATH=/play npx xxscreeps start
+```
+
+## xxscreeps mode
+
+The client bundle shipped with this mod is built with `VITE_XXSCREEPS=true`. In this mode the client auto-connects to its own origin as a guest (read-only) on first load, mirroring `@xxscreeps/client`'s default UX. A "Connect as Guest" button stays available in the login form so users can return to guest mode after signing out.
+
+The xxscreeps server must allow guest access (`backend.allowGuestAccess: true` in `.screepsrc.yaml`, which is the default).
+
+## Notes
+
+This mod serves only the static client bundle. Whether every client feature works against xxscreeps depends on how completely xxscreeps reimplements the Screeps HTTP/WebSocket protocol — that is a concern of [`screeps-connectivity`](../screeps-connectivity), not this mod.
