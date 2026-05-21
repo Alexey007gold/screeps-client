@@ -1,5 +1,5 @@
 // screeps-client/src/stores/roomViewStore.tsx
-import { createEffect, createSignal, type JSX } from 'solid-js'
+import { createEffect, createRoot, createSignal, type JSX } from 'solid-js'
 import { controllerLevel, structureCounts } from './roomDataStore.js'
 import { client, worldStatus } from './clientStore.js'
 import { addToast } from './toastStore.js'
@@ -78,22 +78,25 @@ const [buildDraft, setBuildDraft] = createSignal<BuildDraft>({
   structureName: '',
 })
 
-// Auto-deselect the selected structure type when its max is reached
-createEffect(() => {
-  const type = buildDraft().structureType
-  if (!type) return
-  const rcl = controllerLevel() ?? 0
-  const levels = CONTROLLER_STRUCTURES[type]
-  if (!levels) return
-  const max = worldStatus() === 'empty' && type === 'spawn'
-    ? Math.max(levels[rcl] ?? 0, 1)
-    : (levels[rcl] ?? 0)
-  if (max === 2500) return
-  const current = structureCounts()[type] ?? 0
-  if (current >= max) {
-    setBuildDraft({ structureType: '', structureName: '' })
-    clearPendingTile()
-  }
+// Auto-deselect the selected structure type when its max is reached.
+// Wrapped in createRoot so the module-level effect has a reactive owner.
+createRoot(() => {
+  createEffect(() => {
+    const type = buildDraft().structureType
+    if (!type) return
+    const rcl = controllerLevel() ?? 0
+    const levels = CONTROLLER_STRUCTURES[type]
+    if (!levels) return
+    const max = worldStatus() === 'empty' && type === 'spawn'
+      ? Math.max(levels[rcl] ?? 0, 1)
+      : (levels[rcl] ?? 0)
+    if (max === 2500) return
+    const current = structureCounts()[type] ?? 0
+    if (current >= max) {
+      setBuildDraft({ structureType: '', structureName: '' })
+      clearPendingTile()
+    }
+  })
 })
 
 export { roomViewMode, setRoomViewMode, flagDraft, setFlagDraft, pendingTile, setPendingTile, overlayAction, setOverlayAction, buildDraft, setBuildDraft }
