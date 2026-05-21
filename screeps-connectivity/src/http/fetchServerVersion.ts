@@ -1,29 +1,32 @@
 import type { ServerVersion } from '../types/game.js'
 import type { ScreepsmodAuthFeature, ServerFeature } from '../types/game.js'
+import type { ApiAuthModInfoResponse, ApiRegisterCheckResponse } from '../types/api.js'
+
+export type { ApiAuthModInfoResponse }
 
 const SESSION_CACHE_TTL_MS = 5 * 60_000
 
-interface CachedEntry {
-  data: ServerVersion
+interface CachedEntry<T> {
+  data: T
   expires: number
 }
 
-function sessionKey(url: string): string {
+function sessionKey(suffix: string, url: string): string {
   try {
-    return `screeps:version:${new URL(url).hostname}`
+    return `screeps:${suffix}:${new URL(url).hostname}`
   } catch {
-    return `screeps:version:${url}`
+    return `screeps:${suffix}:${url}`
   }
 }
 
-function readFromSession(url: string): ServerVersion | null {
+function readFromSession<T>(key: string): T | null {
   if (typeof sessionStorage === 'undefined') return null
   try {
-    const raw = sessionStorage.getItem(sessionKey(url))
+    const raw = sessionStorage.getItem(key)
     if (!raw) return null
-    const entry = JSON.parse(raw) as CachedEntry
+    const entry = JSON.parse(raw) as CachedEntry<T>
     if (Date.now() > entry.expires) {
-      sessionStorage.removeItem(sessionKey(url))
+      sessionStorage.removeItem(key)
       return null
     }
     return entry.data
@@ -32,12 +35,15 @@ function readFromSession(url: string): ServerVersion | null {
   }
 }
 
-function writeToSession(url: string, data: ServerVersion): void {
+function writeToSession<T>(key: string, data: T): void {
   if (typeof sessionStorage === 'undefined') return
   try {
-    const entry: CachedEntry = { data, expires: Date.now() + SESSION_CACHE_TTL_MS }
-    sessionStorage.setItem(sessionKey(url), JSON.stringify(entry))
+    sessionStorage.setItem(key, JSON.stringify({ data, expires: Date.now() + SESSION_CACHE_TTL_MS }))
   } catch { /* quota exceeded or SSR — ignore */ }
+}
+
+function baseUrl(url: string): string {
+  return url.endsWith('/') ? url : `${url}/`
 }
 
 /**
@@ -46,15 +52,74 @@ function writeToSession(url: string, data: ServerVersion): void {
  * Useful for pre-login UI: showing the welcome text and detecting installed mods.
  */
 export async function fetchServerVersion(url: string): Promise<ServerVersion> {
-  const cached = readFromSession(url)
+  const key = sessionKey('version', url)
+  const cached = readFromSession<ServerVersion>(key)
   if (cached) return cached
 
-  const base = url.endsWith('/') ? url : `${url}/`
-  const res = await fetch(`${base}api/version`)
+  const res = await fetch(`${baseUrl(url)}api/version`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json() as ServerVersion
-  writeToSession(url, data)
+  writeToSession(key, data)
   return data
+}
+
+/**
+ * Fetch screepsmod-auth capabilities from `/api/authmod` without authentication.
+ * Returns `null` if the server does not run screepsmod-auth.
+ * The result is cached in `sessionStorage` for 5 minutes (per server hostname).
+ */
+export async function fetchAuthModInfo(url: string): Promise<ApiAuthModInfoResponse | null> {
+  const key = sessionKey('authmod', url)
+  const cached = readFromSession<ApiAuthModInfoResponse>(key)
+  if (cached) return cached
+
+  const res = await fetch(`${baseUrl(url)}api/authmod`)
+  if (!res.ok) return null
+  const data = await res.json() as ApiAuthModInfoResponse
+  if (!data.ok) return null
+  writeToSession(key, data)
+  return data
+}
+
+/**
+ * Check whether a username is available on a screepsmod-auth server.
+ * Returns `{ ok: 1 }` if available, `{ ok: 0, error: 'User Exists' }` if taken.
+ */
+export async function checkUsername(url: string, username: string): Promise<ApiRegisterCheckResponse> {
+  const params = new URLSearchParams({ username })
+  const res = await fetch(`${baseUrl(url)}api/register/check-username?${params}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<ApiRegisterCheckResponse>
+}
+
+/**
+ * Check whether an email address is available on a screepsmod-auth server.
+ * Returns `{ ok: 1 }` if available, `{ ok: 0, error: 'User Exists' }` if taken.
+ */
+export async function checkEmail(url: string, email: string): Promise<ApiRegisterCheckResponse> {
+  const params = new URLSearchParams({ email })
+  const res = await fetch(`${baseUrl(url)}api/register/check-email?${params}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<ApiRegisterCheckResponse>
+}
+
+/**
+ * Register a new user account on a screepsmod-auth private server.
+ * No authentication required. Throws if the server returns an error response.
+ */
+export async function registerUser(
+  url: string,
+  username: string,
+  email: string,
+  password: string,
+): Promise<{ ok: number; error?: string }> {
+  const res = await fetch(`${baseUrl(url)}api/register/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, password }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<{ ok: number; error?: string }>
 }
 
 /**

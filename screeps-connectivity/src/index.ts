@@ -37,7 +37,8 @@ export type {
   RoomVisualEntry,
 } from './types/game.js'
 
-export { fetchServerVersion, getServerFeature, getScreepsmodAuth } from './http/fetchServerVersion.js'
+export { fetchServerVersion, fetchAuthModInfo, checkUsername, checkEmail, registerUser, getServerFeature, getScreepsmodAuth } from './http/fetchServerVersion.js'
+export type { ApiAuthModInfoResponse } from './http/fetchServerVersion.js'
 
 export { badgeToSvg } from './badge/index.js'
 export type { RoomStoreEvents, UserStoreEvents, ServerStoreEvents, MapStoreEvents, Map2SubscriptionStatus, HttpClientEvents } from './types/events.js'
