@@ -85,7 +85,12 @@ export class SocketClient {
       this.ws.onerror = (err) => {
         if (!this._connected) reject(err)
       }
-      this.ws.onmessage = (event) => { this.handleMessage(event).catch(err => { console.error('SocketClient: message parse error', err) }) }
+      this.ws.onmessage = (event) => {
+        this.handleMessage(event).catch(err => {
+          this.logger.log('message parse error', err)
+          this.emit('socket:error', err instanceof Error ? err : new Error(String(err)))
+        })
+      }
     })
   }
 

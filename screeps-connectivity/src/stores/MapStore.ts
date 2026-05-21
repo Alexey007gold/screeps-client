@@ -113,9 +113,9 @@ export class MapStore extends TypedStore<MapStoreEvents> {
     this.emit('room:map2state', { room, shard, status: 'pending' })
     this.emitWarmStart(room, shard)
     if (!this.warnedAboutWaitlist) {
-      console.warn(
-        `[MapStore] Subscription limit (${this.maxSubscriptions}) reached. ` +
-        `Some rooms are on a waitlist and will be promoted as slots free up.`
+      this.logger.log(
+        `subscription limit (${this.maxSubscriptions}) reached — `,
+        'some rooms are on a waitlist and will be promoted as slots free up.'
       )
       this.warnedAboutWaitlist = true
     }
