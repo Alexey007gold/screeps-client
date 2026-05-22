@@ -21,7 +21,8 @@
     "preview": "vite preview",
     "lint": "eslint src",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "node ../scripts/strip-client-devdeps.mjs"
   },
   "devDependencies": {
     "screeps-connectivity": "workspace:*",

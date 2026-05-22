@@ -4,10 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-Monorepo with two active packages:
+pnpm workspace with four published packages:
 
 - `screeps-connectivity/` — core TypeScript library: HTTP, WebSocket, stores, cache, storage
 - `screeps-client/` — SolidJS + PixiJS browser frontend that consumes `screeps-connectivity`
+- `screeps-mod-client/` (published as `screepsmod-client-new`) — Screeps server mod, serves the embedded client at `/client`
+- `xxscreeps-mod-client/` — xxscreeps mod, serves and wires up the embedded client
 - `docs/screeps-connectivity.md` — full API reference for the library
 - `docs/superpowers/` — design specs and plans (markdown, do not edit generated specs)
 - `test-live.mjs` — ad-hoc live integration test script (Node.js)
@@ -167,3 +169,53 @@ Tests live in `screeps-connectivity/tests/`, mirroring the `src/` layout. `scree
 - Run all tests: `pnpm test` (from `screeps-connectivity/`)
 - Run one file: `npx vitest run tests/socket/SocketClient.test.ts`
 - Test environment: Node (Vitest); uses `fake-indexeddb` for storage tests
+
+## Pull Requests
+
+- Branch off `main`. Keep PRs focused — one logical change per PR.
+- Before opening a PR, run the checks the user-facing change touches: `pnpm lint` for any package you edited, and `pnpm test` (from `screeps-connectivity/`) if you touched the library.
+- **If your change affects a published package, add a changeset in the same PR** (see "Releases" below). PRs that change public package behaviour without a changeset will land unversioned and never publish.
+- Use `gh pr create` and keep the title short (under 70 chars). Put detail in the body.
+
+## Releases
+
+Versioning and npm publishing are handled by [Changesets](https://github.com/changesets/changesets) via `.github/workflows/release.yml`. Do **not** hand-edit `version` fields in any `package.json` — changesets owns them.
+
+### Adding a changeset
+
+When a change affects one or more published packages, run from the repo root:
+
+```sh
+pnpm changeset
+```
+
+The CLI asks which packages changed and at what semver level (patch / minor / major). It writes a markdown file to `.changeset/` — commit it with the rest of the change.
+
+Rules of thumb for picking the bump:
+- **patch** — bug fixes, internal refactors, doc-only changes that affect the published README
+- **minor** — new public API surface, additive features that keep existing API working
+- **major** — breaking changes to the public API of `screeps-connectivity`, or to the published shape of any other package
+
+Internal `workspace:*` consumers get a patch bump automatically when an upstream package version changes (`updateInternalDependencies: "patch"` in `.changeset/config.json`).
+
+If a change does not need a release (refactors confined to `screeps-client` internals, CI tweaks, etc.), either skip the changeset entirely or use `pnpm changeset --empty` if you want to record the intent.
+
+### Release flow
+
+On push to `main`:
+
+1. If unreleased changesets exist, the workflow opens (or updates) a **"chore: version packages"** PR that bumps `package.json` versions and updates each package's `CHANGELOG.md`. Review and merge that PR to trigger a publish.
+2. If no changesets are pending, the workflow builds all four packages and runs `changeset publish`, which only pushes versions that aren't already on npm.
+
+The publish step depends on the `NPM_TOKEN` secret. Do not invoke `pnpm publish` manually — let CI do it.
+
+### Useful release commands
+
+```sh
+pnpm changeset            # add a changeset (interactive)
+pnpm changeset --empty    # record an intentionally version-less change
+pnpm exec changeset status  # show pending changesets and projected bumps
+pnpm build:release        # locally reproduce the CI build pipeline
+```
+
+Do not run `pnpm version-packages` or `pnpm release` locally — these are wired for CI use only.

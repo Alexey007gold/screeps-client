@@ -126,8 +126,8 @@ function RegistrationForm(props: {
     regEmail() !== '' &&
     regPassword().length >= 4 &&
     regPassword() === regConfirm() &&
-    usernameState() === 'available' &&
-    emailState() === 'available'
+    usernameState() !== 'taken' && usernameState() !== 'checking' &&
+    emailState() !== 'taken' && emailState() !== 'checking'
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault()
@@ -286,7 +286,9 @@ export function LoginForm() {
     if (!v) return true
     return getScreepsmodAuth(v)?.authTypes?.includes('steam') ?? true
   }
-  const canRegister = () => authModInfo()?.allowRegistration === true
+  const canRegister = () =>
+    authModInfo()?.allowRegistration === true ||
+    (serverVersion()?.serverData?.features ?? []).some(f => f.name === 'official-like')
 
   const handleSteamLogin = () => {
     const serverUrl = url().replace(/\/$/, '')

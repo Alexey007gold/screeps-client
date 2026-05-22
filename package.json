@@ -5,9 +5,16 @@
     "dev": "pnpm --filter screeps-client dev",
     "build": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build",
     "build:mod": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-mod-client build",
+    "build:release": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build && pnpm --filter screepsmod-client-new build && pnpm --filter xxscreeps-mod-client build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build:release && changeset publish",
     "postinstall": "node scripts/fix-dev-links.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]

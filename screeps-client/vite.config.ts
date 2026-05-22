@@ -8,6 +8,7 @@ const outDir = process.env.VITE_OUT_DIR ?? 'dist/standalone'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const proxyTarget = env.VITE_PROXY_TARGET
+  console.log('[vite.config] VITE_PROXY_TARGET =', proxyTarget)
 
   return {
     base,

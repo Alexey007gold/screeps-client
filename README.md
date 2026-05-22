@@ -8,6 +8,8 @@ A browser-based client for [Screeps](https://screeps.com) — a real-time strate
 |---|---|
 | `screeps-connectivity/` | Core TypeScript library — HTTP API, WebSocket, data stores, caching, storage |
 | `screeps-client/` | SolidJS + PixiJS browser app that consumes `screeps-connectivity` |
+| `screeps-mod-client/` | Screeps server mod (`screepsmod-client-new`) that serves the embedded client at `/client` |
+| `xxscreeps-mod-client/` | xxscreeps mod that serves and wires up the embedded client |
 
 ## Features
 
@@ -156,6 +158,27 @@ screeps-client/          # monorepo root
 │       └── utils/         # roomName parser/formatter
 └── docs/                  # API reference and design specs
 ```
+
+## Releases
+
+Versioning and npm publishing are driven by [Changesets](https://github.com/changesets/changesets).
+
+When your change affects a published package, add a changeset alongside the code change:
+
+```sh
+pnpm changeset
+```
+
+The CLI asks which packages changed and at what semver level, then writes a markdown file under `.changeset/`. Commit it with your PR.
+
+On push to `main`, `.github/workflows/release.yml` does one of:
+
+- **Unreleased changesets present** — opens (or updates) a *"chore: version packages"* PR that bumps `package.json` versions and updates `CHANGELOG.md`. Merging that PR triggers the publish run.
+- **No pending changesets** — builds all four packages and runs `changeset publish`, which only pushes versions that aren't already on npm.
+
+CI requires the `NPM_TOKEN` repository secret, and Settings → Actions → General → *Workflow permissions* must allow Actions to create pull requests.
+
+See `.changeset/README.md` for contributor-facing details.
 
 ## License
 
