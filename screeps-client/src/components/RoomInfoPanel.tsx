@@ -1,8 +1,10 @@
 import { For, Show, type JSX } from 'solid-js'
-import { Eye, Flag, Hammer } from 'lucide-solid'
+import { Eye, Flag, Hammer, Clock } from 'lucide-solid'
 import { gameTime, tickDuration, isGuest } from '~/stores/clientStore.js'
 import { roomObjectCount, roomOwner } from '~/stores/roomDataStore.js'
 import { roomViewMode, setRoomViewMode, type RoomViewMode } from '~/stores/roomViewStore.js'
+import { historyMode, enterHistoryMode, exitHistoryMode } from '~/stores/historyStore.js'
+import { showCreepLabels, setShowCreepLabels, showRoomVisuals, setShowRoomVisuals } from '~/stores/settingsStore.js'
 
 interface RoomInfoPanelProps {
   room: string
@@ -52,23 +54,59 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
         <div style={{ padding: '3px 0', color: '#8b949e' }}>Owner</div>
         <div style={{ padding: '3px 0', color: '#c9d1d9' }}>{roomOwner()?.username ?? '—'}</div>
       </div>
-    </div>
-    <Show when={!isGuest()}>
-      <div
+      <label
         style={{
-          display: 'grid',
-          'grid-template-columns': 'repeat(3, 1fr)',
-          gap: '4px',
-          'margin-top': '8px',
+          display: 'flex',
+          'align-items': 'center',
+          'justify-content': 'space-between',
+          'font-size': '11px',
+          color: '#c9d1d9',
+          cursor: 'pointer',
+          'margin-top': '6px',
         }}
       >
+        <span>Creep-Namen</span>
+        <input
+          type="checkbox"
+          checked={showCreepLabels()}
+          onChange={(e) => setShowCreepLabels(e.currentTarget.checked)}
+        />
+      </label>
+      <label
+        style={{
+          display: 'flex',
+          'align-items': 'center',
+          'justify-content': 'space-between',
+          'font-size': '11px',
+          color: '#c9d1d9',
+          cursor: 'pointer',
+          'margin-top': '4px',
+        }}
+      >
+        <span>Room Visuals</span>
+        <input
+          type="checkbox"
+          checked={showRoomVisuals()}
+          onChange={(e) => setShowRoomVisuals(e.currentTarget.checked)}
+        />
+      </label>
+    </div>
+    <div
+      style={{
+        display: 'grid',
+        'grid-template-columns': `repeat(${isGuest() ? 2 : 4}, 1fr)`,
+        gap: '4px',
+        'margin-top': '8px',
+      }}
+    >
+      <Show when={!isGuest()}>
         <For each={ROOM_VIEW_MODES}>
           {(entry) => {
-            const active = () => roomViewMode() === entry.mode
+            const active = () => !historyMode() && roomViewMode() === entry.mode
             return (
               <button
                 type="button"
-                onClick={() => setRoomViewMode(entry.mode)}
+                onClick={() => { if (historyMode()) exitHistoryMode(); setRoomViewMode(entry.mode) }}
                 title={entry.label}
                 style={{
                   padding: '5px 8px',
@@ -87,7 +125,28 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
             )
           }}
         </For>
-      </div>
-    </Show>
+      </Show>
+      <button
+        type="button"
+        onClick={() => historyMode() ? exitHistoryMode() : gameTime() !== null && enterHistoryMode(gameTime()!)}
+        disabled={!historyMode() && gameTime() === null}
+        title="History"
+        style={{
+          'grid-column': isGuest() ? 'span 2' : undefined,
+          padding: '5px 8px',
+          'border-radius': '6px',
+          border: `1px solid ${historyMode() ? '#58a6ff' : '#30363d'}`,
+          background: historyMode() ? '#1f6feb33' : '#161b22',
+          color: historyMode() ? '#c9d1d9' : '#8b949e',
+          cursor: (!historyMode() && gameTime() === null) ? 'not-allowed' : 'pointer',
+          display: 'flex',
+          'align-items': 'center',
+          'justify-content': 'center',
+          opacity: (!historyMode() && gameTime() === null) ? 0.4 : 1,
+        }}
+      >
+        <Clock size={14} />
+      </button>
+    </div>
   </div>)
 }
