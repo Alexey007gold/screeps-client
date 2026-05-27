@@ -136,6 +136,70 @@ export class UserStore extends TypedStore<UserStoreEvents> {
     }
   }
 
+  subscribeMemory(path: string, shard?: string | null): Subscription {
+    this.logger.log('subscribe memory', path)
+    let socketSub: Subscription | null = null
+    let listenerSub: Subscription | null = null
+    let disposed = false
+
+    const setup = async () => {
+      try {
+        const uid = this._userId ?? (await this.me())._id
+        if (disposed) return
+        const shardSegment = shard ? `${shard}/` : ''
+        const fullChannel = `user:${uid}/memory/${shardSegment}${path}`
+        socketSub = this.socket.subscribe(fullChannel)
+        listenerSub = this.socket.on(fullChannel, (raw) => {
+          if (typeof raw === 'string' && raw.startsWith('gz:')) {
+            void (async () => {
+              try {
+                const { decompressZlib } = await import('../http/decompress.js')
+                const value = await decompressZlib(raw)
+                this.emit('user:memory', { path, shard: shard ?? null, value })
+              } catch (err) {
+                this.logger.log('memory decompress failed', err)
+              }
+            })()
+            return
+          }
+          // Memory values arrive as JSON-encoded strings inside the WS frame,
+          // e.g. the frame ["user:x/memory/foo","1"] delivers raw="1" here.
+          // Objects can't be serialized over WS; the server sends "[object Object]".
+          // Emit a sentinel so the UI can show a collapsed placeholder and fetch
+          // the real value via HTTP only when the user expands it.
+          if (raw === '[object Object]') {
+            this.logger.log('memory object placeholder', path)
+            this.emit('user:memory', { path, shard: shard ?? null, value: { __screeps_object__: true } })
+            return
+          }
+          let value: unknown = raw
+          if (raw === 'undefined') {
+            value = undefined
+          } else if (typeof raw === 'string') {
+            try { value = JSON.parse(raw) } catch { /* leave as-is */ }
+          }
+          this.logger.log('memory value received', path, value)
+          this.emit('user:memory', { path, shard: shard ?? null, value })
+        })
+      } catch (err) {
+        if (!disposed) {
+          this.dispatchEvent(new ErrorEvent('error', { error: err instanceof Error ? err : new Error(String(err)) }))
+        }
+      }
+    }
+
+    void setup()
+
+    return {
+      dispose: () => {
+        this.logger.log('unsubscribe memory', path)
+        disposed = true
+        socketSub?.dispose()
+        listenerSub?.dispose()
+      },
+    }
+  }
+
   /** Subscribe to the general user stream to receive global data like flags. */
   subscribeUserStream(): Subscription {
     this.logger.log('subscribe user stream')
