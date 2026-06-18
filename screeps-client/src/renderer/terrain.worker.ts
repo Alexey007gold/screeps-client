@@ -108,12 +108,13 @@ function drawRoundedLayer(ctx: OffscreenCanvasRenderingContext2D, raw: Uint8Arra
   ctx.fill()
 }
 
-self.onmessage = (e: MessageEvent) => {
-  const { id, roomName, lod, raw } = e.data as {
+self.onmessage = async (e: MessageEvent) => {
+  const { id, roomName, lod, raw, shard } = e.data as {
     id: number,
     roomName: string,
     lod: number,
-    raw: Uint8Array
+    raw: Uint8Array,
+    shard: string
   }
 
   const size = LOD_SIZES[lod] || 128
@@ -138,6 +139,24 @@ self.onmessage = (e: MessageEvent) => {
     drawFlatLayer(ctx, raw, TerrainType.Wall, T)
   }
 
-  const bitmap = canvas.transferToImageBitmap()
-  self.postMessage({ id, roomName, lod, bitmap }, { transfer: [bitmap] })
+  // Deliver the baked tile immediately so it renders without waiting for the
+  // cache encode. createImageBitmap copies the canvas (unlike
+  // transferToImageBitmap, which would detach it and break the convertToBlob
+  // below).
+  const bitmap = await createImageBitmap(canvas)
+  self.postMessage({ kind: 'bitmap', id, roomName, lod, bitmap }, { transfer: [bitmap] })
+
+  // Encode the cache copy afterwards, still off the main thread (doing this per
+  // tile on the main thread used to freeze the tab when zooming far out). It no
+  // longer gates the visible tile. Encoding failures just skip caching.
+  try {
+    const blob = await canvas.convertToBlob({ type: 'image/webp' })
+    const cacheBytes = await blob.arrayBuffer()
+    self.postMessage(
+      { kind: 'cache', shard, roomName, lod, cacheBytes, cacheType: blob.type },
+      { transfer: [cacheBytes] },
+    )
+  } catch {
+    // encoding unsupported/failed — skip caching this tile
+  }
 }

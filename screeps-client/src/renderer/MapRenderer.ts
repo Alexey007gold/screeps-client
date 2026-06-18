@@ -3,7 +3,7 @@ import type { RoomMap2Data, Badge } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { MapVisualLayer } from './MapVisualLayer.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
-import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, imageBitmapToBlob } from './terrainCache.js'
+import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap } from './terrainCache.js'
 import TerrainWorker from './terrain.worker.ts?worker'
 import {
   TERRAIN_WALL, TERRAIN_ROAD, TERRAIN_BORDER,
@@ -135,11 +135,16 @@ export class MapRenderer {
     this.callbacks = callbacks
     this.worker = new TerrainWorker()
     this.worker.onmessage = (e) => {
-      const { id, bitmap } = e.data
-      const pending = this.pendingBakes.get(id)
+      const d = e.data
+      if (d.kind === 'cache') {
+        // Cache copy encoded by the worker; persist the bytes (cheap, async).
+        saveTerrainCacheBlob(d.shard, d.roomName, d.lod, new Blob([d.cacheBytes], { type: d.cacheType || 'image/webp' }))
+        return
+      }
+      const pending = this.pendingBakes.get(d.id)
       if (pending) {
-        this.pendingBakes.delete(id)
-        pending.resolve(bitmap)
+        this.pendingBakes.delete(d.id)
+        pending.resolve(d.bitmap)
       }
     }
   }
@@ -260,21 +265,16 @@ export class MapRenderer {
         return await blobToImageBitmap(cachedBlob)
       }
 
-      // Cache miss -> use Web Worker
+      // Cache miss -> use Web Worker. The worker posts the baked bitmap back
+      // first (resolving this promise) and then encodes + posts the cache copy
+      // separately, so caching never delays the visible tile.
       const id = this.nextBakeId++
       const promise = new Promise<ImageBitmap>((resolve, reject) => {
         this.pendingBakes.set(id, { roomName, lod, resolve, reject })
       })
-      this.worker.postMessage({ id, roomName, lod, raw })
+      this.worker.postMessage({ id, roomName, lod, raw, shard })
 
-      const bitmap = await promise
-
-      // Save to Cache API asynchronously (don't block)
-      imageBitmapToBlob(bitmap).then(blob => {
-        saveTerrainCacheBlob(shard, roomName, lod, blob)
-      }).catch(err => warn('failed to save to terrainCache:', err))
-
-      return bitmap
+      return await promise
     } catch (e) {
       warn('error getting terrain bitmap:', e)
       return null
