@@ -133,6 +133,23 @@ export const ST_LIGHT          = 0xAAAAAA  // structure light elements
 export const ST_OUTLINE        = 0x8FBB93  // structure green outline
 export const ST_ENERGY         = 0xFFE87B  // energy (structure displays)
 export const ST_POWER          = 0xF53547  // power red
+
+// Canonical resource → display colour. Single source of truth for both the mineral
+// deposit discs and the structure store-fill bands, so a given resource reads the same
+// everywhere. Clean-room approximations of the in-game hues — tuned by eye, not lifted.
+export const ST_RESOURCE_OTHER = 0x6C6C6C  // commodities / unknown fallback
+export const RESOURCE_COLORS: Record<string, number> = {
+  energy: ST_ENERGY,
+  power:  ST_POWER,
+  H: 0xCCCCCC,  // hydrogen — light gray
+  O: 0xFFFFFF,  // oxygen — white
+  U: 0x58D7F9,  // utrium — cyan
+  L: 0x00F4A2,  // lemergium — mint
+  K: 0xA071FF,  // keanium — purple
+  Z: 0xFDC78E,  // zynthium — tan
+  X: 0xB084FB,  // catalyst — lavender
+  G: 0xFFFFFF,  // ghodium — white
+}
 export const ST_RAMPART        = 0x55B84F  // rampart fill (vanilla green; drawn translucent over structures/terrain)
 export const ST_RAMPART_STROKE = 0x8AD97A  // rampart border (brighter rim leading the fill)
 export const ST_RAMPART_ENEMY        = 0xB23A3A  // foreign rampart fill
