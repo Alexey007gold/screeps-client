@@ -1,6 +1,6 @@
 import { Container, Graphics, Ticker } from 'pixi.js'
 import { TILE_SIZE } from './RoomRenderer.js'
-import { ANIM_HARVEST, ANIM_UPGRADE, ANIM_BUILD, ANIM_REPAIR, ANIM_TRANSFER, ANIM_LINK_TRANSFER, ANIM_TOWER_ATTACK, ANIM_TOWER_HEAL, ANIM_TOWER_REPAIR } from './colors.js'
+import { ANIM_HARVEST, ANIM_UPGRADE, ANIM_BUILD, ANIM_REPAIR, ANIM_TRANSFER, ANIM_LINK_TRANSFER, ANIM_TOWER_ATTACK, ANIM_TOWER_HEAL, ANIM_TOWER_REPAIR, ANIM_LAB_REACTION } from './colors.js'
 
 interface BeamAnimation {
   fromX: number
@@ -136,6 +136,24 @@ export class ActionAnimationLayer {
       startTime: performance.now(),
       duration: durationMs,
       color: ANIM_LINK_TRANSFER,
+      width: BEAM_WIDTH,
+    })
+  }
+
+  // Lab reaction: a short beam from an input lab into the producing lab, glowing the
+  // producing (target) end where the compound forms. Fired twice — once per input lab —
+  // so the two streams converge on the output lab. Same build/hold/dissolve motion as build.
+  addLabReaction(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    const from = tileCenter(fromX, fromY)
+    const to = tileCenter(toX, toY)
+    this.animations.push({
+      fromX: from.cx,
+      fromY: from.cy,
+      toX: to.cx,
+      toY: to.cy,
+      startTime: performance.now(),
+      duration: durationMs,
+      color: ANIM_LAB_REACTION,
       width: BEAM_WIDTH,
     })
   }

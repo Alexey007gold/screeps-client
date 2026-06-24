@@ -112,6 +112,7 @@ export const ANIM_LINK_TRANSFER = ENERGY_FILL  // link-to-link energy transfer b
 export const ANIM_TOWER_ATTACK = OBJ_RED
 export const ANIM_TOWER_HEAL   = OBJ_GREEN
 export const ANIM_TOWER_REPAIR = OBJ_CYAN
+export const ANIM_LAB_REACTION = 0xFFFFFF  // lab reaction: white beam (matches vanilla)
 
 // ── Construction sites ────────────────────────────────────────────────────
 // Base (used for the static pie fill); the ring pulses between *_DARK and *_LIGHT.
