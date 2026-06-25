@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, Ticker, Sprite, Texture, BlurFilter } from 'pixi.js'
+import { Container, Graphics, GraphicsContext, Text, Ticker, Sprite, Texture, BlurFilter, FillGradient } from 'pixi.js'
 import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import type { Theme, ControllerSpec, FlagSpec, TombstoneSpec } from './themes/Theme.js'
@@ -15,6 +15,7 @@ import {
   OBJ_DEFAULT, OBJ_ROAD, OBJ_FOREIGN, OBJ_CYAN, OBJ_GREY,
   ENERGY_FILL,
   CREEP_RING_DARK, CREEP_NOTCH,
+  INVADER_BORDER, INVADER_FILL_TOP, INVADER_FILL_BOT,
   ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART,
   ST_RAMPART_STROKE, ST_RAMPART_ENEMY, ST_RAMPART_ENEMY_STROKE,
   ST_RESOURCE_OTHER, RESOURCE_COLORS,
@@ -262,6 +263,43 @@ function drawCreepArc(g: Graphics, startAngle: number, endAngle: number, color: 
   g.arc(0, 0, CREEP_INNER_R, endAngle, startAngle, true)
   g.closePath()
   g.fill(color)
+}
+
+// gem silhouette as fractions of TILE_SIZE: apex, shoulders (widest), flat base.
+const INVADER_PTS: ReadonlyArray<readonly [number, number]> = [
+  [0, -0.30], [0.22, 0.05], [0.15, 0.20], [-0.15, 0.20], [-0.22, 0.05],
+]
+const INVADER_BORDER_W = TILE_SIZE * 0.073
+
+// All invaders are identical, so build the gem geometry + gradient texture once in
+// a shared context and instance it per creep. An externally-passed context survives
+// the per-creep Graphics.destroy(), so the shared one is never torn down.
+let invaderContext: GraphicsContext | null = null
+function getInvaderContext(): GraphicsContext {
+  if (invaderContext) return invaderContext
+  const cx = TILE_SIZE / 2
+  const cy = TILE_SIZE / 2
+  const pts = spts(cx, cy, INVADER_PTS)
+  const fill = new FillGradient({
+    type: 'linear',
+    start: { x: 0.5, y: 0 },
+    end: { x: 0.5, y: 1 },
+    colorStops: [
+      { offset: 0, color: INVADER_FILL_TOP },
+      { offset: 1, color: INVADER_FILL_BOT },
+    ],
+  })
+  // Stroke the outline (uniform width) rather than insetting a scaled polygon,
+  // which would taper the border at the apex.
+  invaderContext = new GraphicsContext()
+    .poly(pts).fill(fill)
+    .poly(pts).stroke({ width: INVADER_BORDER_W, color: INVADER_BORDER, alignment: 0.5, join: 'miter', miterLimit: 6 })
+  return invaderContext
+}
+
+// __bodyContainer is left unset so tick() skips facing-rotation.
+function drawInvaderCreep(container: ContainerWithTarget): void {
+  container.addChild(new Graphics({ context: getInvaderContext() }))
 }
 
 function getCreepStore(obj: RoomObject): { used: number; capacity: number } {
@@ -876,6 +914,16 @@ function isForeignCreep(obj: RoomObject, currentUserId?: string): boolean {
   return creepUser !== currentUserId
 }
 
+// NPC users are never sent in the client `users` map, so detect by the engine's
+// stable Invader user id rather than username (which would never resolve).
+const USER_INVADER = '2'
+function isInvaderCreep(obj: RoomObject, users?: Record<string, { username: string }>): boolean {
+  const u = typeof obj.user === 'string' ? obj.user : undefined
+  if (!u) return false
+  if (u === USER_INVADER) return true
+  return users?.[u]?.username === 'Invader'
+}
+
 function createObjectVisual(
   obj: RoomObject,
   showLabel = true,
@@ -899,6 +947,11 @@ function createObjectVisual(
 
   switch (obj.type) {
     case 'creep': {
+      if (isInvaderCreep(obj, users)) {
+        drawInvaderCreep(container as ContainerWithTarget)
+        break
+      }
+
       const FULL = 2 * Math.PI
 
       const bodyContainer = new Container()
@@ -1990,7 +2043,7 @@ function createObjectVisual(
     let labelText: string
     if (isForeign) {
       const userId = typeof obj.user === 'string' ? obj.user : undefined
-      labelText = userId ? (users?.[userId]?.username ?? userId) : 'Hostile'
+      labelText = isInvaderCreep(obj, users) ? 'Invader' : userId ? (users?.[userId]?.username ?? userId) : 'Hostile'
     } else {
       labelText = obj.name as string
     }
@@ -3562,7 +3615,7 @@ export class ObjectLayer {
       if (!visual.__nameLabel) continue
       if (!isForeignCreep(obj, this.currentUserId)) continue
       const userId = typeof obj.user === 'string' ? obj.user : undefined
-      const labelText = userId ? (this.users?.[userId]?.username ?? userId) : 'Hostile'
+      const labelText = isInvaderCreep(obj, this.users) ? 'Invader' : userId ? (this.users?.[userId]?.username ?? userId) : 'Hostile'
       if (visual.__nameLabel.text !== labelText) {
         visual.__nameLabel.text = labelText
       }

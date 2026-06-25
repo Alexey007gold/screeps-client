@@ -127,6 +127,11 @@ export const CS_FOREIGN_LIGHT = 0xE0A0A0
 export const CREEP_RING_DARK = BG_MEDIUM
 export const CREEP_NOTCH     = 0xd0d0d0
 
+// ── Invader (NPC) creeps ───────────────────────────────────────────────────
+export const INVADER_BORDER   = 0x3e1212  // gem border
+export const INVADER_FILL_TOP = 0xdc5648  // gem fill, top of gradient
+export const INVADER_FILL_BOT = 0xb6322a  // gem fill, bottom of gradient
+
 // ── Screeps canonical structure palette ────────────────────────────────────
 export const ST_DARK           = 0x181818  // structure dark background
 export const ST_GRAY           = 0x555555  // structure gray fill
