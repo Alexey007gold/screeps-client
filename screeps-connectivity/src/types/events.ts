@@ -68,6 +68,9 @@ export interface HttpClientEvents {
         path: string
         status: number
         error: Error
+        // Set when the request opted out of user-facing error surfacing (e.g. an
+        // optional endpoint whose failure the caller handles gracefully).
+        silent?: boolean
     }
     'http:tokenRefresh': {
         token: string

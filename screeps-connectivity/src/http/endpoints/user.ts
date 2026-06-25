@@ -3,6 +3,8 @@ import type {
   ApiUserBranchesResponse,
   ApiUserFindResponse,
   ApiUserMoneyHistoryResponse,
+  ApiUserOverviewResponse,
+  ApiUserRoomsResponse,
 } from '../../types/api.js'
 import { createUserMessagesEndpoints, type UserMessagesEndpoints } from './user-messages.js'
 
@@ -30,8 +32,8 @@ export interface UserEndpoints {
   }
   console(expression: string, shard?: string | null): Promise<unknown>
   stats(interval: number): Promise<unknown>
-  rooms(id: string): Promise<unknown>
-  overview(interval: number, statName: string): Promise<unknown>
+  rooms(id: string): Promise<ApiUserRoomsResponse>
+  overview(interval: number, statName: string): Promise<ApiUserOverviewResponse>
   worldStatus(): Promise<{ ok: number; status: 'normal' | 'lost' | 'empty' }>
   worldStartRoom(shard?: string | null): Promise<unknown>
   find(query: { username: string } | { id: string }): Promise<ApiUserFindResponse>
@@ -73,8 +75,11 @@ export function createUserEndpoints(http: HttpClient): UserEndpoints {
     },
     console: (expression, shard) => http.request('POST', '/api/user/console', withShard({ expression }, shard)),
     stats: (interval) => http.request('GET', '/api/user/stats', { interval }),
-    rooms: (id) => http.request('GET', '/api/user/rooms', { id }),
-    overview: (interval, statName) => http.request('GET', '/api/user/overview', { interval, statName }),
+    // Best-effort dashboard data: not every server implements these, and the
+    // Overview page degrades gracefully (zeros / no tiles), so a failure here
+    // shouldn't raise a user-facing error toast — mark them silent.
+    rooms: (id) => http.request('GET', '/api/user/rooms', { id }, { silent: true }),
+    overview: (interval, statName) => http.request('GET', '/api/user/overview', { interval, statName }, { silent: true }),
     worldStatus: () => http.request('GET', '/api/user/world-status'),
     worldStartRoom: (shard) => http.request('GET', '/api/user/world-start-room', withShard({}, shard)),
     find: (query) => http.request('GET', '/api/user/find', query as Record<string, unknown>),

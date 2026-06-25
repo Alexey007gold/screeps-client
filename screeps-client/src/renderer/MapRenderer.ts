@@ -7,16 +7,17 @@ import { defaultSpriteTheme } from './themes/default.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap } from './terrainCache.js'
 import TerrainWorker from './terrain.worker.ts?worker'
+import { TERRAIN_WALL, TERRAIN_BORDER } from '~/renderer/colors.js'
 import {
-  TERRAIN_WALL, TERRAIN_ROAD, TERRAIN_BORDER,
-  OBJ_CYAN, OBJ_ORANGE, OBJ_GREEN, OBJ_FOREIGN, ENERGY_FILL,
-} from '~/renderer/colors.js'
+  MINIMAP_TILE, MINIMAP_ROAD, MINIMAP_WALLS_OWN, MINIMAP_WALLS_FOREIGN,
+  MINIMAP_USER_OWN, MINIMAP_USER_FOREIGN, MAP2_DOT_FEATURES, MAP2_FIXED_KEYS,
+} from '~/renderer/minimap.js'
 import { createLogger } from '~/utils/log.js'
 
 const { warn } = createLogger('MapRenderer')
 import type { MapOverlayMode } from '~/stores/mapOverlayStore.js'
 
-export const MAP_TILE_SIZE = 3
+export const MAP_TILE_SIZE = MINIMAP_TILE
 export const MAP_ROOM_SIZE = MAP_TILE_SIZE * 50  // 150px per room
 
 // Screen pixel size for each control level (1–8) at zoom = 1.
@@ -38,17 +39,8 @@ const VISIBLE_DEBOUNCE_MS = 5
 const MIN_ZOOM = 0.2
 const MAX_ZOOM = 5
 
-const COLOR_SOURCE          = ENERGY_FILL // sources
-const COLOR_CONTROLLER      = 0xffffff    // controllers
-const COLOR_MINERAL         = OBJ_CYAN    // minerals
-const COLOR_KEEPER          = OBJ_ORANGE  // source keeper lairs
-const COLOR_POWERBANK       = 0xff2222    // power banks (power resource — bright red so it stands out)
-const COLOR_DEPOSIT         = 0xffffff    // deposits (highway commodity resource — white)
-const COLOR_USER_OWN        = OBJ_GREEN   // own creeps/structures
-const COLOR_USER_FOREIGN    = OBJ_FOREIGN // foreign creeps/structures
-const COLOR_WALLS_OWN       = 0x447744   // own room walls/ramparts
-const COLOR_WALLS_FOREIGN   = 0x882222   // foreign room walls/ramparts
-const MAP2_FIXED_KEYS  = new Set(['w', 'r', 'pb', 'p', 's', 'c', 'm', 'k', 'd'])
+// Minimap dot/terrain palette + dot spec live in ~/renderer/minimap.js (shared
+// with the terrain worker and the Overview room-preview tiles).
 
 const MINERAL_WORLD_SIZES = [80, 104, 128, 160] // world-space px per density — scales naturally with zoom
 
@@ -394,56 +386,23 @@ export class MapRenderer {
     for (const [x, y] of roads) {
       g.rect(x * MT, y * MT, MT, MT)
     }
-    if (roads.length) g.fill(TERRAIN_ROAD)
+    if (roads.length) g.fill(MINIMAP_ROAD)
 
     // Player-built walls / ramparts — color depends on room ownership
     const walls = data.w ?? []
     for (const [x, y] of walls) {
       g.rect(x * MT + 0.5, y * MT + 0.5, MT - 1, MT - 1)
     }
-    if (walls.length) g.fill(entry.ownerState === 'other' ? COLOR_WALLS_FOREIGN : COLOR_WALLS_OWN)
+    if (walls.length) g.fill(entry.ownerState === 'other' ? MINIMAP_WALLS_FOREIGN : MINIMAP_WALLS_OWN)
 
-    // Sources — gold dot
-    const sources = data.s ?? []
-    for (const [x, y] of sources) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.5)
+    // Point features (sources, controllers, minerals, keepers, power banks, deposits) — dots
+    for (const feat of MAP2_DOT_FEATURES) {
+      const positions = data[feat.key] ?? []
+      for (const [x, y] of positions) {
+        g.circle((x + 0.5) * MT, (y + 0.5) * MT, feat.radius)
+      }
+      if (positions.length) g.fill(feat.color)
     }
-    if (sources.length) g.fill(COLOR_SOURCE)
-
-    // Controllers — blue dot
-    const controllers = data.c ?? []
-    for (const [x, y] of controllers) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
-    }
-    if (controllers.length) g.fill(COLOR_CONTROLLER)
-
-    // Minerals — cyan dot
-    const minerals = data.m ?? []
-    for (const [x, y] of minerals) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
-    }
-    if (minerals.length) g.fill(COLOR_MINERAL)
-
-    // Keeper lairs — orange dot
-    const keepers = data.k ?? []
-    for (const [x, y] of keepers) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.0)
-    }
-    if (keepers.length) g.fill(COLOR_KEEPER)
-
-    // Power banks — bright red dot (power resource — kept prominent so it stands out)
-    const powerBanks = data.pb ?? []
-    for (const [x, y] of powerBanks) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.5)
-    }
-    if (powerBanks.length) g.fill(COLOR_POWERBANK)
-
-    // Deposits — white dot (highway commodity resource — kept prominent)
-    const deposits = data.d ?? []
-    for (const [x, y] of deposits) {
-      g.circle((x + 0.5) * MT, (y + 0.5) * MT, 2.5)
-    }
-    if (deposits.length) g.fill(COLOR_DEPOSIT)
 
     // User objects — green for current user, muted red for others
     const dataRec = data as Record<string, [number, number][]>
@@ -455,7 +414,7 @@ export class MapRenderer {
       for (const [x, y] of positions) {
         g.circle((x + 0.5) * MT, (y + 0.5) * MT, 1.0)
       }
-      const color = key === this.currentUserId ? COLOR_USER_OWN : COLOR_USER_FOREIGN
+      const color = key === this.currentUserId ? MINIMAP_USER_OWN : MINIMAP_USER_FOREIGN
       g.fill(color)
     }
   }

@@ -167,9 +167,11 @@ export async function connect(opts: {
       setSession(SS.token, token)
     })
 
-    screepsClient.http.on('http:error', ({ method, path, error }) => {
+    screepsClient.http.on('http:error', ({ method, path, error, silent }) => {
       log('http error:', method, path, error.message)
-      addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
+      // Optional endpoints (e.g. /api/user/overview) opt out of the toast; the
+      // caller handles their failure, so don't nag the user about it.
+      if (!silent) addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
     })
 
     screepsClient.stores.server.on('server:disconnected', (data) => {

@@ -1,5 +1,5 @@
 import { createEffect, createSignal, lazy, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js'
-import { Map, LayoutGrid, Code2, Settings, LogIn, ChevronLeft, ChevronRight } from 'lucide-solid'
+import { Map, LayoutGrid, Code2, Settings, LogIn, ChevronLeft, ChevronRight, LayoutDashboard } from 'lucide-solid'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ToastContainer } from '~/components/ToastContainer.js'
@@ -22,6 +22,7 @@ import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick
 import { widescreenMode } from '~/stores/settingsStore.js'
 import { toggleShowLog, toggleShowConsole, toggleShowMemory } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
+import { goToOverview } from '~/stores/routeStore.js'
 
 import { parseRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
@@ -454,6 +455,11 @@ export function Dashboard() {
         <HeaderButton title={mapMode() ? 'Room View' : 'Map'} active={mapMode()} onClick={toggleMap}>
           {mapMode() ? <LayoutGrid size={16} /> : <Map size={16} />}
         </HeaderButton>
+        <Show when={!isGuest()}>
+          <HeaderButton title="Overview" onClick={goToOverview}>
+            <LayoutDashboard size={16} />
+          </HeaderButton>
+        </Show>
         <Show when={!isGuest()}>
           <HeaderButton title="Code Editor" active={showCode()} onClick={() => { setShowCode((v) => !v); setShowSettings(false) }}>
             <Code2 size={16} />

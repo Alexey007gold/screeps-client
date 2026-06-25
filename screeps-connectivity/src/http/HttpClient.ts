@@ -16,6 +16,14 @@ export interface RateLimitInfo {
   reset: number
 }
 
+export interface RequestOptions {
+  /** Internal: marks the post-auth retry so a second 401 doesn't loop. */
+  isRetry?: boolean
+  /** Suppress user-facing surfacing of failures (the http:error event carries the
+   *  flag through). Use for optional endpoints the caller handles gracefully. */
+  silent?: boolean
+}
+
 export class HttpClient extends EventTarget {
   readonly baseUrl: string
   private readonly authStrategy: AuthStrategy
@@ -79,7 +87,7 @@ export class HttpClient extends EventTarget {
     this.token = token
   }
 
-  async request<T>(method: string, path: string, body?: Record<string, unknown>, isRetry = false): Promise<T> {
+  async request<T>(method: string, path: string, body?: Record<string, unknown>, opts: RequestOptions = {}): Promise<T> {
     this.logger.log(method, path)
     const url = new URL(path.startsWith('/') ? path.slice(1) : path, this.baseUrl)
     const headers: Record<string, string> = {}
@@ -115,9 +123,9 @@ export class HttpClient extends EventTarget {
 
     this.updateRateLimit(path, res)
 
-    if (res.status === 401 && !isRetry && !this.authenticating) {
+    if (res.status === 401 && !opts.isRetry && !this.authenticating) {
       await this.authenticate()
-      return this.request<T>(method, path, body, true)
+      return this.request<T>(method, path, body, { ...opts, isRetry: true })
     }
 
     // 304: some servers (e.g. private Screeps) send a body with 304 — treat it as success
@@ -125,7 +133,7 @@ export class HttpClient extends EventTarget {
       let body = ''
       try { body = await res.text() } catch { /* ignore */ }
       const error = new Error(`HTTP ${res.status}: ${body}`)
-      this.emit('http:error', { method, path, status: res.status, error })
+      this.emit('http:error', { method, path, status: res.status, error, silent: opts.silent })
       throw error
     }
 
@@ -135,7 +143,7 @@ export class HttpClient extends EventTarget {
 
     if (typeof data['error'] === 'string') {
       const error = new Error(`Screeps API error: ${data['error']}`)
-      this.emit('http:error', { method, path, status: res.status, error })
+      this.emit('http:error', { method, path, status: res.status, error, silent: opts.silent })
       throw error
     }
 

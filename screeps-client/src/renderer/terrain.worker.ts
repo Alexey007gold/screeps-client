@@ -1,8 +1,9 @@
 import { TerrainType } from 'screeps-connectivity'
-
-const TERRAIN_PLAIN = 0x2d333b
-const TERRAIN_WALL  = 0x0d1117
-const TERRAIN_SWAMP = 0x3d5a3d
+import {
+  MINIMAP_PLAIN as TERRAIN_PLAIN,
+  MINIMAP_WALL as TERRAIN_WALL,
+  MINIMAP_SWAMP as TERRAIN_SWAMP,
+} from './minimap.js'
 
 const LOD_SIZES = [128, 512]
 
