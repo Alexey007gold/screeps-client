@@ -5,6 +5,7 @@ import { ConnectingScreen } from '~/components/ConnectingScreen.js'
 import { Dashboard } from './Dashboard.js'
 import { Overview } from '~/components/Overview.js'
 import { Profile } from '~/components/Profile.js'
+import { PowerCreeps } from '~/components/power/PowerCreeps.js'
 import { route } from '~/stores/routeStore.js'
 import { isEmbedded, isXxscreepsMode, embeddedServerUrl } from '~/utils/embedded.js'
 import { createLogger } from '~/utils/log.js'
@@ -67,7 +68,9 @@ export function App() {
             ? <Overview />
             : route() === 'profile'
               ? <Profile />
-              : <Dashboard />)
+              : route() === 'power'
+                ? <PowerCreeps />
+                : <Dashboard />)
         : booting()
           ? <ConnectingScreen />
           : <LoginForm />}

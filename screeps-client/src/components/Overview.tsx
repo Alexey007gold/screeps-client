@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, For, Show } from 'solid
 import { ChevronLeft } from 'lucide-solid'
 import type { ApiUserOverviewTotals, ApiUserRoomsResponse } from 'screeps-connectivity'
 import { client, userInfo } from '~/stores/clientStore.js'
-import { goToGame, goToRoom } from '~/stores/routeStore.js'
+import { goToGame, goToRoom, goToPower } from '~/stores/routeStore.js'
 import { RankRing, GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
 import { PlayerBadge } from '~/components/PlayerBadge.js'
 import { RoomPreviewTile } from '~/components/RoomPreviewTile.js'
@@ -155,9 +155,9 @@ export function Overview() {
             <div>
               <div style={{ 'font-size': '16px', 'font-weight': 600, color: TEXT, 'margin-bottom': '8px' }}>Global Power Level</div>
               <button
-                disabled
-                title="Not available yet"
-                style={{ padding: '5px 10px', 'border-radius': '4px', border: `1px solid ${BORDER}`, background: '#21262d', color: MUTED, 'font-size': '12px', cursor: 'default', opacity: 0.7 }}
+                onClick={goToPower}
+                title="Manage your power creeps"
+                style={{ padding: '5px 10px', 'border-radius': '4px', border: '1px solid #C54444', background: '#21262d', color: '#ffb7ba', 'font-size': '12px', cursor: 'pointer' }}
               >
                 Manage Power Creeps
               </button>
