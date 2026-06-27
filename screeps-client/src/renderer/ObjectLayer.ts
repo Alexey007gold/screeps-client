@@ -626,6 +626,26 @@ function updateTerminalFill(visual: ContainerWithTarget, fraction: number): void
   }
 }
 
+// Terminal cooldown pulse: vanilla breathes a highlight over the terminal's four cardinal
+// triangles once per tick while on send cooldown. Our terminal already forms those triangles
+// where the light inner octagon (apex at ±0.65) shows around the grey plate (±0.45); we overlay
+// a white highlight on exactly those four tabs, drawn once at peak and alpha-pulsed by the
+// ticker (0 → peak → 0), matching the lab idiom.
+const TERMINAL_GLOW_COLOR = 0xFFFFFF
+const TERMINAL_GLOW_ALPHA = 0.55   // peak; the ticker scales it by the per-tick pulse
+const TERMINAL_TRIANGLES: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
+  [[0, -0.65], [-0.45, -0.45], [0.45, -0.45]],  // top
+  [[0.65, 0], [0.45, -0.45], [0.45, 0.45]],     // right
+  [[0, 0.65], [0.45, 0.45], [-0.45, 0.45]],     // bottom
+  [[-0.65, 0], [-0.45, 0.45], [-0.45, -0.45]],  // left
+]
+function drawTerminalCooldownGlow(g: Graphics, cx: number, cy: number): void {
+  for (const tri of TERMINAL_TRIANGLES) {
+    g.poly(spts(cx, cy, tri))
+    g.fill({ color: TERMINAL_GLOW_COLOR, alpha: TERMINAL_GLOW_ALPHA })
+  }
+}
+
 // Lab: energy fills the base bar (left→right); the single stored mineral fills the bowl
 // as a disc from the centre, drawn behind the bar and tinted by mineral type.
 const LAB_BOWL_DY     = TILE_SIZE * 0.025
@@ -1610,6 +1630,16 @@ function createObjectVisual(
       termVisual.__terminalUsed = termUsed
       termVisual.__terminalCapacity = termCap
       updateTerminalFill(termVisual, calcCenterFillFraction(termUsed, termCap))
+
+      // Cooldown pulse: a white highlight over the four triangles, alpha-pulsed by the ticker
+      // while on send cooldown. cooldownTime is absolute, so store it and compare against the
+      // live game clock each frame (see cooldownEnd) instead of caching a boolean.
+      const termCooldownG = new Graphics()
+      drawTerminalCooldownGlow(termCooldownG, cx, cy)
+      termCooldownG.alpha = 0
+      container.addChild(termCooldownG)
+      termVisual.__terminalCooldownG = termCooldownG
+      termVisual.__terminalCooldownTime = cooldownEnd(obj)
       break
     }
     case 'link': {
@@ -2116,6 +2146,8 @@ type ContainerWithTarget = Container & {
   __terminalDominant?: string
   __terminalUsed?: number
   __terminalCapacity?: number
+  __terminalCooldownG?: Graphics
+  __terminalCooldownTime?: number      // absolute tick the send cooldown ends; pulse runs while > gameTime
   __labMineralG?: Graphics
   __labEnergyG?: Graphics
   __labMineralColor?: number
@@ -2386,7 +2418,7 @@ export class ObjectLayer {
     // so the rhythm stretches/compresses with the tick rate the way vanilla does, rather than
     // running at a fixed wall-clock period.
     const tickFrac = Math.min(1, (now - this.lastTickAt) / this.tickMs)
-    const labPulse = Math.sin(tickFrac * Math.PI)
+    const cooldownPulse = Math.sin(tickFrac * Math.PI)   // one breath per tick, shared by lab + terminal glows
     for (const visual of this.objects.values()) {
       if (visual.__barrelContainer) {
         const turret = visual.__barrelContainer
@@ -2433,11 +2465,17 @@ export class ObjectLayer {
         visual.__factoryWasOnCd = facOnCd
       }
       // Lab cooldown pulse: the bowl halo completes one breath per game tick (alpha 0 → peak
-      // → 0, via labPulse) while the lab's absolute cooldownTime is still ahead of the live
+      // → 0, via cooldownPulse) while the lab's absolute cooldownTime is still ahead of the live
       // game clock — tick-aligned so the rhythm tracks the tick rate like vanilla.
       if (visual.__labCooldownG) {
         const onCd = (visual.__labCooldownTime ?? 0) > this.currentGameTime
-        visual.__labCooldownG.alpha = onCd ? labPulse : 0
+        visual.__labCooldownG.alpha = onCd ? cooldownPulse : 0
+      }
+      // Terminal cooldown pulse: the four triangles breathe once per game tick (same tick-aligned
+      // pulse as the lab) while the absolute cooldownTime is still ahead of the live game clock.
+      if (visual.__terminalCooldownG) {
+        const onCd = (visual.__terminalCooldownTime ?? 0) > this.currentGameTime
+        visual.__terminalCooldownG.alpha = onCd ? cooldownPulse : 0
       }
     }
 
@@ -2849,6 +2887,7 @@ export class ObjectLayer {
                 existing.__terminalCapacity = capacity
                 this.startTerminalFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
               }
+              existing.__terminalCooldownTime = cooldownEnd(obj)
             }
             if (obj.type === 'lab') {
               const { energy, energyCap, mineralType, mineral, mineralCap } = getLabContents(obj)
