@@ -200,6 +200,8 @@ function drawCSProgress(
 // obj.spawning (needTime + remainingTime, falling back to spawnTime vs. game time).
 const SPAWN_RING_R = TILE_SIZE * 0.5
 const SPAWN_RING_W = Math.max(1, TILE_SIZE * 0.1)
+// Energy core radius — the inner yellow disc scales its radius with stored energy.
+const SPAWN_INNER_R = TILE_SIZE * 0.4
 
 // Resolve a spawn's progress to an absolute completion tick + duration, so the
 // ring can be driven by the local game clock between server updates (the server
@@ -603,6 +605,12 @@ function resourceColor(res: string): number {
 function calcCenterFillFraction(used: number, capacity: number): number {
   if (capacity <= 0 || used <= 0) return 0
   return Math.min(1, used / capacity)
+}
+
+// Spawn energy core: a yellow disc whose radius tracks the stored-energy fraction
+// (percentage full). Painted via updateExtensionFill — same center-circle fill.
+function calcSpawnFillRadius(energy: number, capacity: number): number {
+  return SPAWN_INNER_R * calcCenterFillFraction(energy, capacity)
 }
 
 // Terminal: a square that grows from the plate centre, tinted by the dominant resource.
@@ -1027,6 +1035,22 @@ function isInvaderCreep(obj: RoomObject, users?: Record<string, { username: stri
   return users?.[u]?.username === 'Invader'
 }
 
+// Tier-based zIndex: structures=0, creeps=100, flags=200; each spec adds an offset
+// within its tier. A spawning creep sits on its spawn's tile, so it drops below
+// structures (the spawn body + progress ring then render over it) instead of popping
+// on top. Other creeps stay above structures. Re-applied on update so the born
+// transition (spawning → false) restores the normal creep tier.
+function computeZIndex(obj: RoomObject, theme?: Theme | null): number {
+  const baseZ = obj.type === 'creep' ? (obj.spawning ? -1 : 100) : obj.type === 'flag' ? 200 : 0
+  const specZ = obj.type === 'flag' ? (theme?.flag?.zIndex ?? 0)
+    : obj.type === 'controller' ? (theme?.controller?.zIndex ?? 0)
+    : obj.type === 'tombstone' ? (theme?.tombstone?.zIndex ?? 0)
+    : obj.type === 'mineral' ? (theme?.mineral?.zIndex ?? 0)
+    : obj.type === 'extractor' ? EXTRACTOR_Z_INDEX
+    : (theme?.sprites[obj.type]?.zIndex ?? 0)
+  return baseZ + specZ
+}
+
 function createObjectVisual(
   obj: RoomObject,
   showLabel = true,
@@ -1216,23 +1240,59 @@ function createObjectVisual(
       break
     }
     case 'spawn': {
-      g.circle(cx, cy, TILE_SIZE * 0.65)
+      // Layered by zIndex (sorted below; body `g` is added after the switch at 0):
+      // dark backdrop `g` (0) → owner badge (1) → energy core (2) → rim outline (3)
+      // → progress ring (4). The backdrop only shows through until the badge texture
+      // resolves, or stays for NPC/unowned spawns.
+      const R = TILE_SIZE * 0.65
+      g.circle(cx, cy, R)
       g.fill(ST_DARK)
-      g.circle(cx, cy, TILE_SIZE * 0.65)
-      g.stroke({ width: TILE_SIZE * 0.1, color: 0xcccccc })
-      g.circle(cx, cy, TILE_SIZE * 0.4)
-      g.fill(ST_ENERGY)
-      // Ring sits in the dark moat and must render above the body `g` (whose
-      // dark disc is added after the switch) — sort children by zIndex so it does.
-      // Initial draw is best-effort; ObjectLayer.update() drives it per-tick.
       container.sortableChildren = true
+      const cwt = container as ContainerWithTarget
+
+      // Owner's badge fills the body disc — the structure background (was flat black).
+      const spawnUserId = typeof obj.user === 'string' ? obj.user : undefined
+      const spawnBadge = spawnUserId ? users?.[spawnUserId]?.badge : undefined
+      if (spawnBadge && badgeCache) {
+        const bs = new Sprite()
+        bs.anchor.set(0.5, 0.5)
+        bs.width = R * 2
+        bs.height = R * 2
+        bs.position.set(cx, cy)
+        bs.zIndex = 1
+        const bsMask = new Graphics()
+        bsMask.circle(cx, cy, R)
+        bsMask.fill(0xffffff)
+        bs.mask = bsMask
+        container.addChild(bs)
+        container.addChild(bsMask)
+        cwt.__spawnBadgeSprite = bs
+        badgeCache.getOrCreate(spawnBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
+      }
+
+      // Inner yellow disc, scaled to reflect stored energy (percentage full).
+      const { energy, capacity } = getExtensionEnergy(obj)
+      const fill = new Graphics()
+      fill.zIndex = 2
+      container.addChild(fill)
+      cwt.__fillGraphics = fill
+      updateExtensionFill(cwt, calcSpawnFillRadius(energy, capacity))
+      cwt.__spawnEnergy = energy
+      cwt.__spawnCapacity = capacity
+
+      // Moat rim outline — above the badge so the edge stays crisp.
+      const rim = new Graphics()
+      rim.circle(cx, cy, R)
+      rim.stroke({ width: TILE_SIZE * 0.1, color: 0xcccccc })
+      rim.zIndex = 3
+      container.addChild(rim)
+
       const spawnRing = new Graphics()
-      spawnRing.zIndex = 1
+      spawnRing.zIndex = 4
       const t = spawnTiming(obj, 0)
       const ratio = t ? spawnRatio(t.needTime, t.endTime, 0) : null
       drawSpawnRing(spawnRing, ratio)
       container.addChild(spawnRing)
-      const cwt = container as ContainerWithTarget
       cwt.__spawnRing = spawnRing
       cwt.__spawnRatio = ratio
       if (t) { cwt.__spawnNeedTime = t.needTime; cwt.__spawnEndTime = t.endTime }
@@ -2212,16 +2272,7 @@ function createObjectVisual(
     container.addChild(label)
   }
 
-  // Tier-based zIndex: structures=0, creeps=100, flags=200
-  // Each spec can add an offset within its tier via zIndex field
-  const baseZ = obj.type === 'creep' ? 100 : obj.type === 'flag' ? 200 : 0
-  const specZ = obj.type === 'flag' ? (theme?.flag?.zIndex ?? 0)
-    : obj.type === 'controller' ? (theme?.controller?.zIndex ?? 0)
-    : obj.type === 'tombstone' ? (theme?.tombstone?.zIndex ?? 0)
-    : obj.type === 'mineral' ? (theme?.mineral?.zIndex ?? 0)
-    : obj.type === 'extractor' ? EXTRACTOR_Z_INDEX
-    : (theme?.sprites[obj.type]?.zIndex ?? 0)
-  container.zIndex = baseZ + specZ
+  container.zIndex = computeZIndex(obj, theme)
 
   container.position.set(obj.x * TILE_SIZE, obj.y * TILE_SIZE)
   return container
@@ -2333,6 +2384,10 @@ type ContainerWithTarget = Container & {
   __spawnNeedTime?: number
   __spawnEndTime?: number
   __spawnSig?: string | null
+  __spawnEnergy?: number
+  __spawnCapacity?: number
+  __spawnBadgeSprite?: Sprite
+  __fillGraphics?: Graphics
   __powerBankEllipseG?: Graphics
   __powerBankPower?: number
   __powerBankRadius?: number
@@ -2833,6 +2888,14 @@ export class ObjectLayer {
       calcCenterFillFraction(fromPower, fromCap), calcCenterFillFraction(toPower, toCap))
   }
 
+  private startSpawnFillAnimation(
+    id: string, visual: ContainerWithTarget,
+    fromEnergy: number, fromCapacity: number, toEnergy: number, toCapacity: number,
+  ): void {
+    this.startFill(id, visual, updateExtensionFill,
+      calcSpawnFillRadius(fromEnergy, fromCapacity), calcSpawnFillRadius(toEnergy, toCapacity))
+  }
+
   update(objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string; badge?: Badge }>, gameTime?: number): void {
     if (users) {
       this.users = users
@@ -2931,6 +2994,9 @@ export class ObjectLayer {
                 existing.__creepUsed = used
                 existing.__creepCapacity = capacity
               }
+              // Re-tier on the spawning → born transition (and vice-versa).
+              const cz = computeZIndex(obj, this.activeTheme)
+              if (existing.zIndex !== cz) existing.zIndex = cz
             } else if (obj.type === 'flag') {
               const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
               const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
@@ -3219,6 +3285,9 @@ export class ObjectLayer {
               existing.__creepUsed = used
               existing.__creepCapacity = capacity
             }
+            // Re-tier on the spawning → born transition (and vice-versa).
+            const cz = computeZIndex(obj, this.activeTheme)
+            if (existing.zIndex !== cz) existing.zIndex = cz
           } else if (obj.type === 'flag') {
             const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
             const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
@@ -3388,6 +3457,16 @@ export class ObjectLayer {
       if (ratio !== visual.__spawnRatio) {
         drawSpawnRing(visual.__spawnRing, ratio)
         visual.__spawnRatio = ratio
+      }
+      // Tween the inner energy disc when stored energy changes (same loop already
+      // has `obj` to hand, so both diff/full update paths stay covered here).
+      if (obj) {
+        const { energy, capacity } = getExtensionEnergy(obj)
+        if (visual.__spawnEnergy !== energy || visual.__spawnCapacity !== capacity) {
+          this.startSpawnFillAnimation(id, visual, visual.__spawnEnergy ?? 0, visual.__spawnCapacity ?? capacity, energy, capacity)
+          visual.__spawnEnergy = energy
+          visual.__spawnCapacity = capacity
+        }
       }
     }
 
