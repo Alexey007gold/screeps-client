@@ -1,13 +1,14 @@
 import { createEffect, createSignal, onCleanup, onMount, For, Show } from 'solid-js'
 import { ChevronLeft } from 'lucide-solid'
-import type { ApiUserOverviewTotals, ApiUserRoomsResponse } from 'screeps-connectivity'
+import type { ApiUserOverviewTotals } from 'screeps-connectivity'
 import { client, userInfo } from '~/stores/clientStore.js'
 import { goToGame, goToRoom, goToPower } from '~/stores/routeStore.js'
 import { RankRing, GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
 import { PlayerBadge } from '~/components/PlayerBadge.js'
 import { RoomPreviewTile } from '~/components/RoomPreviewTile.js'
+import { StatTileRow } from '~/components/AccountStatTiles.js'
+import { extractOwnedRooms, type OwnedRoom } from '~/utils/ownedRooms.js'
 import { gclProgress, gplProgress, type LevelProgress } from '~/utils/levels.js'
-import { formatStat } from '~/utils/formatStat.js'
 
 // Vanilla refetches the overview (and re-reads the account record) on a 60s
 // timer rather than via a socket subscription; mirror that cadence.
@@ -22,42 +23,6 @@ const PANEL = '#161b22'
 const BORDER = '#30363d'
 const TEXT = '#c9d1d9'
 const MUTED = '#8b949e'
-
-const STAT_TILES: Array<{ key: keyof ApiUserOverviewTotals; l1: string; l2: string; color: string }> = [
-  { key: 'energyControl', l1: 'Control', l2: 'points', color: '#A7FFEB' },
-  { key: 'energyHarvested', l1: 'Energy', l2: 'harvested', color: '#ffe56d' },
-  { key: 'energyConstruction', l1: 'Energy', l2: 'on construct', color: '#eeeeee' },
-  { key: 'energyCreeps', l1: 'Energy', l2: 'on creeps', color: '#eeeeee' },
-  { key: 'creepsProduced', l1: 'Creeps', l2: 'produced', color: '#65fd62' },
-  { key: 'creepsLost', l1: 'Creeps', l2: 'lost', color: '#f96e76' },
-  { key: 'powerProcessed', l1: 'Power', l2: 'processed', color: '#E04040' },
-]
-
-function StatTile(props: { l1: string; l2: string; color: string; value: number | undefined }) {
-  return (
-    <div style={{ flex: 1, 'min-width': '0', background: PANEL, border: `1px solid ${BORDER}`, 'border-radius': '6px', padding: '14px 8px 12px', 'text-align': 'center' }}>
-      <div style={{ color: MUTED, 'font-size': '11px', 'text-transform': 'uppercase', 'line-height': '1.3' }}>
-        {props.l1}<br />{props.l2}
-      </div>
-      <div style={{ color: props.color, 'font-size': '28px', 'font-weight': 300, 'margin-top': '8px' }}>{formatStat(props.value)}</div>
-    </div>
-  )
-}
-
-interface OwnedRoom {
-  room: string
-  shard: string | null
-}
-
-// The rooms endpoint shape varies by server: multishard keys rooms by shard,
-// single-shard may return a flat list. Normalize both to {room, shard}.
-function extractOwnedRooms(res: ApiUserRoomsResponse): OwnedRoom[] {
-  if (res.shards) {
-    return Object.entries(res.shards).flatMap(([shard, list]) =>
-      (list ?? []).map((room) => ({ room, shard })))
-  }
-  return (res.rooms ?? []).map((room) => ({ room, shard: null }))
-}
 
 export function Overview() {
   const [totals, setTotals] = createSignal<ApiUserOverviewTotals | null>(null)
@@ -166,11 +131,7 @@ export function Overview() {
         </div>
 
         {/* Lifetime stat tiles */}
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <For each={STAT_TILES}>
-            {(t) => <StatTile l1={t.l1} l2={t.l2} color={t.color} value={totals()?.[t.key]} />}
-          </For>
-        </div>
+        <StatTileRow totals={totals()} />
 
         {/* Owned-room minimaps */}
         <Show when={rooms().length}>

@@ -239,7 +239,26 @@ export interface ApiUserFindResponse {
     username: string
     badge: import('./game.js').Badge
     gcl: number
+    // Lifetime power (GPL) — present in the public lookup alongside gcl.
+    power?: number
   }
+}
+
+/** Response of GET /api/user/stats?id=&interval=. `stats` maps a metric to per-tick buckets; consumers sum the bucket values over the interval. */
+export interface ApiUserStatsResponse {
+  ok: number
+  stats?: Record<string, Array<{ value: number; endTime?: number }>>
+  statsMax?: Record<string, number>
+}
+
+/** Response of GET /api/leaderboard/find?username=&mode=&season=. Servers return either a flat list of per-season records or a single season-scoped record at the top level. */
+export interface ApiLeaderboardFindResponse {
+  ok: number
+  list?: Array<{ season: string; rank: number; score: number; user: string }>
+  rank?: number
+  score?: number
+  season?: string
+  user?: string
 }
 
 export interface ApiUserMoneyHistoryResponse {

@@ -5,6 +5,7 @@ import type {
   ApiUserMoneyHistoryResponse,
   ApiUserOverviewResponse,
   ApiUserRoomsResponse,
+  ApiUserStatsResponse,
 } from '../../types/api.js'
 import type { NotifyPrefs } from '../../types/game.js'
 import { createUserMessagesEndpoints, type UserMessagesEndpoints } from './user-messages.js'
@@ -24,7 +25,7 @@ export interface UserEndpoints {
     }
   }
   console(expression: string, shard?: string | null): Promise<unknown>
-  stats(interval: number): Promise<unknown>
+  stats(interval: number, id?: string): Promise<ApiUserStatsResponse>
   rooms(id: string): Promise<ApiUserRoomsResponse>
   overview(interval: number, statName: string): Promise<ApiUserOverviewResponse>
   worldStatus(): Promise<{ ok: number; status: 'normal' | 'lost' | 'empty' }>
@@ -67,7 +68,7 @@ export function createUserEndpoints(http: HttpClient): UserEndpoints {
       },
     },
     console: (expression, shard) => http.request('POST', '/api/user/console', withShard({ expression }, shard)),
-    stats: (interval) => http.request('GET', '/api/user/stats', { interval }),
+    stats: (interval, id) => http.request('GET', '/api/user/stats', id != null ? { interval, id } : { interval }, { silent: true }),
     // Best-effort dashboard data: not every server implements these, and the
     // Overview page degrades gracefully (zeros / no tiles), so a failure here
     // shouldn't raise a user-facing error toast — mark them silent.

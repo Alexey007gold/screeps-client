@@ -2,6 +2,7 @@ import { Show, createMemo } from 'solid-js'
 import { badgeToSvg } from 'screeps-connectivity'
 import type { Badge } from 'screeps-connectivity'
 import type { RoomInfo } from '~/components/MapViewer.js'
+import { UserLink } from '~/components/UserLink.js'
 
 const DENSITY_LABELS = ['Low', 'Medium', 'High', 'Ultra'] as const
 
@@ -52,7 +53,11 @@ function PlayerValue(props: { name: string | null; badge: Badge | null }) {
           }}
         >
           <Show when={props.badge}>{(badge) => <BadgeIcon badge={badge()} />}</Show>
-          <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>{name()}</span>
+          <UserLink
+            username={name()}
+            color="#c9d1d9"
+            style={{ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}
+          />
         </div>
       )}
     </Show>
@@ -183,7 +188,7 @@ export function RoomInfoBox(props: { label: string; info: RoomInfo | null; dim?:
                     >
                       <span>&mdash;</span>
                       <Show when={sign().badge}>{(badge) => <BadgeIcon badge={badge()} />}</Show>
-                      <span>{sign().username}</span>
+                      <UserLink username={sign().username} color="#8b949e" />
                     </div>
                   </Show>
                   <div style={{ 'align-self': 'flex-end', color: '#484f58', 'font-size': '10px' }}>

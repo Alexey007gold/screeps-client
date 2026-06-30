@@ -42,10 +42,15 @@ function fillDots(ctx: CanvasRenderingContext2D, positions: [number, number][], 
 // One ~150px minimap of an owned room: baked terrain + map2 object dots, the
 // same per-room render as the world map but on a plain 2D canvas. Consumes the
 // shared minimap.ts palette so it stays pixel-identical to MapRenderer.
-export function RoomPreviewTile(props: { room: string; shard: string | null; onClick?: () => void }) {
+// `ownerId` marks which user's objects render in own-green vs foreign-red;
+// defaults to the logged-in user (Overview), set to the profiled user on a public
+// profile so their structures show green.
+export function RoomPreviewTile(props: { room: string; shard: string | null; ownerId?: string; onClick?: () => void }) {
   let canvas: HTMLCanvasElement | undefined
   let terrain: Terrain = null
   let map2: Partial<RoomMap2Data> | null = null
+  // The user whose objects render own-green; captured at mount (stable per tile).
+  let ownerId: string | undefined
 
   const draw = (): void => {
     const ctx = canvas?.getContext('2d')
@@ -71,7 +76,7 @@ export function RoomPreviewTile(props: { room: string; shard: string | null; onC
       for (const feat of MAP2_DOT_FEATURES) fillDots(ctx, data[feat.key] ?? [], feat.color, feat.radius)
       // Remaining keys are userIds → object dots, green for self, muted red for others.
       const rec = data as Record<string, [number, number][]>
-      const uid = userInfo()?._id
+      const uid = ownerId ?? userInfo()?._id
       for (const key in rec) {
         if (MAP2_FIXED_KEYS.has(key)) continue
         const positions = rec[key]
@@ -84,6 +89,7 @@ export function RoomPreviewTile(props: { room: string; shard: string | null; onC
   onMount(() => {
     const c = client()
     if (!c) return
+    ownerId = props.ownerId
     c.stores.room.terrain(props.room, props.shard).then((t) => { terrain = t; draw() }).catch(() => {})
     const sub = c.stores.map.subscribeMap2(props.room, props.shard)
     // Synchronous first paint from the in-memory cache. subscribeMap2 also schedules

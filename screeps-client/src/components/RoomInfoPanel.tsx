@@ -6,6 +6,7 @@ import { roomViewMode, setRoomViewMode, type RoomViewMode } from '~/stores/roomV
 import { historyMode, enterHistoryMode, exitHistoryMode } from '~/stores/historyStore.js'
 import { showCreepLabels, setShowCreepLabels, showRoomVisuals, setShowRoomVisuals } from '~/stores/settingsStore.js'
 import { CONTROLLER_LEVEL_TOTAL } from '~/utils/gameConstants.js'
+import { UserLink } from '~/components/UserLink.js'
 
 interface RoomInfoPanelProps {
   room: string
@@ -53,12 +54,18 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
         <div style={{ padding: '3px 0', color: '#8b949e' }}>Objects</div>
         <div style={{ padding: '3px 0', color: '#c9d1d9' }}>{roomObjectCount() ?? '—'}</div>
         <div style={{ padding: '3px 0', color: '#8b949e' }}>Owner</div>
-        <div style={{ padding: '3px 0', color: '#c9d1d9' }}>{roomOwner()?.username ?? '—'}</div>
+        <div style={{ padding: '3px 0', color: '#c9d1d9' }}>
+          <UserLink username={roomOwner()?.username} fallback="—" color="#c9d1d9" />
+        </div>
         <Show when={!roomOwner() && controllerReservation()}>
           <>
             <div style={{ padding: '3px 0', color: '#8b949e' }}>Reserved by</div>
             <div style={{ padding: '3px 0', color: '#c9d1d9' }}>
-              {roomUsers()?.[controllerReservation()!.user]?.username ?? controllerReservation()!.user}
+              <UserLink
+                username={roomUsers()?.[controllerReservation()!.user]?.username}
+                fallback={controllerReservation()!.user}
+                color="#c9d1d9"
+              />
             </div>
             <div style={{ padding: '3px 0', color: '#8b949e' }}>Expires in</div>
             <div style={{ padding: '3px 0', color: '#c9d1d9', 'font-variant-numeric': 'tabular-nums' }}>

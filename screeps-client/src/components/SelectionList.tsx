@@ -11,6 +11,7 @@ import { roomOwner, roomUsers, currentShard, currentRoom } from '~/stores/roomDa
 import { createLogger } from '~/utils/log.js'
 import { CONTROLLER_DOWNGRADE, CONTROLLER_LEVEL_TOTAL } from '~/utils/gameConstants.js'
 import { ColorPicker } from '~/components/ColorPicker.js'
+import { UserLink } from '~/components/UserLink.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 
 const { log, error } = createLogger('SelectionList')
@@ -268,10 +269,14 @@ function CreepDetails(props: { item: SelectedObject }) {
   const raw = () => props.item.raw as Record<string, unknown>
 
   const userId = () => typeof raw().user === 'string' ? (raw().user as string) : null
+  const ownerUsername = () => {
+    const uid = userId()
+    return uid ? roomUsers()?.[uid]?.username ?? null : null
+  }
   const ownerName = () => {
     const uid = userId()
     if (!uid) return null
-    return roomUsers()?.[uid]?.username ?? uid
+    return ownerUsername() ?? uid
   }
 
   const hits = () => typeof raw().hits === 'number' ? (raw().hits as number) : null
@@ -298,7 +303,7 @@ function CreepDetails(props: { item: SelectedObject }) {
         <Show when={ownerName()}>
           <>
             <div style={kvCell(true)}>Owner</div>
-            <div style={kvCell()}>{ownerName()}</div>
+            <div style={kvCell()}><UserLink username={ownerUsername()} fallback={ownerName()} /></div>
           </>
         </Show>
 
@@ -591,13 +596,16 @@ function ControllerDetails(props: { item: SelectedObject }) {
     <div>
       <div style={kvGrid}>
         <div style={kvCell(true)}>Owner</div>
-        <div style={kvCell()}>{ownerName() ?? 'None'}</div>
+        <div style={kvCell()}><UserLink username={roomOwner()?.username} fallback={ownerName() ?? 'None'} /></div>
 
         <Show when={reservation()}>
           <>
             <div style={kvCell(true)}>Reserved by</div>
             <div style={kvCell()}>
-              {roomUsers()?.[reservation()!.user]?.username ?? reservation()!.user}
+              <UserLink
+                username={roomUsers()?.[reservation()!.user]?.username}
+                fallback={reservation()!.user}
+              />
             </div>
             <div style={kvCell(true)}>Reservation</div>
             <div style={{ ...kvCell(), 'font-variant-numeric': 'tabular-nums' }}>
@@ -895,10 +903,14 @@ function RuinDetails(props: { item: SelectedObject }) {
   }
 
   const userId = () => typeof raw().user === 'string' ? (raw().user as string) : null
+  const ownerUsername = () => {
+    const uid = userId()
+    return uid ? roomUsers()?.[uid]?.username ?? null : null
+  }
   const ownerName = () => {
     const uid = userId()
     if (!uid) return null
-    return roomUsers()?.[uid]?.username ?? uid
+    return ownerUsername() ?? uid
   }
 
   const structure = () => raw().structure as Record<string, unknown> | undefined
@@ -924,7 +936,7 @@ function RuinDetails(props: { item: SelectedObject }) {
         <Show when={ownerName()}>
           <>
             <div style={kvCell(true)}>Owner</div>
-            <div style={kvCell()}>{ownerName()}</div>
+            <div style={kvCell()}><UserLink username={ownerUsername()} fallback={ownerName()} /></div>
           </>
         </Show>
       </div>
