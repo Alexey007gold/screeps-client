@@ -104,6 +104,9 @@ describe('ScreepsClient', () => {
   })
 })
 
+// Dynamic-token auth strategy (supportsTokenRefresh defaults to true) used for token-rotation tests.
+const dynamicAuth = (initial = 'initial') => ({ authenticate: async () => initial })
+
 describe('ScreepsClient — token sync', () => {
   it('rotates SocketClient token when an HTTP response carries x-token', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -114,7 +117,7 @@ describe('ScreepsClient — token sync', () => {
 
     const client = new ScreepsClient({
       url: 'http://test.local',
-      auth: new TokenAuth({ token: 'initial' }),
+      auth: dynamicAuth(),
       storage: null,
       WebSocket: MockWS as unknown as typeof WebSocket,
       tokenRefresh: false,
@@ -129,7 +132,7 @@ describe('ScreepsClient — token sync', () => {
   it('rotates HttpClient token when WS auth response carries a new token', async () => {
     const client = new ScreepsClient({
       url: 'http://test.local',
-      auth: new TokenAuth({ token: 'initial' }),
+      auth: dynamicAuth(),
       storage: null,
       WebSocket: MockWS as unknown as typeof WebSocket,
       tokenRefresh: false,
@@ -147,16 +150,36 @@ describe('ScreepsClient — token sync', () => {
     expect(httpSetToken).toHaveBeenCalledWith('ws-rotated-token')
     expect(client.http.token).toBe('ws-rotated-token')
   })
+
+  it('does NOT sync tokens when using TokenAuth (static token)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: 1 }), {
+        headers: { 'content-type': 'application/json', 'x-token': 'server-issued' },
+      })
+    ))
+
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'my-static-token' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+    })
+
+    const socketSetToken = vi.spyOn(client.socket, 'setToken')
+    await client.http.request('GET', '/api/auth/me')
+
+    expect(socketSetToken).not.toHaveBeenCalled()
+  })
 })
 
-describe('ScreepsClient — idle token refresh', () => {
+describe('ScreepsClient — world status polling', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
   async function buildConnected(opts: { tokenRefresh?: { intervalMs?: number } | false } = {}) {
     const client = new ScreepsClient({
       url: 'http://test.local',
-      auth: new TokenAuth({ token: 'tok' }),
+      auth: dynamicAuth('tok'),
       storage: null,
       WebSocket: MockWS as unknown as typeof WebSocket,
       tokenRefresh: opts.tokenRefresh,
@@ -170,13 +193,12 @@ describe('ScreepsClient — idle token refresh', () => {
     return client
   }
 
-  it('issues a world-status call after intervalMs of HTTP idleness', async () => {
+  it('polls world-status on a fixed interval', async () => {
     const client = await buildConnected({ tokenRefresh: { intervalMs: 1_000 } })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()
 
-    // Idle for 1.5s — exceeds 1s interval, refresh should fire on next tick (every 500ms).
-    await vi.advanceTimersByTimeAsync(1_500)
+    await vi.advanceTimersByTimeAsync(1_000)
 
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
     expect(paths).toContain('/api/user/world-status')
@@ -184,19 +206,19 @@ describe('ScreepsClient — idle token refresh', () => {
     client.disconnect()
   })
 
-  it('does NOT issue an auth/me call while HTTP traffic resets the idle clock', async () => {
+  it('polls world-status even while other HTTP traffic is ongoing', async () => {
     const client = await buildConnected({ tokenRefresh: { intervalMs: 1_000 } })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()
 
-    // Make a request every 400ms, well below the 1s threshold.
-    for (let i = 0; i < 5; i++) {
+    // Continuous HTTP traffic every 200ms should not suppress the fixed poll.
+    for (let i = 0; i < 6; i++) {
       await client.http.request('GET', '/api/version')
-      await vi.advanceTimersByTimeAsync(400)
+      await vi.advanceTimersByTimeAsync(200)
     }
 
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
-    expect(paths).not.toContain('/api/auth/me')
+    expect(paths).toContain('/api/user/world-status')
 
     client.disconnect()
   })
@@ -209,8 +231,34 @@ describe('ScreepsClient — idle token refresh', () => {
     await vi.advanceTimersByTimeAsync(60_000)
 
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
-    expect(paths).not.toContain('/api/auth/me')
+    expect(paths).not.toContain('/api/user/world-status')
 
+    client.disconnect()
+  })
+
+  it('still polls world-status when using TokenAuth (token is never replaced)', async () => {
+    const client = new ScreepsClient({
+      url: 'http://test.local',
+      auth: new TokenAuth({ token: 'tok' }),
+      storage: null,
+      WebSocket: MockWS as unknown as typeof WebSocket,
+      tokenRefresh: { intervalMs: 1_000 },
+    })
+    const connectPromise = client.connect()
+    await vi.advanceTimersByTimeAsync(0)
+    const ws = MockWS.instances[MockWS.instances.length - 1]
+    ws.simulateOpen()
+    ws.simulateMessage('auth ok tok')
+    await connectPromise
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockClear()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
+    expect(paths).toContain('/api/user/world-status')
+    // Token must not have changed despite the response
+    expect(client.http.token).toBe('tok')
     client.disconnect()
   })
 
@@ -224,6 +272,6 @@ describe('ScreepsClient — idle token refresh', () => {
     await vi.advanceTimersByTimeAsync(5_000)
 
     const paths = fetchMock.mock.calls.map(([url]) => new URL(url as string).pathname)
-    expect(paths).not.toContain('/api/auth/me')
+    expect(paths).not.toContain('/api/user/world-status')
   })
 })
