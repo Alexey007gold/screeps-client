@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.screeps.client.desktop",
   "build": {
+    "removeUnusedCommands": true,
     "frontendDist": "../../screeps-client/dist/standalone",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm --filter screeps-client dev",
@@ -28,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
