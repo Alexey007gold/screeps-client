@@ -34,6 +34,7 @@ src/
 │   ├── SelectionList.tsx        # Object selection list
 │   ├── SettingsPanel.tsx        # User settings UI
 │   ├── StatsBar.tsx             # Live CPU/memory stats via UserStore
+│   ├── OAuthUsernameForm.tsx    # "Pick a username" step after an OAuth provider signup
 │   └── ToastContainer.tsx       # Toast display
 ├── renderer/
 │   ├── RoomRenderer.ts          # PixiJS Application: drag/zoom world container, nav zones
@@ -65,7 +66,8 @@ src/
     ├── embedded.ts              # Embedded/mod mode detection
     ├── log.ts                   # Logger instance
     ├── storage.ts               # localStorage key constants
-    └── useRoomNavigationKeys.ts # Keyboard shortcut hook
+    ├── useRoomNavigationKeys.ts # Keyboard shortcut hook
+    └── useOAuthLogin.ts         # OAuth popup login (Steam, Discord, ...) + provisional-account registration flow
 ```
 
 ## State management
