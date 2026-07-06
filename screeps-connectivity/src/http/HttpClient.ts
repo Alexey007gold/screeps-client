@@ -11,6 +11,12 @@ import { createRegisterEndpoints, type RegisterEndpoints } from './endpoints/reg
 import type { HttpClientEvents } from '../types/events.js'
 import type { Subscription } from '../subscription/index.js'
 
+/** xxscreeps' /api/game/create-construction route returns this in an { error }
+ *  field with status 200 to signal success. Official Screeps inserts the site
+ *  directly and returns an id, but xxscreeps returns this fake error and relies
+ *  on the room socket to show the site next tick. It is not a real error. */
+const XXSCREEPS_FALSE_ERROR = 'actually, it was fine'
+
 export interface RateLimitInfo {
   limit: number
   remaining: number
@@ -141,6 +147,13 @@ export class HttpClient extends EventTarget {
     this.emit('http:success', { method, path, status: res.status })
 
     const data = await res.json() as Record<string, unknown>
+
+    // xxscreeps' create-construction route returns { error: 'actually, it was
+    // fine' } with status 200 to signal success (see XXSCREEPS_FALSE_ERROR).
+    // Treat this sentinel as success, not an error.
+    if (data['error'] === XXSCREEPS_FALSE_ERROR) {
+      delete data['error']
+    }
 
     if (typeof data['error'] === 'string') {
       const error = new Error(`Screeps API error: ${data['error']}`)
