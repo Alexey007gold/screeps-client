@@ -584,7 +584,7 @@ export function RoomViewer(props: RoomViewerProps) {
               if (!c) return
 
               const { name, room: flagRoom, color, secondaryColor, targetRoom } = overlay
-              c.http.game.removeFlag(flagRoom, name)
+              c.http.game.removeFlag(flagRoom, name, currentShard ?? undefined)
                 .then(() => {
                   return c.http.game.createFlag(
                     targetRoom, tx, ty, name, color, secondaryColor, currentShard ?? undefined

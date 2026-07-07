@@ -38,8 +38,8 @@ export interface GameEndpoints {
   createFlag(room: string, x: number, y: number, name: string, color: number, secondaryColor: number, shard?: string | null): Promise<ApiCreateFlagResponse>
   genUniqueFlagName(): Promise<ApiGenUniqueFlagNameResponse>
   checkUniqueFlagName(name: string): Promise<ApiCheckUniqueFlagNameResponse>
-  changeFlagColor(room: string, name: string, color: number, secondaryColor: number): Promise<ApiChangeFlagColorResponse>
-  removeFlag(room: string, name: string): Promise<ApiRemoveFlagResponse>
+  changeFlagColor(room: string, name: string, color: number, secondaryColor: number, shard?: string | null): Promise<ApiChangeFlagColorResponse>
+  removeFlag(room: string, name: string, shard?: string | null): Promise<ApiRemoveFlagResponse>
   genUniqueObjectName(type: string, shard?: string | null): Promise<ApiGenUniqueObjectNameResponse>
   checkUniqueObjectName(type: string, name: string, shard?: string | null): Promise<ApiCheckUniqueObjectNameResponse>
   placeSpawn(room: string, x: number, y: number, name?: string, shard?: string | null): Promise<{ ok: number }>
@@ -89,8 +89,8 @@ export function createGameEndpoints(http: HttpClient, decorationsMock?: ApiRoomD
     createFlag: (room, x, y, name, color, secondaryColor, shard) => http.request('POST', '/api/game/create-flag', withShard({ room, x, y, name, color, secondaryColor }, shard)),
     genUniqueFlagName: () => http.request('POST', '/api/game/gen-unique-flag-name'),
     checkUniqueFlagName: (name) => http.request('POST', '/api/game/check-unique-flag-name', { name }),
-    changeFlagColor: (room, name, color, secondaryColor) => http.request('POST', '/api/game/change-flag-color', { room, name, color, secondaryColor }),
-    removeFlag: (room, name) => http.request('POST', '/api/game/remove-flag', { room, name }),
+    changeFlagColor: (room, name, color, secondaryColor, shard) => http.request('POST', '/api/game/change-flag-color', withShard({ room, name, color, secondaryColor }, shard)),
+    removeFlag: (room, name, shard) => http.request('POST', '/api/game/remove-flag', withShard({ room, name }, shard)),
     genUniqueObjectName: (type, shard) => http.request('POST', '/api/game/gen-unique-object-name', withShard({ type }, shard)),
     checkUniqueObjectName: (type, name, shard) => http.request('POST', '/api/game/check-unique-object-name', withShard({ type, name }, shard)),
     placeSpawn: (room, x, y, name, shard) => http.request('POST', '/api/game/place-spawn', withShard({ room, x, y, ...(name ? { name } : {}) }, shard)),
