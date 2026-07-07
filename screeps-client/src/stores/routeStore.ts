@@ -108,6 +108,12 @@ function parseMarketShard(): string | null {
   return new URLSearchParams(window.location.search).get('shard')
 }
 
+// Origin room the market was opened from, carried in the URL query so the
+// "target room" distance control can be pre-filled. Null means "no origin room".
+function parseMarketRoom(): string | null {
+  return new URLSearchParams(window.location.search).get('room')
+}
+
 function parsePower(): { view: PowerView; id: string | null } {
   const p = window.location.pathname
   if (p === `${userPowerPath()}/new`) return { view: 'new', id: null }
@@ -125,9 +131,10 @@ const [messagesUsername, setMessagesUsername] = createSignal<string | null>(pars
 const [marketView, setMarketView] = createSignal<MarketView>(parseMarket().view)
 const [marketResourceType, setMarketResourceType] = createSignal<string | null>(parseMarket().resourceType)
 const [marketShard, setMarketShard] = createSignal<string | null>(parseMarketShard())
+const [marketRoom, setMarketRoom] = createSignal<string | null>(parseMarketRoom())
 const [powerView, setPowerView] = createSignal<PowerView>(parsePower().view)
 const [powerCreepId, setPowerCreepId] = createSignal<string | null>(parsePower().id)
-export { route, userView, profileUsername, messagesUsername, marketView, marketResourceType, marketShard, powerView, powerCreepId }
+export { route, userView, profileUsername, messagesUsername, marketView, marketResourceType, marketShard, marketRoom, powerView, powerCreepId }
 
 // Remembered so returning to the world restores the exact game view (room +
 // shard + history tick) rather than dropping back to the default map.
@@ -197,24 +204,35 @@ export function goToProfile(username: string): void {
   setRoute('profile')
 }
 
-function shardQuery(shard: string | null): string {
-  return shard ? `?shard=${encodeURIComponent(shard)}` : ''
+function marketQuery(shard: string | null, room: string | null): string {
+  const params = new URLSearchParams()
+  if (shard) params.set('shard', shard)
+  if (room) params.set('room', room)
+  const s = params.toString()
+  return s ? `?${s}` : ''
 }
 
-export function goToMarket(shard?: string | null): void {
+// The `room` param, when omitted, preserves the current origin room so market
+// sub-navigation (shard switch, resource drill-in, back to index) keeps it. Pass
+// an explicit value (including null) only when entering the market afresh.
+export function goToMarket(shard?: string | null, room?: string | null): void {
+  const r = room === undefined ? marketRoom() : room
   rememberGamePath()
-  history.pushState(null, '', `${marketPath()}${shardQuery(shard ?? null)}`)
+  history.pushState(null, '', `${marketPath()}${marketQuery(shard ?? null, r)}`)
   setMarketResourceType(null)
   setMarketShard(shard ?? null)
+  setMarketRoom(r)
   setMarketView('all-orders')
   setRoute('market')
 }
 
-export function goToMarketResource(resourceType: string, shard?: string | null): void {
+export function goToMarketResource(resourceType: string, shard?: string | null, room?: string | null): void {
+  const r = room === undefined ? marketRoom() : room
   rememberGamePath()
-  history.pushState(null, '', `${marketPrefix()}resource/${encodeURIComponent(resourceType)}${shardQuery(shard ?? null)}`)
+  history.pushState(null, '', `${marketPrefix()}resource/${encodeURIComponent(resourceType)}${marketQuery(shard ?? null, r)}`)
   setMarketResourceType(resourceType)
   setMarketShard(shard ?? null)
+  setMarketRoom(r)
   setMarketView('resource')
   setRoute('market')
 }
@@ -260,6 +278,7 @@ if (typeof window !== 'undefined') {
     setMarketView(market.view)
     setMarketResourceType(market.resourceType)
     setMarketShard(parseMarketShard())
+    setMarketRoom(parseMarketRoom())
     const power = parsePower()
     setPowerView(power.view)
     setPowerCreepId(power.id)
