@@ -506,7 +506,7 @@ export function Dashboard() {
           <HeaderButton
             title={route() === 'market' ? 'Close Market' : 'Market'}
             active={route() === 'market'}
-            onClick={() => route() === 'market' ? goToGame() : goToMarket(shard())}
+            onClick={() => route() === 'market' ? goToGame() : goToMarket(shard(), mapMode() ? null : room())}
           >
             <Store size={16} />
           </HeaderButton>

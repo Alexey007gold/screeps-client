@@ -2,7 +2,7 @@ import { createSignal, createEffect, createMemo, For, Show, type JSX } from 'sol
 import { ChevronLeft, RefreshCw } from 'lucide-solid'
 import type { ApiMarketOrder, ApiMarketStat } from 'screeps-connectivity'
 import { client } from '~/stores/clientStore.js'
-import { goToMarket, goToRoom } from '~/stores/routeStore.js'
+import { goToMarket, goToRoom, marketRoom } from '~/stores/routeStore.js'
 import { parseRoomName } from '~/utils/roomName.js'
 import { resourceDisplayName } from '~/data/resources.js'
 import { ResourceSwatch } from './ResourceSwatch.js'
@@ -43,7 +43,9 @@ export function MarketResource(props: { resourceType: string | null; shard: stri
   const [sell, setSell] = createSignal<ApiMarketOrder[]>([])
   const [buy, setBuy] = createSignal<ApiMarketOrder[]>([])
   const [stats, setStats] = createSignal<ApiMarketStat[]>([])
-  const [targetRoom, setTargetRoom] = createSignal('')
+  // Pre-filled with the room the market was opened from (if any), so shipping
+  // range is computed against it immediately; still freely editable.
+  const [targetRoom, setTargetRoom] = createSignal(marketRoom() ?? '')
   const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal<string | null>(null)
 
