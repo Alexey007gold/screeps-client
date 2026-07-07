@@ -4,7 +4,7 @@ import { OverlayPage } from '~/components/OverlayPage.js'
 import type { ApiLeaderboardFindResponse } from 'screeps-connectivity'
 import { client, userInfo } from '~/stores/clientStore.js'
 import { capabilities } from '~/stores/capabilities.js'
-import { profileUsername, goToGame, goToRoom, goToUser, goToMessagesUser } from '~/stores/routeStore.js'
+import { profileUsername, goToGame, goToRoom, goToRoomOverview, goToUser, goToMessagesUser } from '~/stores/routeStore.js'
 import { GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
 import { PlayerBadge } from '~/components/PlayerBadge.js'
 import { RoomPreviewTile } from '~/components/RoomPreviewTile.js'
@@ -233,7 +233,7 @@ export function Profile() {
                     <div style={{ color: MUTED, 'font-size': '11px', 'text-transform': 'uppercase', 'margin-bottom': '12px' }}>Rooms</div>
                     <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '16px' }}>
                       <For each={rooms()}>
-                        {(r) => <RoomPreviewTile room={r.room} shard={r.shard} ownerId={u()._id} onClick={() => goToRoom(r.room, r.shard)} />}
+                        {(r) => <RoomPreviewTile room={r.room} shard={r.shard} ownerId={u()._id} onClick={() => goToRoom(r.room, r.shard)} onOverview={() => goToRoomOverview(r.room, r.shard)} />}
                       </For>
                     </div>
                   </div>

@@ -46,6 +46,15 @@ export interface ApiUserOverviewResponse {
   statsMax?: number
 }
 
+/** Response of GET /api/game/room-overview?room=&interval=&shard=. `stats` holds per-stat time-series buckets over the requested interval (same metric keys as the account overview tiles); `owner` is absent for unowned rooms. */
+export interface ApiRoomOverviewResponse {
+  ok: number
+  owner?: { username: string; badge: import('./game.js').Badge } | null
+  stats?: Record<string, Array<{ value: number; endTime: number }>>
+  statsMax?: Record<string, number>
+  totals?: ApiUserOverviewTotals
+}
+
 /** Response of GET /api/user/rooms?id=<userId> — the rooms a user owns. Multishard servers key by shard; single-shard servers may return a flat list. */
 export interface ApiUserRoomsResponse {
   ok: number

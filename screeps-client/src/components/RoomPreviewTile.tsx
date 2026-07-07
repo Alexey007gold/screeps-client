@@ -1,4 +1,5 @@
-import { onCleanup, onMount } from 'solid-js'
+import { onCleanup, onMount, Show } from 'solid-js'
+import { BarChart3 } from 'lucide-solid'
 import type { RoomMap2Data } from 'screeps-connectivity'
 import { TerrainType } from 'screeps-connectivity'
 import { client, userInfo } from '~/stores/clientStore.js'
@@ -45,7 +46,17 @@ function fillDots(ctx: CanvasRenderingContext2D, positions: [number, number][], 
 // `ownerId` marks which user's objects render in own-green vs foreign-red;
 // defaults to the logged-in user (Overview), set to the profiled user on a public
 // profile so their structures show green.
-export function RoomPreviewTile(props: { room: string; shard: string | null; ownerId?: string; onClick?: () => void }) {
+// `onOverview`, when set, adds a small chart button in the footer that opens the
+// per-room stats page. `showLabel` (default true) can be turned off for a bare
+// thumbnail (e.g. the Room Overview header).
+export function RoomPreviewTile(props: {
+  room: string
+  shard: string | null
+  ownerId?: string
+  onClick?: () => void
+  onOverview?: () => void
+  showLabel?: boolean
+}) {
   let canvas: HTMLCanvasElement | undefined
   let terrain: Terrain = null
   let map2: Partial<RoomMap2Data> | null = null
@@ -108,9 +119,16 @@ export function RoomPreviewTile(props: { room: string; shard: string | null; own
     onCleanup(() => { sub.dispose(); lsn.dispose() })
   })
 
+  const activate = () => props.onClick?.()
+
+  // A <div> rather than a <button> so the footer's overview action can be a real
+  // nested <button> (buttons can't nest); role/tabindex/keydown keep it operable.
   return (
-    <button
-      onClick={() => props.onClick?.()}
+    <div
+      role="button"
+      tabindex={0}
+      onClick={activate}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() } }}
       title={props.room + (props.shard ? ` · ${props.shard}` : '')}
       style={{ padding: '0', border: `1px solid ${BORDER}`, 'border-radius': '6px', overflow: 'hidden', background: PANEL, cursor: 'pointer', 'line-height': '0' }}
     >
@@ -120,9 +138,26 @@ export function RoomPreviewTile(props: { room: string; shard: string | null; own
         height={MINIMAP_ROOM * 2}
         style={{ width: `${MINIMAP_ROOM}px`, height: `${MINIMAP_ROOM}px`, display: 'block' }}
       />
-      <div style={{ padding: '4px 0', 'text-align': 'center', 'font-size': '12px', 'font-family': 'monospace', color: TEXT, 'line-height': '1.2', 'border-top': `1px solid ${BORDER}` }}>
-        {props.room}
-      </div>
-    </button>
+      <Show when={props.showLabel !== false}>
+        <div style={{ position: 'relative', padding: '4px 0', 'text-align': 'center', 'font-size': '12px', 'font-family': 'monospace', color: TEXT, 'line-height': '1.2', 'border-top': `1px solid ${BORDER}` }}>
+          {props.room}
+          <Show when={props.onOverview}>
+            <button
+              onClick={(e) => { e.stopPropagation(); props.onOverview?.() }}
+              title={`Room overview — ${props.room}`}
+              style={{
+                position: 'absolute', top: '50%', right: '4px', transform: 'translateY(-50%)',
+                display: 'flex', 'align-items': 'center', padding: '2px', 'border-radius': '3px',
+                border: `1px solid ${BORDER}`, background: '#21262d', color: '#8b949e', cursor: 'pointer', 'line-height': '0',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#58a6ff')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#8b949e')}
+            >
+              <BarChart3 size={13} />
+            </button>
+          </Show>
+        </div>
+      </Show>
+    </div>
   )
 }

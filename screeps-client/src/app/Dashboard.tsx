@@ -1,5 +1,5 @@
 import { createEffect, createSignal, lazy, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js'
-import { Map, Code2, Settings, LogIn, LayoutDashboard, Store, Clock } from 'lucide-solid'
+import { Map, Code2, Settings, LogIn, LayoutDashboard, Store, Clock, BarChart3 } from 'lucide-solid'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ToastContainer } from '~/components/ToastContainer.js'
@@ -23,9 +23,10 @@ import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick
 import { widescreenMode } from '~/stores/settingsStore.js'
 import { toggleShowLog, toggleShowConsole, toggleShowMemory } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
-import { route, goToUser, goToGame, goToMarket } from '~/stores/routeStore.js'
+import { route, goToUser, goToGame, goToMarket, goToRoomOverview } from '~/stores/routeStore.js'
 import { Overview } from '~/components/Overview.js'
 import { Profile } from '~/components/Profile.js'
+import { RoomOverview } from '~/components/RoomOverview.js'
 import { Messages } from '~/components/Messages.js'
 import { Market } from '~/components/market/Market.js'
 import { BadgePickerModal } from '~/components/BadgePickerModal.js'
@@ -405,6 +406,26 @@ export function Dashboard() {
         >
           <Map size={24} />
         </button>
+        <button
+          onClick={() => goToRoomOverview(room(), shard())}
+          title="Room overview"
+          style={{
+            position: 'absolute',
+            top: '66px',
+            left: '8px',
+            'z-index': 5,
+            padding: '12px',
+            'border-radius': '6px',
+            border: '1px solid #30363d',
+            background: 'rgba(33,38,45,0.85)',
+            color: '#c9d1d9',
+            cursor: 'pointer',
+            display: 'flex',
+            'align-items': 'center',
+          }}
+        >
+          <BarChart3 size={24} />
+        </button>
         <Show when={capabilities().hasHistory}>
           <button
             onClick={() => (historyMode() ? exitHistoryMode() : gameTime() !== null && enterHistoryMode(gameTime()!, serverVersion()?.serverData?.historyKeepTicks, historyChunkSize()))}
@@ -412,7 +433,7 @@ export function Dashboard() {
             title="History"
             style={{
               position: 'absolute',
-              top: '66px',
+              top: '124px',
               left: '8px',
               'z-index': 5,
               padding: '12px',
@@ -588,12 +609,13 @@ export function Dashboard() {
             {sidebarArea(false)}
           </div>
         </Show>
-        <Show when={route() === 'user' || route() === 'profile' || route() === 'messages' || route() === 'market' || showSettings()}>
+        <Show when={route() === 'user' || route() === 'profile' || route() === 'messages' || route() === 'market' || route() === 'room-overview' || showSettings()}>
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, 'z-index': 10, overflow: 'hidden' }}>
             <Show when={route() === 'user'}><Overview /></Show>
             <Show when={route() === 'profile'}><Profile /></Show>
             <Show when={route() === 'messages'}><Messages /></Show>
             <Show when={route() === 'market'}><Market /></Show>
+            <Show when={route() === 'room-overview'}><RoomOverview /></Show>
             <Show when={showSettings()}><SettingsPanel onClose={() => setShowSettings(false)} /></Show>
           </div>
         </Show>

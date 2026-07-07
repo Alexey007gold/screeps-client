@@ -1,11 +1,18 @@
 import { createSignal } from 'solid-js'
 import { basePath } from '~/utils/embedded.js'
-import { buildRoomUrl } from '~/utils/gameRoutes.js'
+import { buildRoomUrl, buildRoomOverviewUrl } from '~/utils/gameRoutes.js'
 
 // Top-level screen the connected app shows. The in-game Dashboard owns its own
 // /room and /map sub-routing; this store decides the User hub (/user) vs.
 // Profile (public, any user) vs. Messages vs. Market vs. the game view.
-export type Route = 'user' | 'profile' | 'game' | 'market' | 'messages'
+export type Route = 'user' | 'profile' | 'game' | 'market' | 'messages' | 'room-overview'
+
+// Target of the /room-overview/<shard>/<room> page: the room to show stats for,
+// with its shard (null on single-shard servers where no shard segment is present).
+export interface RoomOverviewTarget {
+  room: string
+  shard: string | null
+}
 
 // Sub-view within the User hub: the overview stats page or the power creeps
 // manager. Exactly one is active at a time.
@@ -46,6 +53,10 @@ function profilePrefix(): string {
   return `${basePath()}/profile/`
 }
 
+function roomOverviewPrefix(): string {
+  return `${basePath()}/room-overview/`
+}
+
 function marketPath(): string {
   return `${basePath()}/market`
 }
@@ -64,7 +75,19 @@ function parseRoute(): Route {
   if (p.startsWith(profilePrefix())) return 'profile'
   if (p === messagesPath() || p.startsWith(messagesPrefix())) return 'messages'
   if (p === marketPath() || p.startsWith(marketPrefix())) return 'market'
+  if (p.startsWith(roomOverviewPrefix())) return 'room-overview'
   return 'game'
+}
+
+// { room, shard } for /room-overview/<shard>/<room> (or /room-overview/<room> on
+// single-shard servers), or null when the path isn't a room-overview URL.
+function parseRoomOverview(): RoomOverviewTarget | null {
+  const p = window.location.pathname
+  if (!p.startsWith(roomOverviewPrefix())) return null
+  const parts = p.slice(roomOverviewPrefix().length).split('/').filter(Boolean).map(decodeURIComponent)
+  if (parts.length >= 2) return { shard: parts[0], room: parts[1] }
+  if (parts.length === 1) return { shard: null, room: parts[0] }
+  return null
 }
 
 function parseUserView(): UserView {
@@ -134,7 +157,8 @@ const [marketShard, setMarketShard] = createSignal<string | null>(parseMarketSha
 const [marketRoom, setMarketRoom] = createSignal<string | null>(parseMarketRoom())
 const [powerView, setPowerView] = createSignal<PowerView>(parsePower().view)
 const [powerCreepId, setPowerCreepId] = createSignal<string | null>(parsePower().id)
-export { route, userView, profileUsername, messagesUsername, marketView, marketResourceType, marketShard, marketRoom, powerView, powerCreepId }
+const [roomOverviewTarget, setRoomOverviewTarget] = createSignal<RoomOverviewTarget | null>(parseRoomOverview())
+export { route, userView, profileUsername, messagesUsername, marketView, marketResourceType, marketShard, marketRoom, powerView, powerCreepId, roomOverviewTarget }
 
 // Remembered so returning to the world restores the exact game view (room +
 // shard + history tick) rather than dropping back to the default map.
@@ -253,6 +277,15 @@ export function goToMarketHistory(): void {
   setRoute('market')
 }
 
+// The read-only per-room stats page. Distinct from goToRoom, which enters the
+// live game view; this stays in the overlay layer.
+export function goToRoomOverview(room: string, shard: string | null): void {
+  rememberGamePath()
+  history.pushState(null, '', buildRoomOverviewUrl(room, shard))
+  setRoomOverviewTarget({ room, shard })
+  setRoute('room-overview')
+}
+
 export function goToGame(): void {
   history.pushState(null, '', lastGamePath)
   setRoute('game')
@@ -282,5 +315,6 @@ if (typeof window !== 'undefined') {
     const power = parsePower()
     setPowerView(power.view)
     setPowerCreepId(power.id)
+    setRoomOverviewTarget(parseRoomOverview())
   })
 }
