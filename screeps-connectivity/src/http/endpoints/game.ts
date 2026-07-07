@@ -19,6 +19,7 @@ import type {
   ApiMarketOrdersResponse,
   ApiMarketMyOrdersResponse,
   ApiMarketStatsResponse,
+  ApiRoomOverviewResponse,
 } from '../../types/api.js'
 import { createPowerCreepsEndpoints, type PowerCreepsEndpoints } from './power-creeps.js'
 
@@ -28,7 +29,7 @@ export interface GameEndpoints {
   roomObjects(room: string, shard?: string | null): Promise<ApiRoomObjectsResponse>
   roomDecorations(room: string, shard?: string | null): Promise<ApiRoomDecorationsResponse>
   roomStatus(room: string, shard?: string | null): Promise<{ ok: number; status: string; novice?: string }>
-  roomOverview(room: string, interval?: number, shard?: string | null): Promise<unknown>
+  roomOverview(room: string, interval?: number, shard?: string | null): Promise<ApiRoomOverviewResponse>
   time(shard?: string | null): Promise<{ ok: number; time: number }>
   tick(): Promise<ApiGameTickResponse>
   worldSize(shard?: string | null): Promise<unknown>

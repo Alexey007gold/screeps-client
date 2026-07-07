@@ -3,7 +3,7 @@ import { X, Zap, Mail } from 'lucide-solid'
 import type { ApiUserOverviewTotals, ApiPowerCreep } from 'screeps-connectivity'
 import { client, userInfo } from '~/stores/clientStore.js'
 import { capabilities } from '~/stores/capabilities.js'
-import { goToGame, goToRoom, goToUser, goToMessages, goToUserPower, goToUserPowerNew, goToUserPowerCreep, userView, powerView, powerCreepId } from '~/stores/routeStore.js'
+import { goToGame, goToRoom, goToRoomOverview, goToUser, goToMessages, goToUserPower, goToUserPowerNew, goToUserPowerCreep, userView, powerView, powerCreepId } from '~/stores/routeStore.js'
 import { UserLink } from '~/components/UserLink.js'
 import { RankRing, GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
 import { PlayerBadge } from '~/components/PlayerBadge.js'
@@ -228,7 +228,7 @@ export function Overview() {
                     <div style={{ color: MUTED, 'font-size': '11px', 'text-transform': 'uppercase', 'margin-bottom': '12px' }}>Rooms</div>
                     <div style={{ display: 'flex', 'flex-wrap': 'wrap', gap: '16px' }}>
                       <For each={rooms()}>
-                        {(r) => <RoomPreviewTile room={r.room} shard={r.shard} onClick={() => goToRoom(r.room, r.shard)} />}
+                        {(r) => <RoomPreviewTile room={r.room} shard={r.shard} onClick={() => goToRoom(r.room, r.shard)} onOverview={() => goToRoomOverview(r.room, r.shard)} />}
                       </For>
                     </div>
                   </div>

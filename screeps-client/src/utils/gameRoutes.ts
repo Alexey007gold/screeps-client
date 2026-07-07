@@ -16,3 +16,14 @@ export function buildRoomUrl(room: string, shard: string | null): string {
     ? `${basePath()}/room/${encodeURIComponent(shard)}/${room}`
     : `${basePath()}/room/${room}`
 }
+
+// The read-only per-room stats page (owner + stat tiles + history graph), a
+// top-level route distinct from the live /room game view. Same shard-as-segment
+// convention as buildRoomUrl:
+//   /room-overview/E8S49            (single-shard servers)
+//   /room-overview/shard1/E8S49
+export function buildRoomOverviewUrl(room: string, shard: string | null): string {
+  return shard
+    ? `${basePath()}/room-overview/${encodeURIComponent(shard)}/${room}`
+    : `${basePath()}/room-overview/${room}`
+}
