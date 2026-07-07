@@ -1,5 +1,19 @@
 # xxscreeps-mod-client
 
+## 0.3.4
+
+### Patch Changes
+
+- 851580d: Bundle the updated screeps-client build (User hub Messages route).
+- Updated dependencies [5d46b8e]
+- Updated dependencies [57a7e1d]
+- Updated dependencies [7d5747c]
+- Updated dependencies [d136a15]
+- Updated dependencies [3b9b951]
+- Updated dependencies [79bd3d0]
+- Updated dependencies [851580d]
+  - screeps-client@0.15.0
+
 ## 0.3.3
 
 ### Patch Changes
