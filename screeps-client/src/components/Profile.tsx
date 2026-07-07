@@ -1,10 +1,10 @@
-import { createResource, For, Show } from 'solid-js'
+import { createResource, createSignal, For, Show } from 'solid-js'
 import { X } from 'lucide-solid'
 import { OverlayPage } from '~/components/OverlayPage.js'
 import type { ApiLeaderboardFindResponse } from 'screeps-connectivity'
-import { client } from '~/stores/clientStore.js'
+import { client, userInfo } from '~/stores/clientStore.js'
 import { profileUsername, goToGame, goToRoom, goToUser } from '~/stores/routeStore.js'
-import { RankRing, GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
+import { GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/RankRing.js'
 import { PlayerBadge } from '~/components/PlayerBadge.js'
 import { RoomPreviewTile } from '~/components/RoomPreviewTile.js'
 import { StatTileRow, totalsFromStats } from '~/components/AccountStatTiles.js'
@@ -22,9 +22,13 @@ const MUTED = '#8b949e'
 const GOLD = '#d9b54a'
 const RED = '#C54444'
 
-// The official client's "Last 7 days" stat interval (its dropdown maps 8 → 1 hour,
-// 180 → 24 hours, 1440 → 7 days); the tiles sum this window.
-const STAT_INTERVAL = 1440
+// The official client's stat-window dropdown: 8 → 1 hour, 180 → 24 hours,
+// 1440 → 7 days. The tiles sum whichever window is selected.
+const STAT_INTERVALS = [
+  { value: 8, label: 'Last 1 hour' },
+  { value: 180, label: 'Last 24 hours' },
+  { value: 1440, label: 'Last 7 days' },
+] as const
 
 function currentSeason(): string {
   // Seasons roll over at UTC, so derive the YYYY-MM id in UTC — a non-UTC client
@@ -44,6 +48,23 @@ function rankRecord(res: ApiLeaderboardFindResponse | null): { rank: number | nu
 
 const rankLabel = (rank: number | null) => (rank == null ? '—' : `#${(rank + 1).toLocaleString()}`)
 const scoreLabel = (score: number) => score.toLocaleString()
+
+// Compact header GCL/GPL readout — a thick rounded chip bordered in the rank
+// color (the ring color), with the brighter text color for the number/label.
+function RankStat(props: { label: string; value: number; color: string; border: string; tooltip: string }) {
+  return (
+    <div
+      title={props.tooltip}
+      style={{
+        display: 'flex', 'align-items': 'baseline', gap: '6px', 'flex-shrink': '0',
+        padding: '5px 12px', 'border-radius': '8px', border: `2px solid ${props.border}`,
+      }}
+    >
+      <span style={{ color: props.color, 'font-size': '11px', 'font-weight': 600, 'letter-spacing': '0.5px' }}>{props.label}</span>
+      <span style={{ color: props.color, 'font-size': '18px', 'font-weight': 700, 'line-height': '1' }}>{props.value}</span>
+    </div>
+  )
+}
 
 function RankTile(props: { l1: string; l2: string; value: string; accent: string }) {
   return (
@@ -85,16 +106,24 @@ export function Profile() {
     }
   })
 
-  // "Last 7 days" tiles — public stats summed into the totals shape.
-  const [totals] = createResource(userId, async (id) => {
-    const c = client()
-    if (!c) return null
-    try {
-      return totalsFromStats(await c.http.user.stats(STAT_INTERVAL, id))
-    } catch {
-      return null
-    }
-  })
+  // Stat tiles — public stats summed into the totals shape, over the interval
+  // picked in the dropdown. Refetches when either the user or interval changes.
+  const [statInterval, setStatInterval] = createSignal<number>(1440)
+  const [totals] = createResource(
+    () => {
+      const id = userId()
+      return id ? ({ id, interval: statInterval() } as const) : null
+    },
+    async ({ id, interval }) => {
+      const c = client()
+      if (!c) return null
+      try {
+        return totalsFromStats(await c.http.user.stats(interval, id))
+      } catch {
+        return null
+      }
+    },
+  )
 
   // "Current month" leaderboard ranks (by username): world = expansion + control
   // points, power = power rank + points. Best-effort; empty servers render —.
@@ -112,9 +141,16 @@ export function Profile() {
     },
   )
 
+  // Whether this public profile is the logged-in player's own account — drives
+  // the shortcut link over to their private overview.
+  const isOwnProfile = () => {
+    const me = userInfo()?.username?.toLowerCase()
+    const name = user()?.username?.toLowerCase()
+    return !!me && me === name
+  }
+
   const gclProg = (): LevelProgress => gclProgress(user()?.gcl ?? 0)
   const gplProg = (): LevelProgress => gplProgress(user()?.power ?? 0)
-  const fraction = (p: LevelProgress) => (p.total > 0 ? p.current / p.total : 0)
   const tooltip = (p: LevelProgress) => `Next level: ${Math.floor(p.current).toLocaleString()} / ${Math.floor(p.total).toLocaleString()}`
 
   return (
@@ -133,24 +169,29 @@ export function Profile() {
           >
             {(u) => (
               <>
-                {/* Header: identity + GCL/GPL rings */}
-                <div style={{ display: 'flex', 'align-items': 'center', gap: '16px', background: PANEL, border: `1px solid ${BORDER}`, 'border-radius': '6px', padding: '16px 20px', 'margin-bottom': '16px' }}>
-                  <PlayerBadge badge={u().badge} size={48} />
-                  <h1 style={{ margin: 0, 'font-size': '24px', 'font-weight': 600, color: '#ffd479' }}>{u().username}</h1>
+                {/* Header — mirrors the self Overview chrome: badge, name as title,
+                    compact GCL/GPL readout, close. */}
+                <div style={{ display: 'flex', 'align-items': 'center', gap: '10px', padding: '0 0 14px', 'border-bottom': `1px solid ${BORDER}`, 'margin-bottom': '24px' }}>
+                  <PlayerBadge badge={u().badge} size={28} />
+                  <h1 style={{ margin: 0, 'font-size': '22px', 'font-weight': 600, color: TEXT }}>{u().username}</h1>
+                  <Show when={isOwnProfile()}>
+                    <span
+                      title="Your account overview"
+                      onClick={goToUser}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = '#58a6ff')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = MUTED)}
+                      style={{ color: MUTED, cursor: 'pointer', 'font-size': '13px' }}
+                    >
+                      Overview
+                    </span>
+                  </Show>
                   <div style={{ flex: 1 }} />
-                  <button
-                    onClick={goToUser}
-                    title="Your own overview"
-                    style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', 'font-size': '13px' }}
-                  >
-                    My overview
-                  </button>
-                  <RankRing value={gclProg().level} label="GCL" ring={GCL_RING} text={GCL_TEXT} fraction={fraction(gclProg())} tooltip={tooltip(gclProg())} />
-                  <RankRing value={gplProg().level} label="GPL" ring={GPL_RING} text={GPL_TEXT} fraction={fraction(gplProg())} tooltip={tooltip(gplProg())} />
+                  <RankStat label="GCL" value={gclProg().level} color={GCL_TEXT} border={GCL_RING} tooltip={tooltip(gclProg())} />
+                  <RankStat label="GPL" value={gplProg().level} color={GPL_TEXT} border={GPL_RING} tooltip={tooltip(gplProg())} />
                   <button
                     onClick={goToGame}
                     title="Close"
-                    style={{ display: 'flex', 'align-items': 'center', padding: '7px', 'border-radius': '4px', border: `1px solid ${BORDER}`, background: '#21262d', color: TEXT, cursor: 'pointer' }}
+                    style={{ display: 'flex', 'align-items': 'center', padding: '7px', 'border-radius': '4px', border: `1px solid ${BORDER}`, background: '#21262d', color: TEXT, cursor: 'pointer', 'margin-left': '6px' }}
                   >
                     <X size={16} />
                   </button>
@@ -165,8 +206,14 @@ export function Profile() {
                   <RankTile l1="Power" l2="points" accent={RED} value={scoreLabel(ranks()?.power.score ?? 0)} />
                 </div>
 
-                {/* Last 7 days — stat tiles */}
-                <div style={{ color: MUTED, 'font-size': '11px', 'text-transform': 'uppercase', 'margin-bottom': '10px' }}>Last 7 days</div>
+                {/* Stat tiles — interval picked from the dropdown */}
+                <select
+                  value={statInterval()}
+                  onChange={(e) => setStatInterval(Number(e.currentTarget.value))}
+                  style={{ padding: '4px 8px', 'border-radius': '4px', border: `1px solid ${BORDER}`, background: PANEL, color: MUTED, 'font-size': '11px', 'text-transform': 'uppercase', cursor: 'pointer', 'margin-bottom': '10px' }}
+                >
+                  <For each={STAT_INTERVALS}>{(opt) => <option value={opt.value}>{opt.label}</option>}</For>
+                </select>
                 <StatTileRow totals={totals()} />
 
                 {/* Owned-room minimaps */}
