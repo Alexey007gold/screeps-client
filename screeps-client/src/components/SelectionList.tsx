@@ -408,7 +408,7 @@ function FlagDetails(props: { item: SelectedObject }) {
     const primary = draftColor()
     const secondary = draftSecondaryColor()
     log(`changeFlagColor: name="${name()}" room=${room()} primary=${primary} secondary=${secondary}`)
-    c.http.game.changeFlagColor(room(), name(), primary, secondary)
+    c.http.game.changeFlagColor(room(), name(), primary, secondary, currentShard() ?? undefined)
       .then(() => log('changeFlagColor OK'))
       .catch((err: Error) => error('changeFlagColor FAILED:', err))
   }
@@ -1044,7 +1044,7 @@ function SelectionItem(props: { item: SelectedObject }) {
     if (!c) return
     const id = props.item.id
     const raw = props.item.raw as Record<string, unknown>
-    c.http.game.removeFlag(raw.room as string, raw.name as string)
+    c.http.game.removeFlag(raw.room as string, raw.name as string, currentShard() ?? undefined)
       .then(() => deselectItem(id))
       .catch(() => {})
   }
