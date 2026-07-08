@@ -3,6 +3,7 @@ import solid from 'vite-plugin-solid'
 import devtools from 'solid-devtools/vite'
 import { readFileSync } from 'node:fs'
 import { HttpsProxyAgent } from 'https-proxy-agent'
+import { screepsTsLibs } from './vite-plugin-ts-libs.js'
 
 const base = process.env.VITE_BASE ?? '/'
 const outDir = process.env.VITE_OUT_DIR ?? 'dist/standalone'
@@ -32,7 +33,15 @@ export default defineConfig(({ mode }) => {
     plugins: [
       devtools({ autoname: true }),
       solid(),
+      screepsTsLibs(),
     ],
+    // The TS language service runs in a Web Worker; the virtual lib module must
+    // resolve inside the worker bundle too (Vite builds workers with their own
+    // plugin set).
+    worker: {
+      format: 'es',
+      plugins: () => [screepsTsLibs()],
+    },
     build: {
       outDir,
       assetsDir,

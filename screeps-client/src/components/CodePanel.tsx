@@ -5,10 +5,13 @@ import { basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from 'codemirror'
+import { Compartment } from '@codemirror/state'
 import { client } from '~/stores/clientStore.js'
 import { addToast } from '~/stores/toastStore.js'
 import { createLogger } from '~/utils/log.js'
 import { LS, getStr, setStr, getJson, setJson } from '~/utils/storage.js'
+import { parseServerModules, serializeModules, tsModuleNames, type ModuleLang, type LogicalModule } from '~/editor/codeModules.js'
+import { getTsWorker, syncModuleToWorker, tsExtensions, modulePath } from '~/editor/tsClient.js'
 
 const { error } = createLogger('code')
 
@@ -33,12 +36,16 @@ const editorTheme = EditorView.theme({
   '.cm-activeLine': { background: '#161b22' },
 })
 
-const cmExtensions = [basicSetup, javascript(), oneDark, editorTheme]
+// Language + TS-service extensions live in a compartment so they can be swapped
+// when the active module changes (plain JS vs TypeScript, and per-file path).
+const cmBaseExtensions = [basicSetup, oneDark, editorTheme]
 
 export function CodePanel(props: { onClose: () => void }) {
   const [branches, setBranches] = createSignal<Branch[]>([])
   const [selectedBranch, setSelectedBranch] = createSignal<string>('')
   const [modules, setModules] = createSignal<Record<string, string>>({})
+  // Per-module language. A module with no entry is plain JS.
+  const [langs, setLangs] = createSignal<Record<string, ModuleLang>>({})
   const [activeModule, setActiveModule] = createSignal<string>('')
   const [loading, setLoading] = createSignal(false)
   const [saving, setSaving] = createSignal(false)
@@ -49,9 +56,15 @@ export function CodePanel(props: { onClose: () => void }) {
   const [creatingBranch, setCreatingBranch] = createSignal(false)
   const [showNewFile, setShowNewFile] = createSignal(false)
   const [newFileName, setNewFileName] = createSignal('')
+  const [newFileLang, setNewFileLang] = createSignal<ModuleLang>('ts')
   const [hoveredModule, setHoveredModule] = createSignal('')
+  // When set, the editor shows the read-only transpiled JS of this TS module
+  // (the `<name>.js` generated entry) instead of an editable source module.
+  const [compiledView, setCompiledView] = createSignal<string | null>(null)
+  const [compiledSrc, setCompiledSrc] = createSignal('')
 
   const moduleNames = () => Object.keys(modules())
+  const langOf = (name: string): ModuleLang => langs()[name] ?? 'js'
   const isActive = () => branches().find((b) => b.branch === selectedBranch())?.activeWorld ?? false
 
   // Persisted view state — where the editor was when it was last closed.
@@ -66,6 +79,7 @@ export function CodePanel(props: { onClose: () => void }) {
 
   const saveCursor = (pos: number) => {
     if (applying) return
+    if (compiledView()) return // read-only generated view has no persisted cursor
     const b = selectedBranch()
     const m = activeModule()
     if (!b || !m) return
@@ -75,6 +89,9 @@ export function CodePanel(props: { onClose: () => void }) {
 
   const { editorView, ref: editorRef, createExtension } = createCodeMirror({
     onValueChange: (value) => {
+      // The generated view is read-only; its compiled JS must never be written
+      // back into a module's source.
+      if (compiledView()) return
       const mod = activeModule()
       // Skip if value matches stored — avoids false dirty on module switch or initial load
       if (!mod || modules()[mod] === value) return
@@ -102,11 +119,55 @@ export function CodePanel(props: { onClose: () => void }) {
     })
   })
 
-  createEditorControlledValue(editorView, () => modules()[activeModule()] ?? '')
-  createExtension(cmExtensions)
+  createEditorControlledValue(editorView, () =>
+    compiledView() ? compiledSrc() : (modules()[activeModule()] ?? ''),
+  )
+  const langCompartment = new Compartment()
+  createExtension([...cmBaseExtensions, langCompartment.of(javascript())])
   createExtension(EditorView.updateListener.of((u) => {
     if (u.selectionSet || u.docChanged) saveCursor(u.state.selection.main.head)
   }))
+
+  // Reconfigure the language layer when the active module changes. TS modules get
+  // the in-browser TypeScript service (completion, hover, diagnostics) bound to
+  // their vfs path; JS modules get plain JavaScript support. The TS worker (and
+  // its heavy compiler chunk) only loads the first time a TS module is opened.
+  createEffect(() => {
+    const view = editorView()
+    if (!view) return
+    // Read-only view of transpiled JS: plain JS highlighting, no user editing.
+    // Use `editable.of(false)` (not `readOnly`) so the controlled value can still
+    // swap the document programmatically when switching back to the source.
+    if (compiledView()) {
+      view.dispatch({ effects: langCompartment.reconfigure([javascript(), EditorView.editable.of(false)]) })
+      return
+    }
+    const name = activeModule()
+    const lang = langOf(name)
+    if (!name) return
+    if (lang === 'ts') {
+      getTsWorker()
+        // eslint-disable-next-line solid/reactivity -- intentional: read current module state at resolve time, not tracked (would reconfigure on every keystroke)
+        .then(async (worker) => {
+          // Seed every module so cross-module imports resolve in the service.
+          await Promise.all(
+            Object.entries(modules()).map(([n, src]) =>
+              worker.updateFile({ path: modulePath(n, langOf(n)), code: src }),
+            ),
+          )
+          if (activeModule() !== name) return // switched away while loading
+          view.dispatch({
+            effects: langCompartment.reconfigure([
+              javascript({ typescript: true }),
+              tsExtensions(worker, modulePath(name, 'ts')),
+            ]),
+          })
+        })
+        .catch((err) => error('ts service failed:', err))
+    } else {
+      view.dispatch({ effects: langCompartment.reconfigure(javascript()) })
+    }
+  })
 
   // Remember the open branch/module across close & reopen.
   createEffect(() => {
@@ -164,14 +225,26 @@ export function CodePanel(props: { onClose: () => void }) {
     onCleanup(() => { stale = true })
     setLoading(true)
     setModules({})
+    setLangs({})
+    setCompiledView(null)
     setActiveModule('')
     setDirty(false)
     ;(c.http.user.code.get(branch) as Promise<{ ok: number; modules: Record<string, string> }>)
       .then((res) => {
         if (stale) return
-        const mods = res.modules ?? {}
-        setModules(mods)
-        const names = Object.keys(mods)
+        // Fold the server's flat map (compiled JS + hidden `.ts` sources) into
+        // logical modules, then split into parallel source/lang maps the editor
+        // works with.
+        const logical = parseServerModules(res.modules ?? {})
+        const src: Record<string, string> = {}
+        const lg: Record<string, ModuleLang> = {}
+        for (const m of logical) {
+          src[m.name] = m.source
+          lg[m.name] = m.lang
+        }
+        setModules(src)
+        setLangs(lg)
+        const names = logical.map((m) => m.name)
         const restore = branch === initialBranch && initialModule && names.includes(initialModule)
         setActiveModule(restore ? initialModule : names[0] ?? '')
       })
@@ -185,34 +258,86 @@ export function CodePanel(props: { onClose: () => void }) {
       })
   })
 
-  const handleSave = () => {
+  // Open an editable source module.
+  const openSource = (name: string) => {
+    setCompiledView(null)
+    setActiveModule(name)
+  }
+
+  // Open the read-only compiled JS of a TS module, transpiled live from its
+  // current source so it always reflects what a Save would deploy.
+  const viewCompiled = async (name: string) => {
+    setActiveModule(name)
+    try {
+      const worker = await getTsWorker()
+      setCompiledSrc(await worker.transpile(modules()[name] ?? ''))
+      setCompiledView(name)
+    } catch (err) {
+      error('transpile failed:', err)
+      addToast('Failed to compile module', 'error')
+    }
+  }
+
+  // Convert a module between JS and TS. The source text is kept as-is (JS is
+  // valid TS; a TS→JS switch leaves any type syntax for the user to clean up).
+  // On the next Save the server representation is rebuilt: JS→TS adds the hidden
+  // `<name>.ts` sibling, TS→JS drops it.
+  const convertModuleLang = (name: string, target: ModuleLang) => {
+    if (!name || langOf(name) === target) return
+    setLangs((prev) => ({ ...prev, [name]: target }))
+    setDirty(true)
+    if (compiledView() === name) setCompiledView(null)
+    if (target === 'ts') void syncModuleToWorker(name, 'ts', modules()[name] ?? '').catch(() => {})
+  }
+
+  const handleSave = async () => {
     const c = client()
     const branch = selectedBranch()
     if (!c || !branch) return
     setSaving(true)
-    c.http.user.code.set(branch, modules())
-      .then(() => {
-        addToast('Code saved', 'success')
-        setDirty(false)
-      })
-      .catch((err) => {
-        error('set failed:', err)
-        addToast('Failed to save code', 'error')
-      })
-      .finally(() => setSaving(false))
+    try {
+      const logical: LogicalModule[] = moduleNames().map((n) => ({
+        name: n,
+        lang: langOf(n),
+        source: modules()[n] ?? '',
+      }))
+      // Transpile TS modules to JS (type errors don't block — transpileModule
+      // always emits). Both the compiled JS and the `.ts` source get persisted.
+      const tsNames = tsModuleNames(logical)
+      const compiled: Record<string, string> = {}
+      if (tsNames.length) {
+        const worker = await getTsWorker()
+        await Promise.all(
+          // eslint-disable-next-line solid/reactivity -- snapshot module sources inside this async click handler
+          tsNames.map(async (n) => { compiled[n] = await worker.transpile(modules()[n] ?? '') }),
+        )
+      }
+      await c.http.user.code.set(branch, serializeModules(logical, compiled))
+      addToast('Code saved', 'success')
+      setDirty(false)
+    } catch (err) {
+      error('set failed:', err)
+      addToast('Failed to save code', 'error')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  // Module names are stored without the .js extension (the tab appends it), so
-  // strip a trailing .js the user may have typed. New/deleted modules only touch
-  // local state — they're persisted to the server on the next Save.
+  // Logical module names carry no extension (the UI appends .js/.ts from the
+  // module's language), so strip one the user may have typed. New/deleted modules
+  // only touch local state — they're persisted to the server on the next Save.
   const handleAddFile = () => {
-    const name = newFileName().trim().replace(/\.js$/i, '')
+    const name = newFileName().trim().replace(/\.(ts|js)$/i, '')
     if (!name) return
     if (modules()[name] !== undefined) {
       addToast(`Module "${name}" already exists`, 'error')
       return
     }
+    const lang = newFileLang()
     setModules((prev) => ({ ...prev, [name]: '' }))
+    setLangs((prev) => ({ ...prev, [name]: lang }))
+    if (lang === 'ts') void syncModuleToWorker(name, 'ts', '').catch(() => {})
+    setCompiledView(null)
     setActiveModule(name)
     setDirty(true)
     setShowNewFile(false)
@@ -221,7 +346,7 @@ export function CodePanel(props: { onClose: () => void }) {
 
   const handleDeleteFile = (name: string) => {
     if (name === 'main') return // main is the entry module and can't be removed
-    if (!confirm(`Delete module "${name}.js"? This takes effect when you Save.`)) return
+    if (!confirm(`Delete module "${name}.${langOf(name)}"? This takes effect when you Save.`)) return
     let remaining: string[] = []
     setModules((prev) => {
       const next = { ...prev }
@@ -229,7 +354,13 @@ export function CodePanel(props: { onClose: () => void }) {
       remaining = Object.keys(next)
       return next
     })
-    if (activeModule() === name) setActiveModule(remaining[0] ?? '')
+    setLangs((prev) => {
+      const next = { ...prev }
+      delete next[name]
+      return next
+    })
+    if (compiledView() === name) setCompiledView(null)
+    if (activeModule() === name) { setCompiledView(null); setActiveModule(remaining[0] ?? '') }
     setDirty(true)
   }
 
@@ -524,6 +655,23 @@ export function CodePanel(props: { onClose: () => void }) {
                 }}
               />
               <button
+                onClick={() => setNewFileLang((l) => (l === 'ts' ? 'js' : 'ts'))}
+                title="Toggle module language"
+                style={{
+                  padding: '3px 8px',
+                  'border-radius': '4px',
+                  border: '1px solid #30363d',
+                  background: '#161b22',
+                  color: newFileLang() === 'ts' ? '#58a6ff' : '#e3b341',
+                  'font-size': '11px',
+                  'font-weight': 600,
+                  cursor: 'pointer',
+                  'flex-shrink': 0,
+                }}
+              >
+                .{newFileLang()}
+              </button>
+              <button
                 onClick={handleAddFile}
                 disabled={!newFileName().trim()}
                 style={{
@@ -534,6 +682,7 @@ export function CodePanel(props: { onClose: () => void }) {
                   color: newFileName().trim() ? '#3fb950' : '#484f58',
                   'font-size': '12px',
                   cursor: newFileName().trim() ? 'pointer' : 'default',
+                  'flex-shrink': 0,
                 }}
               >
                 Add
@@ -547,46 +696,81 @@ export function CodePanel(props: { onClose: () => void }) {
               </div>
             </Show>
             <For each={moduleNames()}>
-              {(name) => (
-                <div
-                  onClick={() => setActiveModule(name)}
-                  onMouseEnter={() => setHoveredModule(name)}
-                  onMouseLeave={() => setHoveredModule((h) => (h === name ? '' : h))}
-                  style={{
-                    display: 'flex',
-                    'align-items': 'center',
-                    gap: '4px',
-                    padding: '7px 8px 7px 12px',
-                    'font-size': '12px',
-                    cursor: 'pointer',
-                    background: activeModule() === name ? '#1f3158' : 'transparent',
-                    color: activeModule() === name ? '#58a6ff' : '#c9d1d9',
-                    'border-left': `2px solid ${activeModule() === name ? '#388bfd' : 'transparent'}`,
-                  }}
-                >
-                  <span style={{ flex: 1, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
-                    {name}
-                  </span>
-                  <Show when={name !== 'main' && hoveredModule() === name}>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteFile(name) }}
-                      title={`Delete ${name}.js`}
+              {(name) => {
+                const sourceActive = () => activeModule() === name && !compiledView()
+                const genActive = () => compiledView() === name
+                return (
+                  <>
+                    <div
+                      onClick={() => openSource(name)}
+                      onMouseEnter={() => setHoveredModule(name)}
+                      onMouseLeave={() => setHoveredModule((h) => (h === name ? '' : h))}
                       style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#8b949e',
-                        'font-size': '13px',
-                        'line-height': '1',
+                        display: 'flex',
+                        'align-items': 'center',
+                        gap: '4px',
+                        padding: '7px 8px 7px 12px',
+                        'font-size': '12px',
                         cursor: 'pointer',
-                        padding: '0 2px',
-                        'flex-shrink': 0,
+                        background: sourceActive() ? '#1f3158' : 'transparent',
+                        color: sourceActive() ? '#58a6ff' : '#c9d1d9',
+                        'border-left': `2px solid ${sourceActive() ? '#388bfd' : 'transparent'}`,
                       }}
                     >
-                      ✕
-                    </button>
-                  </Show>
-                </div>
-              )}
+                      <span
+                        title={`${name}.${langOf(name)}`}
+                        style={{ flex: 1, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}
+                      >
+                        {name}
+                        <span style={{ color: langOf(name) === 'ts' ? '#58a6ff' : '#6e7681' }}>
+                          .{langOf(name)}
+                        </span>
+                      </span>
+                      <Show when={name !== 'main' && hoveredModule() === name}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteFile(name) }}
+                          title={`Delete ${name}.${langOf(name)}`}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#8b949e',
+                            'font-size': '13px',
+                            'line-height': '1',
+                            cursor: 'pointer',
+                            padding: '0 2px',
+                            'flex-shrink': 0,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </Show>
+                    </div>
+                    {/* Read-only compiled JS of a TS module — transpiled on click. */}
+                    <Show when={langOf(name) === 'ts'}>
+                      <div
+                        onClick={() => void viewCompiled(name)}
+                        title={`${name}.js — generated from ${name}.ts (read-only)`}
+                        style={{
+                          display: 'flex',
+                          'align-items': 'center',
+                          padding: '5px 8px 5px 24px',
+                          'font-size': '11px',
+                          'font-style': 'italic',
+                          cursor: 'pointer',
+                          background: genActive() ? '#1f3158' : 'transparent',
+                          color: genActive() ? '#79c0ff' : '#6e7681',
+                          'border-left': `2px solid ${genActive() ? '#388bfd' : 'transparent'}`,
+                        }}
+                      >
+                        <span style={{ flex: 1, overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }}>
+                          {name}.js
+                        </span>
+                        <span style={{ 'font-size': '9px', 'font-style': 'normal', 'flex-shrink': 0 }}>generated</span>
+                      </div>
+                    </Show>
+                  </>
+                )
+              }}
             </For>
           </div>
         </div>
@@ -597,8 +781,10 @@ export function CodePanel(props: { onClose: () => void }) {
           {/* Module name tab — always in DOM but hidden when no module */}
           <div
             style={{
-              display: activeModule() ? 'block' : 'none',
-              padding: '5px 14px',
+              display: activeModule() ? 'flex' : 'none',
+              'align-items': 'center',
+              gap: '8px',
+              padding: '4px 8px 4px 14px',
               'font-size': '12px',
               color: '#8b949e',
               'border-bottom': '1px solid #21262d',
@@ -607,7 +793,34 @@ export function CodePanel(props: { onClose: () => void }) {
               background: '#0d1117',
             }}
           >
-            {activeModule()}.js
+            <span style={{ flex: 1 }}>
+              {activeModule()}.{compiledView() ? 'js' : langOf(activeModule())}
+              <Show when={compiledView()}>
+                <span style={{ 'margin-left': '8px', color: '#6e7681', 'font-style': 'italic' }}>
+                  generated · read-only
+                </span>
+              </Show>
+            </span>
+            <Show when={activeModule() && !compiledView()}>
+              <button
+                onClick={() => convertModuleLang(activeModule(), langOf(activeModule()) === 'ts' ? 'js' : 'ts')}
+                title={langOf(activeModule()) === 'ts'
+                  ? 'Convert this module to plain JavaScript'
+                  : 'Convert this module to TypeScript'}
+                style={{
+                  padding: '3px 10px',
+                  'border-radius': '4px',
+                  border: '1px solid #30363d',
+                  background: '#161b22',
+                  color: langOf(activeModule()) === 'ts' ? '#e3b341' : '#58a6ff',
+                  'font-size': '11px',
+                  'font-family': 'inherit',
+                  cursor: 'pointer',
+                }}
+              >
+                {langOf(activeModule()) === 'ts' ? 'Convert to JS' : 'Convert to TS'}
+              </button>
+            </Show>
           </div>
 
           {/* CodeMirror mount point — always in DOM so the view persists across module switches */}
