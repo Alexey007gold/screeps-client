@@ -1,5 +1,56 @@
 # screeps-client
 
+## 0.15.0
+
+### Minor Changes
+
+- 57a7e1d: Hide the connection ("server") password field for xxscreeps servers.
+
+  `screeps-connectivity` adds a `hasOfficialLike(version)` capability helper that
+  detects the `official-like` feature advertised at `/api/version`. The login
+  screens (web and desktop) now use it to hide the server-password field on
+  xxscreeps servers, where the screepsmod-auth connection password does not apply.
+
+- 3b9b951: Revamp the public profile page (`/profile/<username>`):
+
+  - Header now mirrors the self Overview chrome — small badge, the player's name
+    as the title, and a compact GCL/GPL readout rendered as rounded chips bordered
+    in the rank color (teal / red).
+  - The "Last 7 days" stat block is now a dropdown (1 hour / 24 hours / 7 days);
+    the tiles refetch the user's public stats for the selected window.
+  - Stat tiles now render correctly on servers that return `/api/user/stats`
+    metrics as a single pre-summed total per interval, not just per-tick buckets
+    (`ApiUserStatsResponse.stats` widened to `number | bucket[]`).
+  - Cross-links between the two account views: the username on the self Overview
+    links to the public profile, and your own public profile links back to your
+    private Overview.
+  - The top-bar Overview button no longer appears active while a profile is open —
+    a profile is a separate view.
+
+- 79bd3d0: Add a read-only per-room overview page at `/room-overview/<shard>/<room>` (or
+  `/room-overview/<room>` on single-shard servers):
+
+  - Header with the room name, owner (badge + profile link, or "Unclaimed room"),
+    and a room minimap thumbnail that opens the live room view.
+  - The same seven stat tiles as the account Overview, summed over a selectable
+    interval (1 hour / 24 hours / 7 days).
+  - A history graph rendering the six per-bucket metrics (energy harvested,
+    construction, control, energy on creeps, creeps produced/lost) as
+    opacity-scaled dot strips.
+  - Entry points: a chart button next to each room name on the self Overview and
+    public Profile pages, plus a button in the in-game room view's left toolbar
+    (between the World Map and History buttons).
+  - `screeps-connectivity`: the existing `game.roomOverview` endpoint is now typed
+    with the new exported `ApiRoomOverviewResponse` (was `unknown`).
+
+- 851580d: Add a top-level Messages screen with per-user conversation deep links. Messages now lives at `/messages` (moved out from under the User hub), and a specific conversation is deep-linkable at `/messages/<username>` — resolving the username to the user id for the message list/send endpoints, with browser back/forward support. Other players' profile pages gain a "Message" button (on messaging-capable servers) that opens the conversation with them, complete with the send box. The User overview's Mail button now navigates to the new route.
+
+### Patch Changes
+
+- 5d46b8e: Fix flag removal and color changes failing with "invalid shard" on multi-shard servers. `removeFlag` and `changeFlagColor` now accept and forward the current shard, matching the other room-scoped game endpoints.
+- 7d5747c: Market: remember the room you opened it from (carried in the `?room` URL query) and pre-fill it into the resource "Target room" box, so shipping-range distances are calculated against your current room right away. Still freely editable.
+- d136a15: Fix clicking a room in the Overview updating the URL but not switching to that room. Returning to the game view from an overlay route now re-syncs the room/shard/map view from the URL.
+
 ## 0.14.2
 
 ### Patch Changes
