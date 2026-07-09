@@ -314,20 +314,14 @@ function syncPendingIds(): void {
 let subscriptions: SubscriptionGroup | null = null
 
 // Log lines may arrive with HTML markup, HTML-escaped entities, or as quoted
-// strings with escaped quotes, depending on server and channel. Normalize all
-// of that before looking for the protocol marker.
-let entityDecoder: HTMLTextAreaElement | null = null
-
-function decodeEntities(text: string): string {
-  if (!text.includes('&')) return text
-  // A detached textarea decodes entities without executing anything.
-  entityDecoder ??= document.createElement('textarea')
-  entityDecoder.innerHTML = text
-  return entityDecoder.value
-}
-
+// strings with escaped quotes, depending on server and channel. A real HTML
+// parse (detached document — scripts never execute, nothing is inserted into
+// the page) strips markup and decodes entities in one correct step, avoiding
+// the pitfalls of regex-based sanitization.
 function stripLine(line: string): string {
-  return decodeEntities(line.replace(/<[^>]*>/g, '')).trim()
+  if (!line.includes('<') && !line.includes('&')) return line.trim()
+  const doc = new DOMParser().parseFromString(line, 'text/html')
+  return (doc.body.textContent ?? '').trim()
 }
 
 // A successfully parsed protocol line, hidden from the console panel. Lines
@@ -338,6 +332,10 @@ export function isCustomUiLine(line: string): boolean {
 }
 
 function parseProtocolLine(line: string): Record<string, unknown> | null {
+  // Fast pre-check on the raw line (the marker is plain letters, so neither
+  // tags nor entity encoding can hide it) — keeps the DOM parse off the hot
+  // path where this runs for every visible console line.
+  if (!line.includes(MARKER)) return null
   const text = stripLine(line)
   const marker = text.indexOf(MARKER)
   if (marker === -1) return null
@@ -385,9 +383,10 @@ function applyResponse(resp: Record<string, unknown>, cmd: PendingCommand): void
 
 function handleConsoleMessage(msg: ConsoleMessage): void {
   for (const line of [...(msg.log ?? []), ...(msg.results ?? [])]) {
+    if (!line.includes(MARKER)) continue
     const resp = parseProtocolLine(line)
     if (!resp) {
-      if (stripLine(line).includes(MARKER)) warn('marker found but line not parseable:', line)
+      warn('marker found but line not parseable:', line)
       continue
     }
     if (typeof resp.id !== 'string') {
