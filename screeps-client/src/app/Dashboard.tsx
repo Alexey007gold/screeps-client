@@ -23,6 +23,7 @@ import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick
 import { widescreenMode } from '~/stores/settingsStore.js'
 import { toggleShowLog, toggleShowConsole, toggleShowMemory } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
+import { initCustomUi, disposeCustomUi } from '~/stores/customUiStore.js'
 import { route, goToUser, goToGame, goToMarket, goToRoomOverview } from '~/stores/routeStore.js'
 import { Overview } from '~/components/Overview.js'
 import { Profile } from '~/components/Profile.js'
@@ -311,6 +312,9 @@ export function Dashboard() {
     if (!parseRoomUrl().room && !parseMapUrl()) {
       history.replaceState(null, '', buildMapUrl(shard()))
     }
+
+    initCustomUi()
+    onCleanup(disposeCustomUi)
 
     window.addEventListener('popstate', syncViewFromUrl)
     onCleanup(() => window.removeEventListener('popstate', syncViewFromUrl))

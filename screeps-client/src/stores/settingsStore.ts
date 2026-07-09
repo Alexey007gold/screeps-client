@@ -23,3 +23,4 @@ export const [roomDarkOverlay, setRoomDarkOverlay] = boolSetting(LS.roomDarkOver
 export const [showRoomVisuals, setShowRoomVisuals] = boolSetting(LS.showRoomVisuals, true)
 export const [spriteTheme, setSpriteTheme] = strSetting(LS.spriteTheme, 'default')
 export const [showMapVisuals, setShowMapVisuals] = boolSetting(LS.showMapVisuals, true)
+export const [hideCustomUiProtocol, setHideCustomUiProtocol] = boolSetting(LS.hideCustomUiProtocol, true)

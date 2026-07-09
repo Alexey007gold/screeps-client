@@ -7,12 +7,14 @@ import {
   showRoomDecorations, setShowRoomDecorations,
   roomDarkOverlay, setRoomDarkOverlay,
   spriteTheme, setSpriteTheme,
+  hideCustomUiProtocol, setHideCustomUiProtocol,
 } from '~/stores/settingsStore.js'
 import { clientVersion, embeddedModInfo } from '~/utils/embedded.js'
 import { userInfo, isGuest, client } from '~/stores/clientStore.js'
 import type { NotifyPrefs } from 'screeps-connectivity'
 import { clearAllCaches } from '~/utils/storage.js'
 import { addToast } from '~/stores/toastStore.js'
+import { uiSegment, uiShard, uiError, setUiSegment, setUiShard } from '~/stores/customUiStore.js'
 
 interface ToggleProps {
   label: string
@@ -314,6 +316,65 @@ export function SettingsPanel(props: { onClose: () => void }) {
                   </>
                 )
               })()}
+            </Section>
+          </Show>
+
+          <Show when={!isGuest()}>
+            <Section title="Custom UI">
+              <SelectRow
+                label="Config segment"
+                description="Memory segment holding your custom UI definition (JSON). See docs/custom-ui.md for the format."
+                value={uiSegment() ?? -1}
+                options={[
+                  { value: -1, label: 'Disabled' },
+                  ...Array.from({ length: 100 }, (_, i) => ({ value: i, label: `Segment ${i}` })),
+                ]}
+                onChange={(v) => setUiSegment(v < 0 ? null : v)}
+              />
+              <Show when={uiSegment() !== null}>
+                <div
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    'justify-content': 'space-between',
+                    padding: '10px 0',
+                    'border-bottom': '1px solid #21262d',
+                    gap: '24px',
+                  }}
+                >
+                  <div>
+                    <div style={{ 'font-size': '13px', color: '#c9d1d9' }}>Config shard</div>
+                    <div style={{ 'font-size': '11px', color: '#8b949e', 'margin-top': '3px' }}>
+                      Shard the config segment is read from. Leave empty for the server default.
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={uiShard()}
+                    placeholder="default"
+                    onChange={(e) => setUiShard(e.currentTarget.value)}
+                    style={{
+                      'flex-shrink': 0,
+                      width: '110px',
+                      background: '#21262d',
+                      color: '#c9d1d9',
+                      border: '1px solid #30363d',
+                      'border-radius': '4px',
+                      padding: '4px 8px',
+                      'font-size': '12px',
+                    }}
+                  />
+                </div>
+                <Toggle
+                  label="Hide protocol lines"
+                  description="Hide SCUI response lines from the Log and Console panes. Turn off to debug your handler."
+                  value={hideCustomUiProtocol()}
+                  onChange={setHideCustomUiProtocol}
+                />
+                <Show when={uiError()}>
+                  <div style={{ 'font-size': '11px', color: '#f85149', padding: '8px 0' }}>{uiError()}</div>
+                </Show>
+              </Show>
             </Section>
           </Show>
 
