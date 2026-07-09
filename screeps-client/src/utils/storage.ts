@@ -32,6 +32,10 @@ export const LS = {
   showRoomVisuals: 'screeps:settings:showRoomVisuals',
   spriteTheme: 'screeps:settings:spriteTheme',
   showMapVisuals: 'screeps:settings:showMapVisuals',
+  hideCustomUiProtocol: 'screeps:settings:hideCustomUiProtocol',
+  // Per-server prefixes — the active server URL is appended as ':<url>'.
+  customUiSegment: 'screeps:customUi:segment',
+  customUiShard: 'screeps:customUi:shard',
 } as const
 
 export const SS = {

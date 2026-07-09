@@ -12,6 +12,7 @@ import { createLogger } from '~/utils/log.js'
 import { CONTROLLER_DOWNGRADE, CONTROLLER_LEVEL_TOTAL } from '~/utils/gameConstants.js'
 import { ColorPicker } from '~/components/ColorPicker.js'
 import { UserLink } from '~/components/UserLink.js'
+import { CustomObjectActions } from '~/components/Sidebar/CustomObjectActions.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 
 const { log, error } = createLogger('SelectionList')
@@ -1261,6 +1262,8 @@ function SelectionItem(props: { item: SelectedObject }) {
       </div>
 
       <Dynamic component={detailsComponent()} item={props.item} />
+
+      <CustomObjectActions item={props.item} />
 
       {/* ID row — shown for every object that has one */}
       <Show when={props.item.id}>

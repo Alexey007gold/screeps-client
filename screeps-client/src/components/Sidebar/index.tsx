@@ -10,6 +10,7 @@ import { RoomInfoBox } from './RoomInfoBox.js'
 import { FlagForm } from './FlagForm.js'
 import { BuildPanel } from './BuildPanel.js'
 import { HistoryControlPanel } from './HistoryControlPanel.js'
+import { CustomUiPanel } from './CustomUiPanel.js'
 
 function RoomModePanel(props: { shard?: string | null }) {
   return (
@@ -136,11 +137,17 @@ export function Sidebar(props: SidebarProps) {
 
         <Show
           when={props.mapMode}
-          fallback={<RoomModePanel shard={props.shard} />}
+          fallback={
+            <>
+              <RoomModePanel shard={props.shard} />
+              <CustomUiPanel mode="room" shard={props.shard ?? null} room={props.room} />
+            </>
+          }
         >
           <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
             <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />
             <RoomInfoBox label="Cursor" info={props.hoveredRoomInfo ?? null} dim />
+            <CustomUiPanel mode="map" shard={props.shard ?? null} selectedRoomInfo={props.selectedRoomInfo ?? null} />
           </div>
         </Show>
       </div>

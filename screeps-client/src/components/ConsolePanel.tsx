@@ -5,6 +5,8 @@ import { SubscriptionGroup } from 'screeps-connectivity'
 import type { ConsoleMessage } from 'screeps-connectivity'
 import { showLog, showConsole, showMemory, toggleShowLog, toggleShowConsole, toggleShowMemory, consoleInput, setConsoleInput, registerConsoleInput } from '~/stores/consoleStore.js'
 import { watches, tempWatch, memoryValues, addWatch, removeWatch, clearTempWatch, initMemorySubscriptions } from '~/stores/memoryStore.js'
+import { isCustomUiLine } from '~/stores/customUiStore.js'
+import { hideCustomUiProtocol } from '~/stores/settingsStore.js'
 import { MemoryTree } from '~/components/MemoryTree.js'
 import { currentShard } from '~/stores/roomDataStore.js'
 import { createLogger } from '~/utils/log.js'
@@ -333,9 +335,13 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
     'border-radius': '4px',
   } as const)
 
-  const logLines = () => entries().flatMap((e) => e.log)
+  // Custom-UI protocol lines (SCUI marker) are hidden from both panes — the
+  // customUiStore consumes them and turns them into toasts/navigation. The
+  // filter can be turned off in Settings for debugging.
+  const hideLine = (l: string) => hideCustomUiProtocol() && isCustomUiLine(l)
+  const logLines = () => entries().flatMap((e) => e.log).filter((l) => !hideLine(l))
   const errorLines = () => entries().flatMap((e) => e.error)
-  const resultLines = () => entries().flatMap((e) => e.results)
+  const resultLines = () => entries().flatMap((e) => e.results).filter((l) => !hideLine(l))
 
   const monoStyle = {
     'font-family': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
