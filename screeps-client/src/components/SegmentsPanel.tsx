@@ -166,9 +166,9 @@ export function SegmentsPanel(props: { shard: string | null; onClose: () => void
     addToast('Content is not lz-string compressed', 'error')
   }
 
-  const handleFormat = () => {
+  const reserializeJson = (indent?: number) => {
     try {
-      applyTransform(JSON.stringify(JSON.parse(content()), null, 2))
+      applyTransform(JSON.stringify(JSON.parse(content()), null, indent))
     } catch {
       addToast('Content is not valid JSON', 'error')
     }
@@ -228,12 +228,20 @@ export function SegmentsPanel(props: { shard: string | null; onClose: () => void
         <div style={{ width: '1px', height: '18px', background: '#30363d' }} />
 
         <button
-          onClick={handleFormat}
+          onClick={() => reserializeJson(2)}
           disabled={loading() || !content()}
           title="Pretty-print the content as JSON"
           style={headerBtnStyle(!loading() && !!content())}
         >
           Format JSON
+        </button>
+        <button
+          onClick={() => reserializeJson()}
+          disabled={loading() || !content()}
+          title="Re-serialize the content as compact JSON without whitespace"
+          style={headerBtnStyle(!loading() && !!content())}
+        >
+          Minify
         </button>
         <button
           onClick={handleCompress}
