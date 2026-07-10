@@ -3,7 +3,7 @@ import { Trash2, Pause, Play, X, Plus } from 'lucide-solid'
 import { client } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import type { ConsoleMessage } from 'screeps-connectivity'
-import { showLog, showConsole, showMemory, toggleShowLog, toggleShowConsole, toggleShowMemory, consoleInput, setConsoleInput, registerConsoleInput } from '~/stores/consoleStore.js'
+import { showLog, showConsole, showMemory, showSegments, toggleShowLog, toggleShowConsole, toggleShowMemory, toggleShowSegments, consoleInput, setConsoleInput, registerConsoleInput } from '~/stores/consoleStore.js'
 import { watches, tempWatch, memoryValues, addWatch, removeWatch, clearTempWatch, initMemorySubscriptions } from '~/stores/memoryStore.js'
 import { isCustomUiLine } from '~/stores/customUiStore.js'
 import { hideCustomUiProtocol } from '~/stores/settingsStore.js'
@@ -386,6 +386,9 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
         <button onClick={toggleShowLog} style={toggleBtnStyle(showLog())}>Log</button>
         <button onClick={toggleShowConsole} style={toggleBtnStyle(showConsole())}>Console</button>
         <button onClick={toggleShowMemory} style={toggleBtnStyle(showMemory())}>Memory</button>
+        <div style={{ width: '1px', height: '16px', background: '#30363d' }} />
+        {/* Not a pane toggle — opens the full-canvas segment editor overlay. */}
+        <button onClick={toggleShowSegments} title="View and edit raw memory segments" style={toggleBtnStyle(showSegments())}>Segments</button>
       </div>
 
       <style>{`

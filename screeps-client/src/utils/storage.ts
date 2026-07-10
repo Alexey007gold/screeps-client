@@ -22,6 +22,7 @@ export const LS = {
   codeBranch: 'screeps:code:branch',
   codeModule: 'screeps:code:module',
   codeCursors: 'screeps:code:cursors',
+  segmentsLast: 'screeps:segments:last',
   widescreenMode: 'screeps:settings:widescreenMode',
   showCreepLabels: 'screeps:settings:showCreepLabels',
   showMapRoomNames: 'screeps:settings:showMapRoomNames',

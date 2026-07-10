@@ -14,6 +14,9 @@ import { UserMenu } from '~/components/UserMenu.js'
 const CodePanel = lazy(() =>
   import('~/components/CodePanel.js').then((m) => ({ default: m.CodePanel })),
 )
+const SegmentsPanel = lazy(() =>
+  import('~/components/SegmentsPanel.js').then((m) => ({ default: m.SegmentsPanel })),
+)
 const MapViewer = lazy(() =>
   import('~/components/MapViewer.js').then((m) => ({ default: m.MapViewer })),
 )
@@ -21,7 +24,7 @@ import { client, disconnect, isGuest, userInfo, gameTime, isPrivateServer, serve
 import { capabilities } from '~/stores/capabilities.js'
 import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick } from '~/stores/historyStore.js'
 import { widescreenMode } from '~/stores/settingsStore.js'
-import { toggleShowLog, toggleShowConsole, toggleShowMemory } from '~/stores/consoleStore.js'
+import { toggleShowLog, toggleShowConsole, toggleShowMemory, showSegments, setShowSegments } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
 import { initCustomUi, disposeCustomUi } from '~/stores/customUiStore.js'
 import { route, goToUser, goToGame, goToMarket, goToRoomOverview } from '~/stores/routeStore.js'
@@ -118,13 +121,23 @@ export function Dashboard() {
   const [showSettings, setShowSettings] = createSignal(false)
   const [showBadgePicker, setShowBadgePicker] = createSignal(!isGuest() && !userInfo()?.badge)
   const [showCode, setShowCode] = createSignal(false)
-  // Suppresses sidebar transition for one render cycle whenever showCode toggles,
-  // so both open and close are instant with no CSS animation.
+  // Suppresses sidebar transition for one render cycle whenever a full-canvas
+  // overlay toggles, so both open and close are instant with no CSS animation.
   const [suppressSidebarTransition, setSuppressSidebarTransition] = createSignal(false)
   createEffect(() => {
     showCode() // track
+    showSegments() // track
     setSuppressSidebarTransition(true)
     Promise.resolve().then(() => setSuppressSidebarTransition(false))
+  })
+
+  // Code editor and segments overlay are mutually exclusive — opening one
+  // closes the other (both cover the full canvas area).
+  createEffect(() => {
+    if (showSegments()) { setShowCode(false); setShowSettings(false) }
+  })
+  createEffect(() => {
+    if (showCode()) setShowSegments(false)
   })
 
   // Guest sessions are read-only: force the room view back to 'view' so the
@@ -167,6 +180,7 @@ export function Dashboard() {
     if (route() !== 'game') {
       setShowCode(false)
       setShowSettings(false)
+      setShowSegments(false)
     }
   })
 
@@ -371,6 +385,9 @@ export function Dashboard() {
       <Show when={showCode()}>
         <CodePanel onClose={() => setShowCode(false)} />
       </Show>
+      <Show when={showSegments()}>
+        <SegmentsPanel shard={shard()} onClose={() => setShowSegments(false)} />
+      </Show>
       <Show
         when={!mapMode()}
         fallback={
@@ -486,7 +503,7 @@ export function Dashboard() {
   const sidebarArea = (animate: boolean) => (
     <div
       style={{
-        width: showCode() ? '0' : `${sidebarWidth()}px`,
+        width: showCode() || showSegments() ? '0' : `${sidebarWidth()}px`,
         'border-left': '1px solid #30363d',
         transition: animate && !(suppressSidebarTransition() || sidebarDragging()) ? 'width 0.15s ease' : 'none',
         overflow: 'hidden',
