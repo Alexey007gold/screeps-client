@@ -1,5 +1,16 @@
 # screepsmod-client-new
 
+## 0.2.23
+
+### Patch Changes
+
+- eb6f864: Rebuild embedded client with the latest screeps-client changes.
+- Updated dependencies [66f88f8]
+- Updated dependencies [47c34f1]
+- Updated dependencies [eb6f864]
+- Updated dependencies [1b547e3]
+  - screeps-client@0.16.0
+
 ## 0.2.22
 
 ### Patch Changes
