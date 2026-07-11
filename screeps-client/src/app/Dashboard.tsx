@@ -17,6 +17,9 @@ const CodePanel = lazy(() =>
 const SegmentsPanel = lazy(() =>
   import('~/components/SegmentsPanel.js').then((m) => ({ default: m.SegmentsPanel })),
 )
+const CustomUiEditor = lazy(() =>
+  import('~/components/CustomUiEditor.js').then((m) => ({ default: m.CustomUiEditor })),
+)
 const MapViewer = lazy(() =>
   import('~/components/MapViewer.js').then((m) => ({ default: m.MapViewer })),
 )
@@ -24,7 +27,7 @@ import { client, disconnect, isGuest, userInfo, gameTime, isPrivateServer, serve
 import { capabilities } from '~/stores/capabilities.js'
 import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick } from '~/stores/historyStore.js'
 import { widescreenMode } from '~/stores/settingsStore.js'
-import { toggleShowLog, toggleShowConsole, toggleShowMemory, showSegments, setShowSegments } from '~/stores/consoleStore.js'
+import { toggleShowLog, toggleShowConsole, toggleShowMemory, showSegments, setShowSegments, showCustomUiEditor, setShowCustomUiEditor } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
 import { initCustomUi, disposeCustomUi } from '~/stores/customUiStore.js'
 import { route, goToUser, goToGame, goToMarket, goToRoomOverview } from '~/stores/routeStore.js'
@@ -127,17 +130,21 @@ export function Dashboard() {
   createEffect(() => {
     showCode() // track
     showSegments() // track
+    showCustomUiEditor() // track
     setSuppressSidebarTransition(true)
     Promise.resolve().then(() => setSuppressSidebarTransition(false))
   })
 
-  // Code editor and segments overlay are mutually exclusive — opening one
-  // closes the other (both cover the full canvas area).
+  // Code editor, segments and custom-UI overlays are mutually exclusive —
+  // opening one closes the others (all cover the full canvas area).
   createEffect(() => {
-    if (showSegments()) { setShowCode(false); setShowSettings(false) }
+    if (showSegments()) { setShowCode(false); setShowSettings(false); setShowCustomUiEditor(false) }
   })
   createEffect(() => {
-    if (showCode()) setShowSegments(false)
+    if (showCode()) { setShowSegments(false); setShowCustomUiEditor(false) }
+  })
+  createEffect(() => {
+    if (showCustomUiEditor()) { setShowCode(false); setShowSegments(false); setShowSettings(false) }
   })
 
   // Guest sessions are read-only: force the room view back to 'view' so the
@@ -181,6 +188,7 @@ export function Dashboard() {
       setShowCode(false)
       setShowSettings(false)
       setShowSegments(false)
+      setShowCustomUiEditor(false)
     }
   })
 
@@ -388,6 +396,9 @@ export function Dashboard() {
       <Show when={showSegments()}>
         <SegmentsPanel shard={shard()} onClose={() => setShowSegments(false)} />
       </Show>
+      <Show when={showCustomUiEditor()}>
+        <CustomUiEditor onClose={() => setShowCustomUiEditor(false)} />
+      </Show>
       <Show
         when={!mapMode()}
         fallback={
@@ -503,7 +514,7 @@ export function Dashboard() {
   const sidebarArea = (animate: boolean) => (
     <div
       style={{
-        width: showCode() || showSegments() ? '0' : `${sidebarWidth()}px`,
+        width: showCode() || showSegments() || showCustomUiEditor() ? '0' : `${sidebarWidth()}px`,
         'border-left': '1px solid #30363d',
         transition: animate && !(suppressSidebarTransition() || sidebarDragging()) ? 'width 0.15s ease' : 'none',
         overflow: 'hidden',
