@@ -2,6 +2,7 @@ node_modules
 reference
 .DS_Store
 screeps-connectivity/test-live.mjs
+screeps-connectivity/test-live-*.mjs
 .env.local
 .env.*.local
 /.opencode/plans/
