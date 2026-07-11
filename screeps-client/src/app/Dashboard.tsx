@@ -1,5 +1,5 @@
-import { createEffect, createSignal, lazy, onCleanup, onMount, Show, untrack, type JSX } from 'solid-js'
-import { Map, Code2, Settings, LogIn, LayoutDashboard, Store, Clock, BarChart3 } from 'lucide-solid'
+import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Switch, Match, untrack, type JSX } from 'solid-js'
+import { Map, Code2, Settings, LogIn, LayoutDashboard, LayoutGrid, Store, Clock, BarChart3 } from 'lucide-solid'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ToastContainer } from '~/components/ToastContainer.js'
@@ -16,6 +16,9 @@ const CodePanel = lazy(() =>
 )
 const MapViewer = lazy(() =>
   import('~/components/MapViewer.js').then((m) => ({ default: m.MapViewer })),
+)
+const MultiRoomViewer = lazy(() =>
+  import('~/components/MultiRoomViewer.js').then((m) => ({ default: m.MultiRoomViewer })),
 )
 import { client, disconnect, isGuest, userInfo, gameTime, isPrivateServer, serverVersion } from '~/stores/clientStore.js'
 import { capabilities } from '~/stores/capabilities.js'
@@ -37,7 +40,7 @@ const DEFAULT_BADGE: Badge = { type: 1, color1: '#4a5060', color2: '#7a9ec0', co
 
 import { parseRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
-import { buildMapUrl, buildRoomUrl } from '~/utils/gameRoutes.js'
+import { buildMapUrl, buildRoomUrl, buildGridUrl } from '~/utils/gameRoutes.js'
 import { isTypingTarget } from '~/utils/dom.js'
 import { LS, getStr, setStr, removeLocal, getNum, setNum } from '~/utils/storage.js'
 
@@ -69,6 +72,15 @@ function parseMapUrl(): { shard: string | null } | null {
   const path = window.location.pathname
   if (path !== mapPath && !path.startsWith(`${mapPath}/`)) return null
   const rest = path.slice(mapPath.length).replace(/^\//, '')
+  const pathShard = rest ? decodeURIComponent(rest.split('/')[0]) : null
+  return { shard: pathShard ?? legacyQueryShard() }
+}
+
+function parseGridUrl(): { shard: string | null } | null {
+  const gridPath = `${basePath()}/grid`
+  const path = window.location.pathname
+  if (path !== gridPath && !path.startsWith(`${gridPath}/`)) return null
+  const rest = path.slice(gridPath.length).replace(/^\//, '')
   const pathShard = rest ? decodeURIComponent(rest.split('/')[0]) : null
   return { shard: pathShard ?? legacyQueryShard() }
 }
@@ -107,7 +119,15 @@ export function Dashboard() {
   const urlState = parseRoomUrl()
   const [room, setRoom] = createSignal(urlState.room ?? getStr(LS.room) ?? 'W1N1')
   const [shard, setShard] = createSignal<string | null>(urlState.shard ?? getStr(LS.shard))
-  const [mapMode, setMapMode] = createSignal(parseMapUrl() !== null || !urlState.room)
+  // Three peer game sub-views. 'grid' is only ever entered explicitly (via its
+  // own URL or the in-room toggle), never the default landing view.
+  const [viewMode, setViewMode] = createSignal<'room' | 'map' | 'grid'>(
+    parseGridUrl() !== null ? 'grid' : (parseMapUrl() !== null || !urlState.room) ? 'map' : 'room',
+  )
+  // Kept as a derived helper — minimizes churn in the many existing readers
+  // that only ever cared about "map vs. not map".
+  const mapMode = () => viewMode() === 'map'
+  const gridMode = () => viewMode() === 'grid'
 
   // Server message-of-the-day, shown once over the map for guest sessions after
   // connecting. Dismissed manually or by its own timer; never re-shown afterwards.
@@ -151,6 +171,10 @@ export function Dashboard() {
   const historyChunkSize = () =>
     serverVersion()?.serverData?.historyChunkSize ?? ((isPrivateServer() ?? true) ? 20 : 100)
 
+  const [gridOriginRoom, setGridOriginRoom] = createSignal<string | undefined>(undefined)
+  const [gridZoom, setGridZoom] = createSignal<number | null>(null)
+  const [gridSelectedRoom, setGridSelectedRoom] = createSignal<string | null>(null)
+  const [gridFullDetailCount, setGridFullDetailCount] = createSignal(0)
   // Consumed once when gameTime first becomes available
   let pendingHistoryTick: number | null = urlState.tick
   createEffect(() => {
@@ -171,11 +195,11 @@ export function Dashboard() {
   })
 
   // Sync room URL / history-tick hash while in room view.
-  // mapMode is read via untrack so that mode transitions (handled by explicit
-  // pushState calls in toggleMap / openMap / the navigation handler) don't
+  // viewMode is read via untrack so that mode transitions (handled by explicit
+  // pushState calls in openMap / openGrid / the navigation handler) don't
   // trigger a redundant replaceState that races with those pushState calls.
   createEffect(() => {
-    if (untrack(mapMode)) return
+    if (untrack(viewMode) !== 'room') return
     const base = buildRoomUrl(room(), shard())
     if (historyMode()) {
       history.replaceState(null, '', `${base}#tick=${historyTick()}`)
@@ -265,9 +289,16 @@ export function Dashboard() {
   // from an overlay like the Overview, where goToRoom already updated the URL
   // but not our signals).
   const syncViewFromUrl = () => {
+    const gridState = parseGridUrl()
+    if (gridState) {
+      setViewMode('grid')
+      if (gridState.shard !== null) setShard(gridState.shard)
+      if (untrack(historyMode)) exitHistoryMode()
+      return
+    }
     const mapState = parseMapUrl()
     if (mapState) {
-      setMapMode(true)
+      setViewMode('map')
       if (mapState.shard !== null) setShard(mapState.shard)
       if (untrack(historyMode)) exitHistoryMode()
       return
@@ -276,7 +307,7 @@ export function Dashboard() {
     if (r) {
       setRoom(r)
       setShard(s)
-      setMapMode(false)
+      setViewMode('room')
       if (t !== null) {
         pendingHistoryTick = t
       } else if (untrack(historyMode)) {
@@ -297,19 +328,26 @@ export function Dashboard() {
   const handleShardChange = (s: string) => {
     setShard(s)
     setStr(LS.shard, s)
-    history.pushState(null, '', buildMapUrl(s))
+    history.pushState(null, '', gridMode() ? buildGridUrl(s) : buildMapUrl(s))
   }
 
   const openMap = (originRoom: string) => {
     if (untrack(historyMode)) exitHistoryMode()
     setMapOriginRoom(originRoom)
-    setMapMode(true)
+    setViewMode('map')
     history.pushState(null, '', buildMapUrl(shard()))
+  }
+
+  const openGrid = (originRoom: string) => {
+    if (untrack(historyMode)) exitHistoryMode()
+    setGridOriginRoom(originRoom)
+    setViewMode('grid')
+    history.pushState(null, '', buildGridUrl(shard()))
   }
 
   onMount(() => {
     // Ensure URL reflects the active view even when loaded without a path
-    if (!parseRoomUrl().room && !parseMapUrl()) {
+    if (!parseRoomUrl().room && !parseMapUrl() && !parseGridUrl()) {
       history.replaceState(null, '', buildMapUrl(shard()))
     }
 
@@ -326,9 +364,10 @@ export function Dashboard() {
         if (untrack(historyMode)) exitHistoryMode()
         setRoom(state.room)
         setShard(state.shard)
-        setMapMode(false)
+        setViewMode('room')
         setHoveredRoomInfo(null)
         setSelectedRoomInfo(null)
+        setGridSelectedRoom(null)
         setStr(LS.room, state.room)
         if (state.shard) setStr(LS.shard, state.shard)
         else removeLocal(LS.shard)
@@ -353,13 +392,14 @@ export function Dashboard() {
       if (e.key === 'y' || e.key === 'Y') {
         toggleShowMemory()
       }
-      if (!mapMode()) {
+      if (viewMode() === 'room') {
         if (e.key === '1') setRoomViewMode('view')
         if (!isGuest()) {
           if (e.key === '2') setRoomViewMode('flag')
           if (e.key === '3') setRoomViewMode('build')
         }
         if (e.key === 'm') openMap(room())
+        if (e.key === 'g') openGrid(room())
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -371,9 +411,8 @@ export function Dashboard() {
       <Show when={showCode()}>
         <CodePanel onClose={() => setShowCode(false)} />
       </Show>
-      <Show
-        when={!mapMode()}
-        fallback={
+      <Switch>
+        <Match when={viewMode() === 'map'}>
           <MapViewer
             shard={shard()}
             originRoom={mapOriginRoom()}
@@ -387,54 +426,63 @@ export function Dashboard() {
             }}
             onSubscriptionStateChanged={setMapSubsActive}
           />
-        }
-      >
-        <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
-        <button
-          onClick={() => openMap(room())}
-          title="World Map"
-          style={{
-            position: 'absolute',
-            top: '8px',
-            left: '8px',
-            'z-index': 5,
-            padding: '12px',
-            'border-radius': '6px',
-            border: '1px solid #30363d',
-            background: 'rgba(33,38,45,0.85)',
-            color: '#c9d1d9',
-            cursor: 'pointer',
-            display: 'flex',
-            'align-items': 'center',
-          }}
-        >
-          <Map size={24} />
-        </button>
-        <button
-          onClick={() => goToRoomOverview(room(), shard())}
-          title="Room overview"
-          style={{
-            position: 'absolute',
-            top: '66px',
-            left: '8px',
-            'z-index': 5,
-            padding: '12px',
-            'border-radius': '6px',
-            border: '1px solid #30363d',
-            background: 'rgba(33,38,45,0.85)',
-            color: '#c9d1d9',
-            cursor: 'pointer',
-            display: 'flex',
-            'align-items': 'center',
-          }}
-        >
-          <BarChart3 size={24} />
-        </button>
-        <Show when={capabilities().hasHistory}>
+        </Match>
+        <Match when={viewMode() === 'grid'}>
+          <MultiRoomViewer
+            shard={shard()}
+            originRoom={gridOriginRoom()}
+            initialZoom={gridZoom() ?? undefined}
+            onNavigateToRoom={(r) => handleNavigate(r, shard())}
+            onSelectedRoomChanged={setGridSelectedRoom}
+            onZoomChanged={setGridZoom}
+            onFullDetailCountChanged={setGridFullDetailCount}
+          />
+        </Match>
+        <Match when={viewMode() === 'room'}>
+          <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />
           <button
-            onClick={() => (historyMode() ? exitHistoryMode() : gameTime() !== null && enterHistoryMode(gameTime()!, serverVersion()?.serverData?.historyKeepTicks, historyChunkSize()))}
-            disabled={!historyMode() && gameTime() === null}
-            title="History"
+            onClick={() => openMap(room())}
+            title="World Map"
+            style={{
+              position: 'absolute',
+              top: '8px',
+              left: '8px',
+              'z-index': 5,
+              padding: '12px',
+              'border-radius': '6px',
+              border: '1px solid #30363d',
+              background: 'rgba(33,38,45,0.85)',
+              color: '#c9d1d9',
+              cursor: 'pointer',
+              display: 'flex',
+              'align-items': 'center',
+            }}
+          >
+            <Map size={24} />
+          </button>
+          <button
+            onClick={() => goToRoomOverview(room(), shard())}
+            title="Room overview"
+            style={{
+              position: 'absolute',
+              top: '66px',
+              left: '8px',
+              'z-index': 5,
+              padding: '12px',
+              'border-radius': '6px',
+              border: '1px solid #30363d',
+              background: 'rgba(33,38,45,0.85)',
+              color: '#c9d1d9',
+              cursor: 'pointer',
+              display: 'flex',
+              'align-items': 'center',
+            }}
+          >
+            <BarChart3 size={24} />
+          </button>
+          <button
+            onClick={() => openGrid(room())}
+            title="Grid View"
             style={{
               position: 'absolute',
               top: '124px',
@@ -442,19 +490,42 @@ export function Dashboard() {
               'z-index': 5,
               padding: '12px',
               'border-radius': '6px',
-              border: `1px solid ${historyMode() ? '#58a6ff' : '#30363d'}`,
-              background: historyMode() ? 'rgba(31,111,235,0.85)' : 'rgba(33,38,45,0.85)',
+              border: '1px solid #30363d',
+              background: 'rgba(33,38,45,0.85)',
               color: '#c9d1d9',
-              cursor: !historyMode() && gameTime() === null ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               display: 'flex',
               'align-items': 'center',
-              opacity: !historyMode() && gameTime() === null ? 0.4 : 1,
             }}
           >
-            <Clock size={24} />
+            <LayoutGrid size={24} />
           </button>
-        </Show>
-      </Show>
+          <Show when={capabilities().hasHistory}>
+            <button
+              onClick={() => (historyMode() ? exitHistoryMode() : gameTime() !== null && enterHistoryMode(gameTime()!, serverVersion()?.serverData?.historyKeepTicks, historyChunkSize()))}
+              disabled={!historyMode() && gameTime() === null}
+              title="History"
+              style={{
+                position: 'absolute',
+                top: '182px',
+                left: '8px',
+                'z-index': 5,
+                padding: '12px',
+                'border-radius': '6px',
+                border: `1px solid ${historyMode() ? '#58a6ff' : '#30363d'}`,
+                background: historyMode() ? 'rgba(31,111,235,0.85)' : 'rgba(33,38,45,0.85)',
+                color: '#c9d1d9',
+                cursor: !historyMode() && gameTime() === null ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                'align-items': 'center',
+                opacity: !historyMode() && gameTime() === null ? 0.4 : 1,
+              }}
+            >
+              <Clock size={24} />
+            </button>
+          </Show>
+        </Match>
+      </Switch>
       <Show when={showMotd()}>
         <MotdOverlay text={motdText()!} onClose={() => setMotdDismissed(true)} />
       </Show>
@@ -501,12 +572,16 @@ export function Dashboard() {
         isCollapsed={sidebarCollapsed()}
         onToggle={toggleSidebar}
         mapMode={mapMode()}
+        gridMode={gridMode()}
         hoveredRoomInfo={hoveredRoomInfo()}
         selectedRoomInfo={selectedRoomInfo()}
         room={room()}
         shard={shard()}
         mapZoom={mapZoom()}
         mapSubsActive={mapSubsActive()}
+        gridZoom={gridZoom()}
+        gridFullDetailCount={gridFullDetailCount()}
+        gridSelectedRoom={gridSelectedRoom()}
         onShardChange={handleShardChange}
       />
     </div>
@@ -526,7 +601,7 @@ export function Dashboard() {
       {/* Header */}
       <div style={{ display: 'flex', 'border-bottom': '1px solid #30363d', 'align-items': 'center' }}>
         <ConnectionStatus />
-        <Show when={!isGuest() || mapMode()}>
+        <Show when={!isGuest() || mapMode() || gridMode()}>
           <StatsBar
             mapZoom={mapMode() ? mapZoom() : null}
             mapSubsActive={mapMode() ? mapSubsActive() : null}

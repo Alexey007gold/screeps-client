@@ -11,6 +11,9 @@ import { UserLink } from '~/components/UserLink.js'
 interface RoomInfoPanelProps {
   room: string
   shard: string | null
+  // Grid view (view + inspect only, no build/flag intents) — hides the
+  // view/flag/build mode toggle so the panel is purely informational.
+  readOnly?: boolean
 }
 
 const ROOM_VIEW_MODES: Array<{ mode: RoomViewMode; label: string; icon: () => JSX.Element }> = [
@@ -125,7 +128,7 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
         />
       </label>
     </div>
-    <Show when={!isGuest()}>
+    <Show when={!isGuest() && !props.readOnly}>
       <div
         style={{
           display: 'grid',

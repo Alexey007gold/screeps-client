@@ -52,6 +52,7 @@ export interface ScreepsClientOptions {
 }
 
 export class ScreepsClient {
+  readonly url: string
   readonly http: HttpClient
   readonly socket: SocketClient
   readonly stores: {
@@ -81,6 +82,7 @@ export class ScreepsClient {
     } catch {
       throw new TypeError(`ScreepsClient: invalid url "${opts.url}"`)
     }
+    this.url = opts.url
     this.logger = Logger.create(opts.debug)
     this.logger.log(`[screeps:client] init ${opts.url}`)
     this.cache = new Cache(namespace, opts.storage ?? null)

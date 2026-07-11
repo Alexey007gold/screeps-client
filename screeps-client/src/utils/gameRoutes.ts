@@ -1,9 +1,11 @@
 import { basePath } from './embedded.js'
 
-// URL builders/parsers for the game views (/map and /room). The shard, when the
-// server reports one, is carried as a path segment rather than a query param:
+// URL builders/parsers for the game views (/map, /room and /grid). The shard,
+// when the server reports one, is carried as a path segment rather than a
+// query param:
 //   /map                 /map/shard0
 //   /room/W11N11         /room/shard0/W11N11
+//   /grid                /grid/shard0
 // A missing shard segment means "the server's default / only shard" (private
 // servers that report no shards on start).
 
@@ -26,4 +28,8 @@ export function buildRoomOverviewUrl(room: string, shard: string | null): string
   return shard
     ? `${basePath()}/room-overview/${encodeURIComponent(shard)}/${room}`
     : `${basePath()}/room-overview/${room}`
+}
+
+export function buildGridUrl(shard: string | null): string {
+  return shard ? `${basePath()}/grid/${encodeURIComponent(shard)}` : `${basePath()}/grid`
 }

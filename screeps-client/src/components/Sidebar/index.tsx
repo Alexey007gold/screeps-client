@@ -1,7 +1,8 @@
-import { Show } from 'solid-js'
+import { Show, Switch, Match } from 'solid-js'
 import { SelectionList } from '~/components/SelectionList.js'
 import { RoomInfoPanel } from '~/components/RoomInfoPanel.js'
 import { MapInfoPanel } from '~/components/MapInfoPanel.js'
+import { GridInfoPanel } from '~/components/GridInfoPanel.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
 import { roomViewMode } from '~/stores/roomViewStore.js'
 import { historyMode } from '~/stores/historyStore.js'
@@ -28,12 +29,16 @@ interface SidebarProps {
   isCollapsed?: boolean
   onToggle?: () => void
   mapMode?: boolean
+  gridMode?: boolean
   hoveredRoomInfo?: RoomInfo | null
   selectedRoomInfo?: RoomInfo | null
   room?: string
   shard?: string | null
   mapZoom?: number | null
   mapSubsActive?: boolean | null
+  gridZoom?: number | null
+  gridFullDetailCount?: number | null
+  gridSelectedRoom?: string | null
   onShardChange?: (shard: string) => void
 }
 
@@ -125,18 +130,20 @@ export function Sidebar(props: SidebarProps) {
           )}
         </div>
 
-        <Show when={props.mapMode} fallback={
-          <RoomInfoPanel room={props.room ?? '—'} shard={props.shard ?? null} />
-        }>
-          <MapInfoPanel zoom={props.mapZoom} subsActive={props.mapSubsActive} shard={props.shard} onShardChange={props.onShardChange} />
-        </Show>
+        <Switch fallback={<RoomInfoPanel room={props.room ?? '—'} shard={props.shard ?? null} />}>
+          <Match when={props.mapMode}>
+            <MapInfoPanel zoom={props.mapZoom} subsActive={props.mapSubsActive} shard={props.shard} onShardChange={props.onShardChange} />
+          </Match>
+          <Match when={props.gridMode}>
+            <GridInfoPanel zoom={props.gridZoom} fullDetailCount={props.gridFullDetailCount} shard={props.shard} onShardChange={props.onShardChange} />
+          </Match>
+        </Switch>
 
-        <Show when={!props.mapMode && historyMode()}>
+        <Show when={!props.mapMode && !props.gridMode && historyMode()}>
           <HistoryControlPanel />
         </Show>
 
-        <Show
-          when={props.mapMode}
+        <Switch
           fallback={
             <>
               <RoomModePanel shard={props.shard} />
@@ -144,12 +151,29 @@ export function Sidebar(props: SidebarProps) {
             </>
           }
         >
-          <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
-            <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />
-            <RoomInfoBox label="Cursor" info={props.hoveredRoomInfo ?? null} dim />
-            <CustomUiPanel mode="map" shard={props.shard ?? null} selectedRoomInfo={props.selectedRoomInfo ?? null} />
-          </div>
-        </Show>
+          <Match when={props.mapMode}>
+            <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
+              <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />
+              <RoomInfoBox label="Cursor" info={props.hoveredRoomInfo ?? null} dim />
+              <CustomUiPanel mode="map" shard={props.shard ?? null} selectedRoomInfo={props.selectedRoomInfo ?? null} />
+            </div>
+          </Match>
+          <Match when={props.gridMode}>
+            <Show
+              when={props.gridSelectedRoom}
+              fallback={
+                <div style={{ padding: '12px 8px', 'font-size': '11px', color: '#8b949e' }}>
+                  Click an object in a full-detail room to inspect it.
+                </div>
+              }
+            >
+              <RoomInfoPanel room={props.gridSelectedRoom!} shard={props.shard ?? null} readOnly />
+            </Show>
+            <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
+              <SelectionList />
+            </div>
+          </Match>
+        </Switch>
       </div>
     </div>
   )
