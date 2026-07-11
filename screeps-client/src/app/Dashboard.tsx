@@ -1,9 +1,10 @@
 import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Switch, Match, untrack, type JSX } from 'solid-js'
-import { Map, Code2, Settings, LogIn, LayoutDashboard, LayoutGrid, Store, Clock, BarChart3 } from 'lucide-solid'
+import { Map, Code2, Settings, LogIn, LayoutDashboard, LayoutGrid, Store, Clock, BarChart3, Target } from 'lucide-solid'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ToastContainer } from '~/components/ToastContainer.js'
 import type { RoomInfo } from '~/components/MapViewer.js'
+import type { MultiRoomViewerApi } from '~/components/MultiRoomViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar/index.js'
 import { StatsBar } from '~/components/StatsBar.js'
@@ -175,6 +176,7 @@ export function Dashboard() {
   const [gridZoom, setGridZoom] = createSignal<number | null>(null)
   const [gridSelectedRoom, setGridSelectedRoom] = createSignal<string | null>(null)
   const [gridFullDetailCount, setGridFullDetailCount] = createSignal(0)
+  let gridApi: MultiRoomViewerApi | null = null
   // Consumed once when gameTime first becomes available
   let pendingHistoryTick: number | null = urlState.tick
   createEffect(() => {
@@ -436,7 +438,32 @@ export function Dashboard() {
             onSelectedRoomChanged={setGridSelectedRoom}
             onZoomChanged={setGridZoom}
             onFullDetailCountChanged={setGridFullDetailCount}
+            onReady={(api) => { gridApi = api }}
           />
+          <button
+            onClick={() => gridApi?.setZoom(0.6)}
+            title="Zoom to 0.6"
+            style={{
+              position: 'absolute',
+              top: '8px',
+              left: '8px',
+              'z-index': 5,
+              padding: '8px 12px',
+              'border-radius': '6px',
+              border: '1px solid #30363d',
+              background: 'rgba(33,38,45,0.85)',
+              color: '#c9d1d9',
+              cursor: 'pointer',
+              display: 'flex',
+              'align-items': 'center',
+              gap: '8px',
+              'font-size': '14px',
+              'font-weight': 500,
+            }}
+          >
+            <Target size={20} />
+            0.6x
+          </button>
         </Match>
         <Match when={viewMode() === 'room'}>
           <RoomViewer room={room()} shard={shard()} onNavigate={handleNavigate} />

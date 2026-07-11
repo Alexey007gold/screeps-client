@@ -13,9 +13,6 @@ import {
   MINIMAP_TILE, MINIMAP_ROAD, MINIMAP_WALLS_OWN, MINIMAP_WALLS_FOREIGN,
   MINIMAP_USER_OWN, MINIMAP_USER_FOREIGN, MAP2_DOT_FEATURES, MAP2_FIXED_KEYS,
 } from '~/renderer/minimap.js'
-import { createLogger } from '~/utils/log.js'
-
-const { warn } = createLogger('MultiRoomRenderer')
 
 // A full room rendered edge-to-edge — matches RoomRenderer's ROOM_SIZE
 // (TILE_SIZE=12 * 50 tiles) so Phase 2's full-detail ObjectLayer/TerrainLayer
@@ -68,7 +65,10 @@ export interface MultiRoomRendererCallbacks {
   // Fired instead of onRoomClick when clicking inside a ready full-detail
   // room — (tx,ty) are tile-local (0..49), matching RoomRenderer's tile space.
   onTileClick: (room: string, tx: number, ty: number, ctrlKey: boolean) => void
-  onVisibleRoomsChanged: (rooms: string[]) => void
+  // `inView` is the subset of `rooms` that's actually on screen right now
+  // (excludes the scroll-ahead buffer) — lets the full-detail promotion
+  // logic prefer truly-visible rooms over buffered-but-off-screen ones.
+  onVisibleRoomsChanged: (rooms: string[], inView: ReadonlySet<string>) => void
   onZoomChanged?: (zoom: number) => void
 }
 
@@ -221,8 +221,7 @@ export class MultiRoomRenderer {
       })
       this.worker.postMessage({ id, roomName, lod, raw, shard })
       return await promise
-    } catch (e) {
-      warn('error getting terrain bitmap:', e)
+    } catch {
       return null
     }
   }
@@ -526,8 +525,8 @@ export class MultiRoomRenderer {
       // NOT texture:true — see MapRenderer.destroy for why (would corrupt the
       // globally shared Texture.EMPTY that every unbaked terrainSprite references).
       this.app.destroy(false, { children: true, context: true })
-    } catch (e) {
-      warn('destroy error (ignored):', e)
+    } catch {
+      /* ignored */
     }
   }
 
@@ -567,8 +566,9 @@ export class MultiRoomRenderer {
 
   private handleVisibleBoundsChanged(bounds: VisibleBounds): void {
     this.lastVisibleBounds = bounds
-    const { rxMin, rxMax, ryMin, ryMax } = bounds
+    const { rxMin, rxMax, ryMin, ryMax, strictRxMin, strictRxMax, strictRyMin, strictRyMax } = bounds
     const visible: string[] = []
+    const inView = new Set<string>()
     const b = this.worldBoundsSet
     const rxFrom = b ? Math.max(rxMin, b.minX) : rxMin
     const rxTo   = b ? Math.min(rxMax, b.maxX) : rxMax
@@ -577,10 +577,12 @@ export class MultiRoomRenderer {
     for (let rx = rxFrom; rx <= rxTo; rx++) {
       for (let ry = ryFrom; ry <= ryTo; ry++) {
         const name = formatRoomName(rx, ry)
-        if (name) visible.push(name)
+        if (!name) continue
+        visible.push(name)
+        if (rx >= strictRxMin && rx <= strictRxMax && ry >= strictRyMin && ry <= strictRyMax) inView.add(name)
       }
     }
-    this.callbacks.onVisibleRoomsChanged(visible)
+    this.callbacks.onVisibleRoomsChanged(visible, inView)
   }
 
   // Tile-local (0..49) coords within `room` for a screen point already known

@@ -1,29 +1,40 @@
-import { ScreepsClient, TokenAuth, NullStorage } from 'screeps-connectivity'
-import type { Subscription, RoomStoreEvents } from 'screeps-connectivity'
-import { createLogger } from '~/utils/log.js'
-
-const { log } = createLogger('roomPool')
+import type {RoomStoreEvents, Subscription} from 'screeps-connectivity'
+import {NullStorage, ScreepsClient, TokenAuth} from 'screeps-connectivity'
 
 // Empirical screeps.com USER_LIMIT: full-object `room:` subscriptions are capped
 // per WebSocket connection (see docs/project/Room Subscription Limit Investigation.md).
 export const ROOMS_PER_CONNECTION = 2
-// Total connections in the pool including the primary app client — gives a
-// 12-room ceiling on the official server, matching the previous flat MAX_FULL_ROOMS.
+// Number of dedicated connections opened for full-detail rooms — gives a
+// 12-room ceiling on the official server. The primary app connection is never
+// used for these subscriptions (see class doc), so this is purely additional
+// connections on top of it.
 export const MAX_POOL_CONNECTIONS = 6
 // Private servers enforce the limit account-wide, so pooling doesn't help there —
-// single connection, fixed cap. Assumes the operator raised the server's USER_LIMIT
-// to match; if not, the extra rooms simply show the server's own limit error.
+// single (dedicated, non-primary) connection, fixed cap. Assumes the operator
+// raised the server's USER_LIMIT to match; if not, the extra rooms simply show
+// the server's own limit error.
 export const PRIVATE_MAX_FULL_ROOMS = 12
-// Delay before disconnecting an idle secondary, so zoom/pan thrash (the same
+// Delay before disconnecting an idle connection, so zoom/pan thrash (the same
 // reason MultiRoomViewer debounces its reconcile) doesn't churn connect/auth.
 export const KEEP_WARM_MS = 5000
+
+// screeps.com load-balances connections across several backend processes, each
+// independently enforcing ROOMS_PER_CONNECTION — confirmed by live testing
+// (see docs/project/Room Subscription Limit Investigation.md). Two of our own
+// pooled connections can randomly land on the SAME backend process, in which
+// case their rooms start sharing that process's budget even though neither
+// connection holds more than its own 2 rooms. A connection that keeps erroring
+// is the observable symptom of that collision — reconnecting gives it a fresh
+// random instance assignment, which usually escapes it.
+export const CONTENTION_WINDOW = 10
+export const CONTENTION_ERROR_THRESHOLD = 2
+export const CONTENTION_RECONNECT_COOLDOWN_MS = 15_000
 
 export type FullDetailUpdate = RoomStoreEvents['room:update']
 export type FullDetailError = RoomStoreEvents['room:error']
 
 interface PoolConnection {
   client: ScreepsClient
-  isPrimary: boolean
   state: 'connecting' | 'ready' | 'failed'
   connectPromise: Promise<void> | null
   rooms: Set<string>
@@ -31,10 +42,16 @@ interface PoolConnection {
   errorSub: Subscription | null
   serverErrorSub: Subscription | null
   reapTimer: ReturnType<typeof setTimeout> | null
+  // Ring buffer of this connection's last few room:update(true)/room:error(false)
+  // outcomes, oldest first — capped at CONTENTION_WINDOW. Used to detect a
+  // connection that landed on a contended backend instance (see CONTENTION_*).
+  recentOutcomes: boolean[]
 }
 
 export interface FullDetailRoomCoordinatorOptions {
-  /** Current primary app client, or null while disconnected. */
+  /** Current primary app client, or null while disconnected. Used only as a
+   *  token source for opening dedicated connections — never subscribed to
+   *  rooms directly (see class doc). */
   getPrimary: () => ScreepsClient | null
   /** Server regime. null (not yet known, e.g. before /api/version resolves) is treated as private — the safe, non-pooling default. */
   isPrivate: () => boolean | null
@@ -56,17 +73,26 @@ function defaultCreateSecondary(primary: ScreepsClient): ScreepsClient {
 }
 
 /**
- * Owns the connection(s) backing the grid view's full-detail room subscriptions,
- * so MultiRoomViewer can ask for a room without knowing whether it lands on the
- * single app connection (private servers) or a pooled secondary (official server,
- * where the room-subscription limit is per-connection rather than per-account).
+ * Owns the connection(s) backing the grid view's full-detail room subscriptions.
+ *
+ * The primary app connection is NEVER used for these subscriptions — it also
+ * carries the user stream, map2 overlays, navigation and every other app
+ * feature, and a connection that lands on a contended backend instance (see
+ * CONTENTION_* below) needs to be disconnected and reconnected to recover.
+ * Doing that to the primary would mean tearing down the user's actual login
+ * session; doing it to a dedicated connection this coordinator opened itself
+ * is cheap and invisible. So every full-detail room goes on a coordinator-owned
+ * connection — 1 on private servers (pooling doesn't help there), up to
+ * MAX_POOL_CONNECTIONS on the official server (where the limit is enforced
+ * per-connection) — and the primary is only ever read for its auth token.
  */
 export class FullDetailRoomCoordinator {
   private readonly opts: FullDetailRoomCoordinatorOptions
-  private primaryConn: PoolConnection | null = null
+  private boundPrimary: ScreepsClient | null = null
   private primaryTokenSub: Subscription | null = null
-  private secondaries: PoolConnection[] = []
+  private connections: PoolConnection[] = []
   private failedConnections = 0
+  private lastContentionReconnectAt = 0
 
   // Keyed by `${room}/${shard}`.
   private readonly tokens = new Map<string, { cancelled: boolean }>()
@@ -82,71 +108,70 @@ export class FullDetailRoomCoordinator {
   }
 
   private maxConnections(): number {
+    const poolable = this.opts.isPrivate() === false
+    if (!poolable) return 1
     return Math.max(1, MAX_POOL_CONNECTIONS - this.failedConnections)
   }
 
-  capacity(): number {
-    const priv = this.opts.isPrivate()
-    if (priv === false) return ROOMS_PER_CONNECTION * this.maxConnections()
-    return PRIVATE_MAX_FULL_ROOMS
+  private perConnectionCap(): number {
+    return this.opts.isPrivate() === false ? ROOMS_PER_CONNECTION : PRIVATE_MAX_FULL_ROOMS
   }
 
-  private ensurePrimaryConn(): PoolConnection | null {
+  capacity(): number {
+    return this.perConnectionCap() * this.maxConnections()
+  }
+
+  private ensurePrimaryBound(): ScreepsClient | null {
     const primary = this.opts.getPrimary()
     if (!primary) return null
-    if (this.primaryConn && this.primaryConn.client === primary) return this.primaryConn
-    // Primary changed (fresh login/reconnect) or first use. The stale client's
-    // own teardown is clientStore's job — we just drop our listeners on it.
-    this.primaryConn?.updateSub?.dispose()
-    this.primaryConn?.errorSub?.dispose()
+    if (this.boundPrimary === primary) return primary
+    // Primary changed (fresh login/reconnect) or first use.
     this.primaryTokenSub?.dispose()
-    const conn: PoolConnection = {
-      client: primary, isPrimary: true, state: 'ready', connectPromise: null,
-      rooms: new Set(), updateSub: null, errorSub: null, serverErrorSub: null, reapTimer: null,
-    }
-    this.attachFunnel(conn)
+    this.boundPrimary = primary
     // A password/steam login's session token rotates (and expires on inactivity)
-    // — secondaries snapshot it once at spin-up, so keep every live secondary's
-    // stored token current in case one ever needs to reconnect later. Harmless
-    // no-op for a durable personal API token (it never rotates).
+    // — dedicated connections snapshot it once at spin-up, so keep every live
+    // one's stored token current in case it ever needs to reconnect later.
+    // Harmless no-op for a durable personal API token (it never rotates).
     this.primaryTokenSub = primary.http.on('http:tokenRefresh', ({ token }) => {
-      for (const s of this.secondaries) {
+      for (const s of this.connections) {
         s.client.http.setToken(token)
         s.client.socket.setToken(token)
       }
     })
-    this.primaryConn = conn
-    return conn
+    return primary
   }
 
   private attachFunnel(conn: PoolConnection): void {
     conn.updateSub = conn.client.stores.room.on('room:update', (data) => {
+      this.recordOutcome(conn, true)
       for (const h of this.updateHandlers) h(data)
     })
     conn.errorSub = conn.client.stores.room.on('room:error', (data) => {
+      this.recordOutcome(conn, false)
       for (const h of this.errorHandlers) h(data)
     })
-    if (!conn.isPrimary) {
-      // The primary's own connection loss is already surfaced app-wide
-      // (clientStore's server:disconnected/sessionError handling); we only need
-      // to self-heal secondaries this coordinator created.
-      conn.serverErrorSub = conn.client.stores.server.on('server:error', () => {
-        this.handleConnectionFailure(conn)
-      })
-    }
+    conn.serverErrorSub = conn.client.stores.server.on('server:error', () => {
+      this.handleConnectionFailure(conn)
+    })
   }
 
-  private spinUpSecondary(): PoolConnection {
-    const primary = this.primaryConn!.client
+  private spinUpConnection(): PoolConnection {
+    const primary = this.boundPrimary!
     const client = this.opts.createSecondary ? this.opts.createSecondary(primary) : defaultCreateSecondary(primary)
     const conn: PoolConnection = {
-      client, isPrimary: false, state: 'connecting', connectPromise: null,
+      client, state: 'connecting', connectPromise: null,
       rooms: new Set(), updateSub: null, errorSub: null, serverErrorSub: null, reapTimer: null,
+      recentOutcomes: [],
     }
-    this.secondaries.push(conn)
+    this.connections.push(conn)
     conn.connectPromise = client.connect().then(
-      () => { conn.state = 'ready'; this.attachFunnel(conn) },
-      (err) => { log('secondary connect failed:', err); this.handleConnectionFailure(conn) },
+      () => {
+        conn.state = 'ready'
+        this.attachFunnel(conn)
+      },
+      () => {
+        this.handleConnectionFailure(conn)
+      },
     )
     return conn
   }
@@ -160,7 +185,50 @@ export class FullDetailRoomCoordinator {
     conn.errorSub?.dispose()
     conn.serverErrorSub?.dispose()
     try { conn.client.disconnect() } catch { /* already dead */ }
-    this.secondaries = this.secondaries.filter((s) => s !== conn)
+    this.connections = this.connections.filter((s) => s !== conn)
+
+    const keys = [...conn.rooms]
+    conn.rooms.clear()
+    for (const key of keys) {
+      if (this.roomToConn.get(key) === conn) this.roomToConn.delete(key)
+      this.roomSubs.get(key)?.dispose()
+      this.roomSubs.delete(key)
+      this.replaceOne(key)
+    }
+  }
+
+  private recordOutcome(conn: PoolConnection, success: boolean): void {
+    conn.recentOutcomes.push(success)
+    if (conn.recentOutcomes.length > CONTENTION_WINDOW) conn.recentOutcomes.shift()
+    if (!success) this.maybeReconnectDueToContention(conn)
+  }
+
+  private maybeReconnectDueToContention(conn: PoolConnection): void {
+    if (conn.recentOutcomes.length < CONTENTION_WINDOW) return
+    const errors = conn.recentOutcomes.filter((ok) => !ok).length
+    if (errors < CONTENTION_ERROR_THRESHOLD) return
+    const now = Date.now()
+    if (now - this.lastContentionReconnectAt < CONTENTION_RECONNECT_COOLDOWN_MS) return
+    this.lastContentionReconnectAt = now
+    this.reconnectDueToContention(conn)
+  }
+
+  // Tears down a connection that appears to have landed on a contended backend
+  // instance and re-places its rooms — which, since this connection is removed
+  // from the pool first, lands them on an existing connection with a free slot
+  // or spins up a brand-new one with a fresh (hopefully uncontended) instance
+  // assignment. Unlike handleConnectionFailure, this connection isn't actually
+  // broken, so it does NOT count against failedConnections/capacity. Safe to do
+  // freely because every connection here is one this coordinator opened itself
+  // — never the primary.
+  private reconnectDueToContention(conn: PoolConnection): void {
+    if (conn.state === 'failed') return
+    if (conn.reapTimer !== null) { clearTimeout(conn.reapTimer); conn.reapTimer = null }
+    conn.updateSub?.dispose()
+    conn.errorSub?.dispose()
+    conn.serverErrorSub?.dispose()
+    try { conn.client.disconnect() } catch { /* already dead */ }
+    this.connections = this.connections.filter((s) => s !== conn)
 
     const keys = [...conn.rooms]
     conn.rooms.clear()
@@ -179,31 +247,19 @@ export class FullDetailRoomCoordinator {
   }
 
   private reserveConnection(key: string): PoolConnection | null {
-    const primary = this.ensurePrimaryConn()
-    if (!primary) return null
+    if (!this.ensurePrimaryBound()) return null
 
-    const poolable = this.opts.isPrivate() === false
-
-    if (!poolable) {
-      if (primary.rooms.size >= PRIVATE_MAX_FULL_ROOMS) return null
-      primary.rooms.add(key)
-      return primary
-    }
-
-    if (primary.rooms.size < ROOMS_PER_CONNECTION) {
-      primary.rooms.add(key)
-      return primary
-    }
-    const liveSecondaries = this.secondaries.filter((s) => s.state !== 'failed')
-    for (const s of liveSecondaries) {
-      if (s.rooms.size < ROOMS_PER_CONNECTION) {
+    const cap = this.perConnectionCap()
+    const live = this.connections.filter((s) => s.state !== 'failed')
+    for (const s of live) {
+      if (s.rooms.size < cap) {
         if (s.reapTimer !== null) { clearTimeout(s.reapTimer); s.reapTimer = null }
         s.rooms.add(key)
         return s
       }
     }
-    if (1 + liveSecondaries.length < this.maxConnections()) {
-      const fresh = this.spinUpSecondary()
+    if (live.length < this.maxConnections()) {
+      const fresh = this.spinUpConnection()
       fresh.rooms.add(key)
       return fresh
     }
@@ -228,12 +284,12 @@ export class FullDetailRoomCoordinator {
   }
 
   private armReap(conn: PoolConnection): void {
-    if (conn.isPrimary || conn.rooms.size > 0) return
+    if (conn.rooms.size > 0) return
     if (conn.reapTimer !== null) clearTimeout(conn.reapTimer)
     conn.reapTimer = setTimeout(() => {
       conn.reapTimer = null
       if (conn.rooms.size > 0) return
-      this.secondaries = this.secondaries.filter((s) => s !== conn)
+      this.connections = this.connections.filter((s) => s !== conn)
       conn.updateSub?.dispose()
       conn.errorSub?.dispose()
       conn.serverErrorSub?.dispose()
@@ -258,9 +314,10 @@ export class FullDetailRoomCoordinator {
         token.cancelled = true
         this.tokens.delete(key)
         this.roomInfo.delete(key)
-        this.roomSubs.get(key)?.dispose()
-        this.roomSubs.delete(key)
+        const sub = this.roomSubs.get(key)
         const conn = this.roomToConn.get(key)
+        sub?.dispose()
+        this.roomSubs.delete(key)
         if (conn) {
           conn.rooms.delete(key)
           this.roomToConn.delete(key)
@@ -270,8 +327,8 @@ export class FullDetailRoomCoordinator {
     }
   }
 
-  /** Funnels `room:update` from every pool connection (primary + secondaries)
-   *  through a single handler, mirroring the single-connection listener this replaces. */
+  /** Funnels `room:update` from every dedicated connection through a single
+   *  handler, mirroring the single-connection listener this replaces. */
   onRoomUpdate(handler: (data: FullDetailUpdate) => void): Subscription {
     this.updateHandlers.add(handler)
     return { dispose: () => { this.updateHandlers.delete(handler) } }
@@ -282,33 +339,31 @@ export class FullDetailRoomCoordinator {
     return { dispose: () => { this.errorHandlers.delete(handler) } }
   }
 
-  /** Drop all room subs and secondary connections; keep the primary. Call on shard change. */
+  /** Drop all room subs and dedicated connections. Call on shard change. */
   reset(): void {
     for (const sub of this.roomSubs.values()) sub.dispose()
     this.roomSubs.clear()
     this.roomToConn.clear()
     this.tokens.clear()
     this.roomInfo.clear()
-    for (const conn of this.secondaries) {
+    for (const conn of this.connections) {
       if (conn.reapTimer !== null) clearTimeout(conn.reapTimer)
       conn.updateSub?.dispose()
       conn.errorSub?.dispose()
       conn.serverErrorSub?.dispose()
       try { conn.client.disconnect() } catch { /* already dead */ }
     }
-    this.secondaries = []
+    this.connections = []
     this.failedConnections = 0
-    this.primaryConn?.rooms.clear()
+    this.lastContentionReconnectAt = 0
   }
 
-  /** Full teardown, including the primary's funnel listeners. Call on component cleanup. */
+  /** Full teardown, including the primary token-refresh listener. Call on component cleanup. */
   dispose(): void {
     this.reset()
-    this.primaryConn?.updateSub?.dispose()
-    this.primaryConn?.errorSub?.dispose()
     this.primaryTokenSub?.dispose()
     this.primaryTokenSub = null
-    this.primaryConn = null
+    this.boundPrimary = null
     this.updateHandlers.clear()
     this.errorHandlers.clear()
   }

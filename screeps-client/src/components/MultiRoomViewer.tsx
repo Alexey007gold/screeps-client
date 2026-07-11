@@ -11,10 +11,12 @@ import {
   setControllerReservation, setStructureCounts, setRoomUsers, setCurrentRoom, setCurrentShard,
 } from '~/stores/roomDataStore.js'
 import { parseRoomName, isRoomInWorld } from '~/utils/roomName.js'
-import { createLogger } from '~/utils/log.js'
 import type { Map2Subscription, Subscription, RoomObjectMap } from 'screeps-connectivity'
 
-const { log, error } = createLogger('grid')
+
+export interface MultiRoomViewerApi {
+  setZoom: (zoom: number) => void
+}
 
 interface MultiRoomViewerProps {
   shard: string | null
@@ -25,6 +27,7 @@ interface MultiRoomViewerProps {
   onSelectedRoomChanged?: (room: string | null) => void
   onZoomChanged?: (zoom: number) => void
   onFullDetailCountChanged?: (count: number) => void
+  onReady?: (api: MultiRoomViewerApi) => void
 }
 
 export function MultiRoomViewer(props: MultiRoomViewerProps) {
@@ -32,6 +35,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
   let renderer: MultiRoomRenderer | null = null
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
+  const [inViewRooms, setInViewRooms] = createSignal<ReadonlySet<string>>(new Set())
   const [zoom, setZoom] = createSignal(1)
   const origin = () => props.originRoom
   const [selectedRoom, setSelectedRoom] = createSignal<string | null>(origin() ?? null)
@@ -144,17 +148,20 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
   const FULL_DETAIL_SETTLE_MS = 80
   let fullDetailTimer: ReturnType<typeof setTimeout> | null = null
 
-  const scheduleFullDetailReconcile = (rooms: string[], shard: string | null) => {
+  const scheduleFullDetailReconcile = (rooms: string[], inView: ReadonlySet<string>, shard: string | null) => {
     if (fullDetailTimer !== null) clearTimeout(fullDetailTimer)
     fullDetailTimer = setTimeout(() => {
       fullDetailTimer = null
       const c = client()
       if (!c) return
 
+      // Only rooms actually on screen are candidates — the scroll-ahead buffer
+      // (rooms in `rooms` but not `inView`) never gets promoted to full detail.
+      const candidates = rooms.filter((r) => inView.has(r))
       const desired = zoom() >= FULL_DETAIL_ZOOM_THRESHOLD
-        ? rooms.slice().sort((a, b) => {
-            const cx = rooms.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / rooms.length
-            const cy = rooms.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / rooms.length
+        ? candidates.slice().sort((a, b) => {
+            const cx = candidates.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / candidates.length
+            const cy = candidates.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / candidates.length
             const ca = parseRoomName(a), cb = parseRoomName(b)
             const da = ca ? Math.abs(ca.x - cx) + Math.abs(ca.y - cy) : 999
             const db = cb ? Math.abs(cb.x - cx) + Math.abs(cb.y - cy) : 999
@@ -175,12 +182,12 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
         // fetch reconciles first) — this just reads that cache in the common case.
         c.stores.room.terrain(room, shard)
           .then((t) => renderer?.applyFullDetailTerrain(room, t))
-          .catch((err) => error(`full-detail terrain fetch failed for ${room}:`, err))
+          .catch(() => {})
 
         if (showRoomDecorations()) {
           c.http.game.roomDecorations(room, shard)
             .then((resp) => renderer?.applyFullDetailDecoration(room, parseRoomDecorations(resp)))
-            .catch((err) => log(`no decorations for ${room}: ${err}`))
+            .catch(() => {})
         }
       }
 
@@ -216,7 +223,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
         }
         await Promise.all(bakes)
       })
-      .catch(err => error('terrain fetch failed:', err))
+      .catch(() => {})
       .finally(() => {
         for (const r of batch) requested.delete(r)
         if (terrainQueue.length > 0) terrainTimer = setTimeout(drainTerrain, TERRAIN_BATCH_MS)
@@ -312,7 +319,10 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
             .filter((v): v is SelectionVisual => v.visual != null)
           renderer.setFullDetailSelectedObjects(room, visuals)
         },
-        onVisibleRoomsChanged: (rooms) => setVisibleRooms(rooms),
+        onVisibleRoomsChanged: (rooms, inView) => {
+          setVisibleRooms(rooms)
+          setInViewRooms(inView)
+        },
         onZoomChanged: (z) => {
           setZoom(z)
           props.onZoomChanged?.(z)
@@ -325,6 +335,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
         renderer.setZoom(props.initialZoom)
       }
       props.onZoomChanged?.(renderer.zoom)
+      props.onReady?.({ setZoom: (z) => renderer?.setZoom(z) })
       const initialBounds = worldBounds()
       if (initialBounds) renderer.setBounds(initialBounds.minX, initialBounds.maxX, initialBounds.minY, initialBounds.maxY)
 
@@ -343,8 +354,8 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
               const coord = parseRoomName(roomName)
               if (coord) renderer.centerOn(coord.x, coord.y)
             }
-          } catch (err) {
-            error('worldStartRoom failed:', err)
+          } catch {
+            /* ignored */
           }
         }
       }
@@ -370,6 +381,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
   createEffect(() => {
     const c = client()
     const rooms = visibleRooms()
+    const inView = inViewRooms()
     const shard = props.shard
     if (!c || rooms.length === 0) return
 
@@ -417,7 +429,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
 
     // Reconcile full-detail rooms on a short settle delay — see
     // scheduleFullDetailReconcile for why this must NOT run synchronously here.
-    scheduleFullDetailReconcile(rooms, shard)
+    scheduleFullDetailReconcile(rooms, inView, shard)
 
     renderer?.clearInvisibleRooms(visibleSet)
   })
@@ -496,9 +508,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
     if (!c) return
     c.stores.server.worldInfo(shard ?? undefined).then((info) => {
       setWorldBounds(info)
-    }).catch((e) => {
-      log(`worldInfo(shard=${shard ?? 'none'}) failed:`, e)
-    })
+    }).catch(() => {})
   })
 
   // Apply/clear world bounds border when the worldBounds signal updates.

@@ -5,6 +5,8 @@ import {
   ROOMS_PER_CONNECTION,
   MAX_POOL_CONNECTIONS,
   PRIVATE_MAX_FULL_ROOMS,
+  CONTENTION_WINDOW,
+  CONTENTION_ERROR_THRESHOLD,
 } from '../../src/renderer/FullDetailRoomCoordinator'
 
 type Listener = (data: unknown) => void
@@ -54,11 +56,13 @@ function makeFakeClient(opts: { connect?: () => Promise<void> } = {}) {
     disconnect: vi.fn(),
     emitServerError: () => serverErrorListeners.forEach((cb) => cb({ error: new Error('boom') })),
     emitRoomUpdate: (data: unknown) => roomUpdateListeners.forEach((cb) => cb(data)),
+    emitRoomError: (data: unknown) => roomErrorListeners.forEach((cb) => cb(data)),
     emitTokenRefresh: (token: string) => tokenRefreshListeners.forEach((cb) => cb({ token })),
     setToken,
     socketSetToken,
     subscribeCalls,
     roomUpdateListeners,
+    tokenRefreshListeners,
   }
   return fake as unknown as ScreepsClient & typeof fake
 }
@@ -84,26 +88,27 @@ describe('FullDetailRoomCoordinator', () => {
   })
 
   describe('official-server pooling', () => {
-    it('fills the primary before opening a secondary connection', async () => {
+    it('never subscribes rooms on the primary — the first room already opens a dedicated connection', async () => {
       const primary = makeFakeClient()
-      const secondary = makeFakeClient()
-      const createSecondary = vi.fn(() => secondary)
+      const conn1 = makeFakeClient()
+      const createSecondary = vi.fn(() => conn1)
       const coordinator = new FullDetailRoomCoordinator({
         getPrimary: () => primary, isPrivate: () => false, createSecondary,
       })
 
       coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
       coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
-      expect(createSecondary).not.toHaveBeenCalled()
-      expect(primary.subscribeCalls).toHaveLength(2)
+      await flush()
+
+      expect(primary.subscribeCalls).toHaveLength(0)
+      expect(createSecondary).toHaveBeenCalledTimes(1)
+      expect(conn1.subscribeCalls.map((c) => c.room)).toEqual(['W1N1', 'W2N1'])
 
       coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
-      expect(createSecondary).toHaveBeenCalledTimes(1)
-      await flush()
-      expect(secondary.subscribeCalls.map((c) => c.room)).toEqual(['W3N1'])
+      expect(createSecondary).toHaveBeenCalledTimes(2)
     })
 
-    it('re-places rooms from a secondary that permanently fails to connect, and shrinks capacity', async () => {
+    it('re-places rooms from a connection that permanently fails to connect, and shrinks capacity', async () => {
       const primary = makeFakeClient()
       const failing = makeFakeClient({ connect: () => Promise.reject(new Error('auth failed')) })
       const healthy = makeFakeClient()
@@ -114,21 +119,71 @@ describe('FullDetailRoomCoordinator', () => {
 
       coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
       coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
-      coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
       await flush()
       await flush()
 
       expect(createSecondary).toHaveBeenCalledTimes(2)
       expect(failing.subscribeCalls).toHaveLength(0)
-      expect(healthy.subscribeCalls.map((c) => c.room)).toEqual(['W3N1'])
+      expect(healthy.subscribeCalls.map((c) => c.room)).toEqual(['W1N1', 'W2N1'])
       expect(coordinator.capacity()).toBe(ROOMS_PER_CONNECTION * (MAX_POOL_CONNECTIONS - 1))
     })
 
-    it('re-places rooms when a live secondary reports a permanent server:error', async () => {
+    it('re-places rooms when a live connection reports a permanent server:error', async () => {
       const primary = makeFakeClient()
-      const secondaryA = makeFakeClient()
-      const secondaryB = makeFakeClient()
-      const createSecondary = vi.fn().mockReturnValueOnce(secondaryA).mockReturnValueOnce(secondaryB)
+      const conn1 = makeFakeClient()
+      const conn2 = makeFakeClient()
+      const createSecondary = vi.fn().mockReturnValueOnce(conn1).mockReturnValueOnce(conn2)
+      const coordinator = new FullDetailRoomCoordinator({
+        getPrimary: () => primary, isPrivate: () => false, createSecondary,
+      })
+
+      coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
+      coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
+      await flush()
+      expect(conn1.subscribeCalls.map((c) => c.room)).toEqual(['W1N1', 'W2N1'])
+
+      conn1.emitServerError()
+      await flush()
+
+      expect(conn1.disconnect).toHaveBeenCalledOnce()
+      expect(createSecondary).toHaveBeenCalledTimes(2)
+      expect(conn2.subscribeCalls.map((c) => c.room)).toEqual(['W1N1', 'W2N1'])
+      expect(coordinator.capacity()).toBe(ROOMS_PER_CONNECTION * (MAX_POOL_CONNECTIONS - 1))
+    })
+
+    it('reconnects a connection showing repeated subscribe-limit errors, without shrinking capacity', async () => {
+      const primary = makeFakeClient()
+      const connA = makeFakeClient()
+      const connB = makeFakeClient()
+      const createSecondary = vi.fn().mockReturnValueOnce(connA).mockReturnValueOnce(connB)
+      const coordinator = new FullDetailRoomCoordinator({
+        getPrimary: () => primary, isPrivate: () => false, createSecondary,
+      })
+
+      coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
+      coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
+      await flush()
+      expect(connA.subscribeCalls.map((c) => c.room)).toEqual(['W1N1', 'W2N1'])
+
+      expect(CONTENTION_WINDOW).toBe(10)
+      expect(CONTENTION_ERROR_THRESHOLD).toBe(2)
+      for (let i = 0; i < 8; i++) connA.emitRoomUpdate({ room: 'W1N1' })
+      connA.emitRoomError({ room: 'W1N1', message: 'subscribe limit reached' })
+      expect(connA.disconnect).not.toHaveBeenCalled() // only 1 error in the window so far — not yet over threshold
+      connA.emitRoomError({ room: 'W2N1', message: 'subscribe limit reached' })
+      await flush()
+
+      expect(connA.disconnect).toHaveBeenCalledOnce()
+      expect(createSecondary).toHaveBeenCalledTimes(2)
+      expect(connB.subscribeCalls.map((c) => c.room).sort()).toEqual(['W1N1', 'W2N1'])
+      expect(coordinator.capacity()).toBe(ROOMS_PER_CONNECTION * MAX_POOL_CONNECTIONS)
+    })
+
+    it("forwards the primary's rotated session token to every dedicated connection", async () => {
+      const primary = makeFakeClient()
+      const conn1 = makeFakeClient()
+      const conn2 = makeFakeClient()
+      const createSecondary = vi.fn().mockReturnValueOnce(conn1).mockReturnValueOnce(conn2)
       const coordinator = new FullDetailRoomCoordinator({
         getPrimary: () => primary, isPrivate: () => false, createSecondary,
       })
@@ -137,73 +192,76 @@ describe('FullDetailRoomCoordinator', () => {
       coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
       coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
       await flush()
-      expect(secondaryA.subscribeCalls.map((c) => c.room)).toEqual(['W3N1'])
-
-      secondaryA.emitServerError()
-      await flush()
-
-      expect(secondaryA.disconnect).toHaveBeenCalledOnce()
-      expect(createSecondary).toHaveBeenCalledTimes(2)
-      expect(secondaryB.subscribeCalls.map((c) => c.room)).toEqual(['W3N1'])
-      expect(coordinator.capacity()).toBe(ROOMS_PER_CONNECTION * (MAX_POOL_CONNECTIONS - 1))
-    })
-
-    it("forwards the primary's rotated session token to live secondaries", async () => {
-      const primary = makeFakeClient()
-      const secondary = makeFakeClient()
-      const coordinator = new FullDetailRoomCoordinator({
-        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => secondary,
-      })
-
-      coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
-      coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
-      coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
-      await flush()
 
       primary.emitTokenRefresh('fresh-token')
-      expect(secondary.setToken).toHaveBeenCalledWith('fresh-token')
-      expect(secondary.socketSetToken).toHaveBeenCalledWith('fresh-token')
+      expect(conn1.setToken).toHaveBeenCalledWith('fresh-token')
+      expect(conn1.socketSetToken).toHaveBeenCalledWith('fresh-token')
+      expect(conn2.setToken).toHaveBeenCalledWith('fresh-token')
+      expect(conn2.socketSetToken).toHaveBeenCalledWith('fresh-token')
+    })
+  })
+
+  describe('private-server single connection', () => {
+    it('never opens more than one dedicated connection and never touches the primary', async () => {
+      const primary = makeFakeClient()
+      const conn1 = makeFakeClient()
+      const createSecondary = vi.fn(() => conn1)
+      const coordinator = new FullDetailRoomCoordinator({
+        getPrimary: () => primary, isPrivate: () => true, createSecondary,
+      })
+
+      for (let i = 0; i < 4; i++) coordinator.subscribeFullDetailRoom(`W${i}N1`, 'shard0')
+      await flush()
+
+      expect(createSecondary).toHaveBeenCalledTimes(1)
+      expect(primary.subscribeCalls).toHaveLength(0)
+      expect(conn1.subscribeCalls.map((c) => c.room)).toEqual(['W0N1', 'W1N1', 'W2N1', 'W3N1'])
+      expect(coordinator.capacity()).toBe(PRIVATE_MAX_FULL_ROOMS)
     })
   })
 
   describe('subscription lifecycle', () => {
-    it('is idempotent — a second subscribe for the same room/shard is a no-op', () => {
+    it('is idempotent — a second subscribe for the same room/shard is a no-op', async () => {
       const primary = makeFakeClient()
-      const coordinator = new FullDetailRoomCoordinator({ getPrimary: () => primary, isPrivate: () => true })
+      const conn1 = makeFakeClient()
+      const coordinator = new FullDetailRoomCoordinator({
+        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => conn1,
+      })
 
       const first = coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
       const second = coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
-      expect(primary.subscribeCalls).toHaveLength(1)
+      await flush()
+      expect(conn1.subscribeCalls).toHaveLength(1)
 
       second.dispose()
-      expect(primary.subscribeCalls[0].dispose).not.toHaveBeenCalled()
+      expect(conn1.subscribeCalls[0].dispose).not.toHaveBeenCalled()
       first.dispose()
-      expect(primary.subscribeCalls[0].dispose).toHaveBeenCalledOnce()
+      expect(conn1.subscribeCalls[0].dispose).toHaveBeenCalledOnce()
     })
 
     it('cancels a pending placement disposed before its connection finishes connecting', async () => {
       const primary = makeFakeClient()
-      const secondary = makeFakeClient()
+      const conn1 = makeFakeClient()
       const coordinator = new FullDetailRoomCoordinator({
-        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => secondary,
+        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => conn1,
       })
 
-      coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
-      coordinator.subscribeFullDetailRoom('W2N1', 'shard0')
-      const third = coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
-      third.dispose()
+      const sub = coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
+      sub.dispose()
       await flush()
 
-      expect(secondary.subscribeCalls).toHaveLength(0)
+      expect(conn1.subscribeCalls).toHaveLength(0)
     })
   })
 
   describe('onRoomUpdate funnel', () => {
-    it('forwards updates from both the primary and pooled secondaries', async () => {
+    it('forwards updates from every dedicated connection, never from the primary', async () => {
       const primary = makeFakeClient()
-      const secondary = makeFakeClient()
+      const conn1 = makeFakeClient()
+      const conn2 = makeFakeClient()
+      const createSecondary = vi.fn().mockReturnValueOnce(conn1).mockReturnValueOnce(conn2)
       const coordinator = new FullDetailRoomCoordinator({
-        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => secondary,
+        getPrimary: () => primary, isPrivate: () => false, createSecondary,
       })
       const handler = vi.fn()
       coordinator.onRoomUpdate(handler)
@@ -213,18 +271,21 @@ describe('FullDetailRoomCoordinator', () => {
       coordinator.subscribeFullDetailRoom('W3N1', 'shard0')
       await flush()
 
-      primary.emitRoomUpdate({ room: 'W1N1' })
-      secondary.emitRoomUpdate({ room: 'W3N1' })
+      expect(primary.roomUpdateListeners.size).toBe(0)
+      conn1.emitRoomUpdate({ room: 'W1N1' })
+      conn2.emitRoomUpdate({ room: 'W3N1' })
       expect(handler).toHaveBeenCalledTimes(2)
     })
   })
 
   describe('reset() and dispose()', () => {
-    it('reset() disconnects secondaries and disposes room subs, keeping the primary', async () => {
+    it('reset() disconnects every dedicated connection and disposes room subs; primary is never touched', async () => {
       const primary = makeFakeClient()
-      const secondary = makeFakeClient()
+      const conn1 = makeFakeClient()
+      const conn2 = makeFakeClient()
+      const createSecondary = vi.fn().mockReturnValueOnce(conn1).mockReturnValueOnce(conn2)
       const coordinator = new FullDetailRoomCoordinator({
-        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => secondary,
+        getPrimary: () => primary, isPrivate: () => false, createSecondary,
       })
 
       coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
@@ -234,23 +295,29 @@ describe('FullDetailRoomCoordinator', () => {
 
       coordinator.reset()
 
-      expect(secondary.disconnect).toHaveBeenCalledOnce()
+      expect(conn1.disconnect).toHaveBeenCalledOnce()
+      expect(conn2.disconnect).toHaveBeenCalledOnce()
       expect(primary.disconnect).not.toHaveBeenCalled()
-      for (const call of [...primary.subscribeCalls, ...secondary.subscribeCalls]) {
+      expect(primary.subscribeCalls).toHaveLength(0)
+      for (const call of [...conn1.subscribeCalls, ...conn2.subscribeCalls]) {
         expect(call.dispose).toHaveBeenCalledOnce()
       }
       expect(coordinator.capacity()).toBe(ROOMS_PER_CONNECTION * MAX_POOL_CONNECTIONS)
     })
 
-    it('dispose() also removes the primary funnel listeners', () => {
+    it("dispose() also removes the primary's token-refresh listener", async () => {
       const primary = makeFakeClient()
-      const coordinator = new FullDetailRoomCoordinator({ getPrimary: () => primary, isPrivate: () => true })
+      const conn1 = makeFakeClient()
+      const coordinator = new FullDetailRoomCoordinator({
+        getPrimary: () => primary, isPrivate: () => false, createSecondary: () => conn1,
+      })
 
       coordinator.subscribeFullDetailRoom('W1N1', 'shard0')
-      expect(primary.roomUpdateListeners.size).toBe(1)
+      await flush()
+      expect(primary.tokenRefreshListeners.size).toBe(1)
 
       coordinator.dispose()
-      expect(primary.roomUpdateListeners.size).toBe(0)
+      expect(primary.tokenRefreshListeners.size).toBe(0)
     })
   })
 })

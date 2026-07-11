@@ -19,6 +19,10 @@ export interface VisibleBounds {
   rxMax: number
   ryMin: number
   ryMax: number
+  strictRxMin: number
+  strictRxMax: number
+  strictRyMin: number
+  strictRyMax: number
 }
 
 export interface WorldCameraOptions {
@@ -411,10 +415,14 @@ export class WorldCamera {
     const bottom = (this.app.screen.height - worldY) / scale
 
     const rxMin = Math.floor(left   / this.cellSize) - 1
-    const rxMax = Math.ceil (right  / this.cellSize)
+    const rxMax = Math.ceil (right  / this.cellSize) - 1
     const ryMin = Math.floor(top    / this.cellSize) - 1
-    const ryMax = Math.ceil (bottom / this.cellSize)
-    this.lastVisibleBounds = { rxMin, rxMax, ryMin, ryMax }
+    const ryMax = Math.ceil (bottom / this.cellSize) - 1
+    this.lastVisibleBounds = {
+      rxMin, rxMax, ryMin, ryMax,
+      strictRxMin: rxMin + 1, strictRxMax: rxMax,
+      strictRyMin: ryMin + 1, strictRyMax: ryMax,
+    }
 
     const key = `${rxMin},${ryMin},${rxMax},${ryMax}`
     if (key !== this.lastVisibleKey) {
