@@ -3,6 +3,8 @@ import type { Badge, RoomObjectMap, RoomObjectDiff, RoomTerrain } from 'screeps-
 import { createTerrainLayer } from './TerrainLayer.js'
 import { ObjectLayer } from './ObjectLayer.js'
 import { HoverHighlightLayer, type SelectionVisual } from './HoverHighlightLayer.js'
+import { ActionAnimationLayer } from './ActionAnimationLayer.js'
+import { applyActionLogAnimations } from './actionLogAnimations.js'
 import { Z } from './RoomRenderer.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
@@ -29,6 +31,7 @@ export class RoomScene {
   private readonly ticker: Ticker
   private terrainLayer: Container | null = null
   private objLayer: ObjectLayer | null = null
+  private animLayer: ActionAnimationLayer | null = null
   private terrainReady = false
 
   constructor(ticker: Ticker) {
@@ -66,12 +69,24 @@ export class RoomScene {
       this.objLayer.container.label = 'objects'
       this.objLayer.container.zIndex = Z.objects
       this.root.addChild(this.objLayer.container)
+
+      this.animLayer = new ActionAnimationLayer(this.ticker)
+      this.animLayer.container.label = 'animations'
+      this.animLayer.container.zIndex = Z.animations
+      this.root.addChild(this.animLayer.container)
     }
 
     this.objLayer.setMoveDuration(opts.moveDuration)
     this.objLayer.setTickDuration(opts.tickDuration)
     this.objLayer.update(objects, effectiveDiff, opts.users, opts.gameTime)
     this.objLayer.setShowLabels(opts.showLabels)
+
+    // Mirrors RoomViewer's actionLog → beam pipeline so grid rooms show the same
+    // harvest/upgrade/build/etc. action lines as the single-room view.
+    if (this.animLayer) {
+      const beamDuration = opts.tickDuration * 0.6
+      applyActionLogAnimations(objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId)
+    }
   }
 
   // Ready once terrain is baked AND the first full object reconcile has
@@ -105,6 +120,11 @@ export class RoomScene {
   }
 
   dispose(): void {
+    if (this.animLayer) {
+      this.root.removeChild(this.animLayer.container)
+      this.animLayer.destroy()
+      this.animLayer = null
+    }
     if (this.objLayer) {
       this.objLayer.destroy()
       this.root.removeChild(this.objLayer.container)
