@@ -141,7 +141,7 @@ export const isPrivateServer = () => {
 
 export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus }
 
-export async function connect(opts: {
+interface ConnectOpts {
   url: string
   auth: 'password' | 'token' | 'guest'
   /** Original login method, preserved across reloads. Defaults to `auth`. Auto-connect passes the persisted value so a password/steam/discord login still reports its real method even though it reconnects via its session token. Steam and Discord logins use `auth: 'token'` but should report 'steam'/'discord'. */
@@ -152,143 +152,153 @@ export async function connect(opts: {
   serverPassword?: string
   decorationsMock?: ApiRoomDecorationsResponse
   storage?: StorageAdapter | null
-}): Promise<void> {
-  if (isEmbedded()) {
-    opts = { ...opts, url: embeddedServerUrl() }
-  }
+}
+
+// Builds and wires up a ScreepsClient without touching status/error/sessionError —
+// callers own those signals, since a background retry (see retryConnection) must
+// not flip `status` away from 'connected' mid-attempt or the Dashboard would
+// unmount underneath the SessionErrorModal on every failed attempt.
+async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
+  const opts = isEmbedded() ? { ...rawOpts, url: embeddedServerUrl() } : rawOpts
   log(`connecting to ${opts.url} (auth: ${opts.auth})`)
+
+  let authStrategy: AuthStrategy
+  if (opts.auth === 'guest') {
+    authStrategy = new GuestAuth()
+    setIsGuest(true)
+  } else if (opts.auth === 'password') {
+    if (!opts.email || !opts.password) {
+      throw new Error('Email and password are required')
+    }
+    authStrategy = new PasswordAuth({ email: opts.email, password: opts.password })
+  } else {
+    if (!opts.token) {
+      throw new Error('Token is required')
+    }
+    // Steam/password logins reconnect via a screepsmod-auth session token that the
+    // server rotates on every response and expires on a fixed TTL (~5 min) regardless
+    // of activity. Adopt the rotated X-Token so the session stays alive. A pasted
+    // personal API token (authMethod 'token') is durable and must not be replaced.
+    const isSessionToken = opts.authMethod === 'steam' || opts.authMethod === 'password'
+    authStrategy = new TokenAuth({ token: opts.token, supportsTokenRefresh: isSessionToken })
+  }
+
+  const screepsClient = new ScreepsClient({
+    url: opts.url,
+    auth: authStrategy,
+    storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
+    debug: false,
+    serverPassword: opts.serverPassword,
+  })
+
+  screepsClient.http.on('http:tokenRefresh', ({ token }) => {
+    log('token refreshed')
+    if (isTauri()) {
+      void saveTokenForUrl(opts.url, token)
+    } else {
+      setSession(SS.token, token)
+    }
+  })
+
+  screepsClient.http.on('http:error', ({ method, path, error, silent, status }) => {
+    log('http error:', method, path, error.message)
+    if (status === 429) {
+      const linkMatch = error.message.match(/https?:\/\/\S+/)
+      setRateLimitError({
+        message: error.message.replace(/^HTTP 429:\s*/, ''),
+        disableLink: linkMatch ? linkMatch[0] : null,
+      })
+      return
+    }
+    // Optional endpoints (e.g. /api/user/overview) opt out of the toast; the
+    // caller handles their failure, so don't nag the user about it.
+    if (!silent) addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
+  })
+
+  screepsClient.stores.server.on('server:disconnected', (data) => {
+    log(`server disconnected (willReconnect: ${data.willReconnect}, intentional: ${data.intentional})`)
+    // An intentional close (user logged out or a guest hit Login) fires the
+    // socket's async onclose after disconnect() has already torn the session
+    // down. Treating that as a fatal error would pop the "Connection lost"
+    // modal over the login screen — so only surface genuinely lost sessions.
+    if (!data.willReconnect && !data.intentional) {
+      worldStatusPollUntil = 0
+      updateWorldStatusPolling(null)
+      setSessionError('Lost connection to the server.')
+    }
+  })
+
+  screepsClient.stores.server.on('server:error', (data) => {
+    log('server error:', data.error.message)
+    setSessionError(data.error.message)
+  })
+
+  screepsClient.stores.user.on('user:me', (info) => {
+    log(`user: ${info.username} (id: ${info._id})`)
+    setUserInfo(info)
+  })
+
+  screepsClient.stores.server.on('server:version', (v) => {
+    log(`server version: ${v.package ?? 'unknown'}`)
+    setServerVersion(v)
+  })
+
+  screepsClient.stores.user.on('user:stream', (payload) => {
+    if (payload && typeof payload === 'object' && 'flags' in payload) {
+      const flags = payload.flags as Record<string, UserFlag> | undefined
+      if (flags && typeof flags === 'object') {
+        setUserFlags(flags)
+      }
+    }
+  })
+
+  screepsClient.stores.user.on('user:worldStatus', ({ status }) => {
+    log(`world status: ${status}`)
+    setWorldStatus(status)
+    updateWorldStatusPolling(status)
+  })
+
+  await screepsClient.connect()
+  screepsClient.stores.user.subscribeUserStream()
+  setSession(SS.url, opts.url)
+  const resolvedAuthMethod = opts.authMethod ?? opts.auth
+  setAuthMethod(resolvedAuthMethod)
+  setSession(SS.authMethod, resolvedAuthMethod)
+  if (screepsClient.http.token) {
+    if (isTauri()) {
+      await saveTokenForUrl(opts.url, screepsClient.http.token)
+    } else {
+      // Browser: sessionStorage (origin-scoped, cleared on tab close).
+      setSession(SS.token, screepsClient.http.token)
+    }
+  }
+  if (opts.serverPassword) {
+    if (isTauri()) {
+      await saveServerPasswordForUrl(opts.url, opts.serverPassword)
+    } else {
+      setSession(SS.serverPassword, opts.serverPassword)
+    }
+  } else {
+    if (isTauri()) {
+      void deleteServerPasswordForUrl(opts.url)
+    } else {
+      removeSession(SS.serverPassword)
+    }
+  }
+
+  return screepsClient
+}
+
+export async function connect(opts: ConnectOpts): Promise<void> {
   setStatus('connecting')
   setError(null)
   setSessionError(null)
   setRateLimitError(null)
-
   try {
-    let authStrategy: AuthStrategy
-    if (opts.auth === 'guest') {
-      authStrategy = new GuestAuth()
-      setIsGuest(true)
-    } else if (opts.auth === 'password') {
-      if (!opts.email || !opts.password) {
-        throw new Error('Email and password are required')
-      }
-      authStrategy = new PasswordAuth({ email: opts.email, password: opts.password })
-    } else {
-      if (!opts.token) {
-        throw new Error('Token is required')
-      }
-      // Steam/password logins reconnect via a screepsmod-auth session token that the
-      // server rotates on every response and expires on a fixed TTL (~5 min) regardless
-      // of activity. Adopt the rotated X-Token so the session stays alive. A pasted
-      // personal API token (authMethod 'token') is durable and must not be replaced.
-      const isSessionToken = opts.authMethod === 'steam' || opts.authMethod === 'password'
-      authStrategy = new TokenAuth({ token: opts.token, supportsTokenRefresh: isSessionToken })
-    }
-
-    const screepsClient = new ScreepsClient({
-      url: opts.url,
-      auth: authStrategy,
-      storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
-      debug: false,
-      serverPassword: opts.serverPassword,
-    })
-
-    screepsClient.http.on('http:tokenRefresh', ({ token }) => {
-      log('token refreshed')
-      if (isTauri()) {
-        void saveTokenForUrl(opts.url, token)
-      } else {
-        setSession(SS.token, token)
-      }
-    })
-
-    screepsClient.http.on('http:error', ({ method, path, error, silent, status }) => {
-      log('http error:', method, path, error.message)
-      if (status === 429) {
-        const linkMatch = error.message.match(/https?:\/\/\S+/)
-        setRateLimitError({
-          message: error.message.replace(/^HTTP 429:\s*/, ''),
-          disableLink: linkMatch ? linkMatch[0] : null,
-        })
-        return
-      }
-      // Optional endpoints (e.g. /api/user/overview) opt out of the toast; the
-      // caller handles their failure, so don't nag the user about it.
-      if (!silent) addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
-    })
-
-    screepsClient.stores.server.on('server:disconnected', (data) => {
-      log(`server disconnected (willReconnect: ${data.willReconnect}, intentional: ${data.intentional})`)
-      // An intentional close (user logged out or a guest hit Login) fires the
-      // socket's async onclose after disconnect() has already torn the session
-      // down. Treating that as a fatal error would pop the "Connection lost"
-      // modal over the login screen — so only surface genuinely lost sessions.
-      if (!data.willReconnect && !data.intentional) {
-        worldStatusPollUntil = 0
-        updateWorldStatusPolling(null)
-        setSessionError('Lost connection to the server.')
-      }
-    })
-
-    screepsClient.stores.server.on('server:error', (data) => {
-      log('server error:', data.error.message)
-      setSessionError(data.error.message)
-    })
-
-    screepsClient.stores.user.on('user:me', (info) => {
-      log(`user: ${info.username} (id: ${info._id})`)
-      setUserInfo(info)
-    })
-
-    screepsClient.stores.server.on('server:version', (v) => {
-      log(`server version: ${v.package ?? 'unknown'}`)
-      setServerVersion(v)
-    })
-
-    screepsClient.stores.user.on('user:stream', (payload) => {
-      if (payload && typeof payload === 'object' && 'flags' in payload) {
-        const flags = payload.flags as Record<string, UserFlag> | undefined
-        if (flags && typeof flags === 'object') {
-          setUserFlags(flags)
-        }
-      }
-    })
-
-    screepsClient.stores.user.on('user:worldStatus', ({ status }) => {
-      log(`world status: ${status}`)
-      setWorldStatus(status)
-      updateWorldStatusPolling(status)
-    })
-
-    await screepsClient.connect()
-    screepsClient.stores.user.subscribeUserStream()
+    const screepsClient = await establishClient(opts)
     setClient(screepsClient)
     setStatus('connected')
     log(`connected to ${opts.url}`)
-    setSession(SS.url, opts.url)
-    const resolvedAuthMethod = opts.authMethod ?? opts.auth
-    setAuthMethod(resolvedAuthMethod)
-    setSession(SS.authMethod, resolvedAuthMethod)
-    if (screepsClient.http.token) {
-      if (isTauri()) {
-        await saveTokenForUrl(opts.url, screepsClient.http.token)
-      } else {
-        // Browser: sessionStorage (origin-scoped, cleared on tab close).
-        setSession(SS.token, screepsClient.http.token)
-      }
-    }
-    if (opts.serverPassword) {
-      if (isTauri()) {
-        await saveServerPasswordForUrl(opts.url, opts.serverPassword)
-      } else {
-        setSession(SS.serverPassword, opts.serverPassword)
-      }
-    } else {
-      if (isTauri()) {
-        void deleteServerPasswordForUrl(opts.url)
-      } else {
-        removeSession(SS.serverPassword)
-      }
-    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     log('connection failed:', message)
@@ -296,6 +306,47 @@ export async function connect(opts: {
     setStatus('error')
     setClient(null)
     throw err
+  }
+}
+
+/**
+ * Re-establishes the socket for an already-connected session using the
+ * persisted URL/token, without touching `status`/`error` — used to recover
+ * from a fatal disconnect (see SessionErrorModal) while the Dashboard stays
+ * mounted underneath the modal. On failure, everything is left exactly as it
+ * was (`sessionError` stays set) so a caller can retry again in the background.
+ * Returns whether the retry succeeded.
+ */
+export async function retryConnection(): Promise<boolean> {
+  const url = isEmbedded() ? embeddedServerUrl() : getSession(SS.url)
+  if (!url) return false
+
+  let token: string | null
+  let serverPassword: string | undefined
+  if (isTauri()) {
+    token = await loadTokenForUrl(url)
+    serverPassword = (await loadServerPasswordForUrl(url)) ?? undefined
+  } else {
+    token = getSession(SS.token)
+    serverPassword = getSession(SS.serverPassword) ?? undefined
+  }
+  if (!token) return false
+
+  const storedAuthMethod = getSession(SS.authMethod) as 'password' | 'steam' | 'discord' | 'token' | 'guest' | null
+  const opts: ConnectOpts = token === 'guest'
+    ? { url, auth: 'guest', storage: null, serverPassword }
+    : { url, auth: 'token', token, serverPassword, authMethod: storedAuthMethod ?? 'token' }
+
+  try {
+    const screepsClient = await establishClient(opts)
+    setClient(screepsClient)
+    setStatus('connected')
+    setSessionError(null)
+    log(`reconnected to ${url}`)
+    return true
+  } catch (err) {
+    log('retry failed:', err instanceof Error ? err.message : String(err))
+    return false
   }
 }
 

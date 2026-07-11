@@ -1,11 +1,76 @@
-import { Show } from 'solid-js'
-import { sessionError, disconnect } from '~/stores/clientStore.js'
+import { Show, createSignal, createEffect, onCleanup } from 'solid-js'
+import { sessionError, disconnect, retryConnection } from '~/stores/clientStore.js'
+
+const AUTO_RETRY_BASE_MS = 3_000
+const AUTO_RETRY_MAX_MS = 30_000
 
 // Shown over the Dashboard when the active session hits a fatal error (socket
 // gave up reconnecting, or the server closed the connection for good). Rather
 // than silently bouncing back to the login screen, this surfaces the error and
-// lets the user choose to reload (retry from scratch) or log out explicitly.
+// keeps retrying in the background (retryConnection reuses the persisted token
+// and never touches `status`, so the Dashboard's UI state — camera, viewed
+// rooms, selection — never unmounts) until it succeeds, or the user logs out
+// or reloads.
 export function SessionErrorModal() {
+  const [retrying, setRetrying] = createSignal(false)
+  // Plain (non-reactive) scheduling state, deliberately kept out of signals —
+  // performRetry()'s completion calls scheduleAutoRetry() directly, and that
+  // must not race with the effect below also reacting to setRetrying(false)
+  // and scheduling a second, overlapping timer.
+  let attempt = 0
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let inFlight = false
+
+  const stopAutoRetry = () => {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+    attempt = 0
+  }
+
+  const performRetry = () => {
+    inFlight = true
+    setRetrying(true)
+    retryConnection()
+      .catch(() => false)
+      .then((succeeded) => {
+        inFlight = false
+        setRetrying(false)
+        if (!succeeded && sessionError()) scheduleAutoRetry()
+      })
+  }
+
+  const scheduleAutoRetry = () => {
+    const delay = Math.min(AUTO_RETRY_BASE_MS * 2 ** attempt, AUTO_RETRY_MAX_MS)
+    attempt += 1
+    timer = setTimeout(() => {
+      timer = null
+      if (!sessionError()) return
+      performRetry()
+    }, delay)
+  }
+
+  const retryNow = () => {
+    if (inFlight) return
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+    attempt = 0
+    performRetry()
+  }
+
+  createEffect(() => {
+    if (sessionError()) {
+      if (timer === null && !inFlight) scheduleAutoRetry()
+    } else {
+      stopAutoRetry()
+    }
+  })
+
+  onCleanup(stopAutoRetry)
+
   return (
     <Show when={sessionError()}>
       <div
@@ -55,15 +120,30 @@ export function SessionErrorModal() {
               style={{
                 padding: '7px 14px',
                 'border-radius': '4px',
-                border: 'none',
-                background: '#58a6ff',
-                color: '#0d1117',
+                border: '1px solid #30363d',
+                background: '#21262d',
+                color: '#c9d1d9',
                 cursor: 'pointer',
+                'font-size': '13px',
+              }}
+            >
+              Reload page
+            </button>
+            <button
+              disabled={retrying()}
+              onClick={retryNow}
+              style={{
+                padding: '7px 14px',
+                'border-radius': '4px',
+                border: 'none',
+                background: retrying() ? '#39414b' : '#58a6ff',
+                color: '#0d1117',
+                cursor: retrying() ? 'default' : 'pointer',
                 'font-size': '13px',
                 'font-weight': 600,
               }}
             >
-              Reload page
+              {retrying() ? 'Retrying…' : 'Retry now'}
             </button>
           </div>
         </div>
