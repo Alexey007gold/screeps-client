@@ -2764,84 +2764,85 @@ export class ObjectLayer {
 
   private tick(): void {
     const tNow = performance.now()
+    const lighting = this.lighting
+    const toDestroy: string[] = []
 
-    // Resolve any exit tiles still waiting on a cross-room lookup (see
-    // setNeighborLookup) before the interpolation pass below, so a hop that
-    // resolves this frame still gets to animate this frame.
+    // Single pass over all objects, per-object order preserved: resolve any
+    // exit tile still waiting on a cross-room lookup (see setNeighborLookup)
+    // before the interpolation step below, so a hop that resolves this frame
+    // still gets to animate this frame; then drive movement interpolation
+    // (linear over ~90% of the current tick duration, driven from RoomViewer
+    // via setMoveDuration() — the light pool is nudged to match so it tracks
+    // the sprite instead of snapping at tick end); then drive any in-progress
+    // fade (in or out; __fadeStartT may be scheduled in the future — a
+    // destination room's arrival fade, held for the second half of the tick —
+    // elapsed < 0 means it just hasn't started yet).
     for (const [id, visual] of this.objects) {
       const pending = visual.__pendingEdgeExit
-      if (!pending) continue
-      const neighborPos = this.neighborLookup?.(id, pending.exitTile.dirX, pending.exitTile.dirY) ?? null
-      if (neighborPos) {
-        visual.__pendingEdgeExit = undefined
-        this.beginExitHop(visual, resolveExitTargetPx(pending.exitTile, pending.fallbackTile, neighborPos))
-      } else if (tNow >= pending.deadline) {
-        visual.__pendingEdgeExit = undefined
-        this.beginExitHop(visual, { x: pending.fallbackTile.x * TILE_SIZE, y: pending.fallbackTile.y * TILE_SIZE })
-      }
-    }
-
-    // Creep movement interpolation — linear over ~90% of the current tick duration
-    // (driven from RoomViewer via setMoveDuration()). The light pool is nudged to
-    // match each frame so it tracks the sprite instead of snapping at tick end.
-    const lighting = this.lighting
-    for (const [id, visual] of this.objects) {
-      if (visual.__targetX === undefined || visual.__targetY === undefined) continue
-      const dur = visual.__moveDur ?? 0
-      const startT = visual.__moveStartT ?? tNow
-      const elapsed = tNow - startT
-      if (dur <= 0 || elapsed >= dur) {
-        visual.position.set(visual.__targetX, visual.__targetY)
-        visual.__targetX = undefined
-        visual.__targetY = undefined
-        visual.__moveStartX = undefined
-        visual.__moveStartY = undefined
-        visual.__moveStartT = undefined
-        visual.__moveDur = undefined
-        lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
-        // The synthesized exit hop (see extrapolateEdgeExit) just reached the
-        // edge tile — quickly fade out instead of destroying outright.
-        if (visual.__markedForDestruction) {
-          visual.__markedForDestruction = false
-          visual.__fadeStartT = tNow
-          visual.__fadeDur = FADE_MS
-          visual.__fadeFrom = visual.alpha
-          visual.__fadeTo = 0
-          visual.__destroyAfterFade = true
+      if (pending) {
+        const neighborPos = this.neighborLookup?.(id, pending.exitTile.dirX, pending.exitTile.dirY) ?? null
+        if (neighborPos) {
+          visual.__pendingEdgeExit = undefined
+          this.beginExitHop(visual, resolveExitTargetPx(pending.exitTile, pending.fallbackTile, neighborPos))
+        } else if (tNow >= pending.deadline) {
+          visual.__pendingEdgeExit = undefined
+          this.beginExitHop(visual, { x: pending.fallbackTile.x * TILE_SIZE, y: pending.fallbackTile.y * TILE_SIZE })
         }
-        continue
       }
-      const t = elapsed / dur
-      const sx = visual.__moveStartX ?? visual.x
-      const sy = visual.__moveStartY ?? visual.y
-      visual.x = sx + (visual.__targetX - sx) * t
-      visual.y = sy + (visual.__targetY - sy) * t
-      lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
-    }
 
-    // Drive any in-progress fade (in or out); __fadeStartT may be scheduled in
-    // the future (a destination room's arrival fade, held for the second half
-    // of the tick) — elapsed < 0 means it just hasn't started yet.
-    const toDestroy: string[] = []
-    for (const [id, visual] of this.objects) {
-      if (visual.__fadeStartT === undefined) continue
-      const elapsed = tNow - visual.__fadeStartT
-      if (elapsed < 0) continue
-      const dur = visual.__fadeDur ?? 0
-      const from = visual.__fadeFrom ?? visual.alpha
-      const to = visual.__fadeTo ?? visual.alpha
-      if (dur <= 0 || elapsed >= dur) {
-        visual.alpha = to
-        const destroyAfter = visual.__destroyAfterFade
-        visual.__fadeStartT = undefined
-        visual.__fadeDur = undefined
-        visual.__fadeFrom = undefined
-        visual.__fadeTo = undefined
-        visual.__destroyAfterFade = undefined
-        if (destroyAfter) toDestroy.push(id)
-        continue
+      if (visual.__targetX !== undefined && visual.__targetY !== undefined) {
+        const dur = visual.__moveDur ?? 0
+        const startT = visual.__moveStartT ?? tNow
+        const elapsed = tNow - startT
+        if (dur <= 0 || elapsed >= dur) {
+          visual.position.set(visual.__targetX, visual.__targetY)
+          visual.__targetX = undefined
+          visual.__targetY = undefined
+          visual.__moveStartX = undefined
+          visual.__moveStartY = undefined
+          visual.__moveStartT = undefined
+          visual.__moveDur = undefined
+          lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
+          // The synthesized exit hop (see extrapolateEdgeExit) just reached the
+          // edge tile — quickly fade out instead of destroying outright.
+          if (visual.__markedForDestruction) {
+            visual.__markedForDestruction = false
+            visual.__fadeStartT = tNow
+            visual.__fadeDur = FADE_MS
+            visual.__fadeFrom = visual.alpha
+            visual.__fadeTo = 0
+            visual.__destroyAfterFade = true
+          }
+        } else {
+          const t = elapsed / dur
+          const sx = visual.__moveStartX ?? visual.x
+          const sy = visual.__moveStartY ?? visual.y
+          visual.x = sx + (visual.__targetX - sx) * t
+          visual.y = sy + (visual.__targetY - sy) * t
+          lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
+        }
       }
-      visual.alpha = from + (to - from) * (elapsed / dur)
+
+      if (visual.__fadeStartT !== undefined) {
+        const elapsed = tNow - visual.__fadeStartT
+        if (elapsed >= 0) {
+          const dur = visual.__fadeDur ?? 0
+          const from = visual.__fadeFrom ?? visual.alpha
+          const to = visual.__fadeTo ?? visual.alpha
+          if (dur <= 0 || elapsed >= dur) {
+            visual.alpha = to
+            const destroyAfter = visual.__destroyAfterFade
+            visual.__fadeStartT = undefined
+            visual.__fadeDur = undefined
+            visual.__fadeFrom = undefined
+            visual.__fadeTo = undefined
+            visual.__destroyAfterFade = undefined
+            if (destroyAfter) toDestroy.push(id)
+          } else {
+            visual.alpha = from + (to - from) * (elapsed / dur)
+          }
+        }
+      }
     }
 
     for (const id of toDestroy) {

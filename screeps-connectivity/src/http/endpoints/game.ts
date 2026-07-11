@@ -1,4 +1,4 @@
-import type { HttpClient } from '../HttpClient.js'
+import type { HttpClient, RequestOptions } from '../HttpClient.js'
 import type {
   ApiRoomTerrainResponse,
   ApiRoomObjectsResponse,
@@ -24,7 +24,7 @@ import type {
 import { createPowerCreepsEndpoints, type PowerCreepsEndpoints } from './power-creeps.js'
 
 export interface GameEndpoints {
-  roomTerrain(room: string, shard?: string | null): Promise<ApiRoomTerrainResponse>
+  roomTerrain(room: string, shard?: string | null, opts?: RequestOptions): Promise<ApiRoomTerrainResponse>
   /** @deprecated Not available on private servers (backend-local). Room objects are delivered via the `room:<name>` WebSocket channel. */
   roomObjects(room: string, shard?: string | null): Promise<ApiRoomObjectsResponse>
   roomDecorations(room: string, shard?: string | null): Promise<ApiRoomDecorationsResponse>
@@ -34,7 +34,7 @@ export interface GameEndpoints {
   tick(): Promise<ApiGameTickResponse>
   worldSize(shard?: string | null): Promise<unknown>
   mapStats(rooms: string[], statName: string, shard?: string | null): Promise<ApiMapStatsResponse>
-  roomsTerrain(rooms: string[], shard?: string | null): Promise<ApiGameRoomsResponse>
+  roomsTerrain(rooms: string[], shard?: string | null, opts?: RequestOptions): Promise<ApiGameRoomsResponse>
   createFlag(room: string, x: number, y: number, name: string, color: number, secondaryColor: number, shard?: string | null): Promise<ApiCreateFlagResponse>
   genUniqueFlagName(): Promise<ApiGenUniqueFlagNameResponse>
   checkUniqueFlagName(name: string): Promise<ApiCheckUniqueFlagNameResponse>
@@ -71,7 +71,7 @@ function withShard(params: Record<string, unknown>, shard?: string | null): Reco
 
 export function createGameEndpoints(http: HttpClient, decorationsMock?: ApiRoomDecorationsResponse): GameEndpoints {
   return {
-    roomTerrain: (room, shard) => http.request('GET', '/api/game/room-terrain', withShard({ room, encoded: 1 }, shard)),
+    roomTerrain: (room, shard, opts) => http.request('GET', '/api/game/room-terrain', withShard({ room, encoded: 1 }, shard), opts),
     roomObjects: (room, shard) => http.request('GET', '/api/game/room-objects', withShard({ room }, shard)),
     roomDecorations: decorationsMock
       ? () => Promise.resolve(decorationsMock)
@@ -81,10 +81,10 @@ export function createGameEndpoints(http: HttpClient, decorationsMock?: ApiRoomD
     time: (shard) => http.request('GET', '/api/game/time', withShard({}, shard)),
     worldSize: (shard) => http.request('GET', '/api/game/world-size', withShard({}, shard)),
     mapStats: (rooms, statName, shard) => http.request('POST', '/api/game/map-stats', withShard({ rooms, statName }, shard)),
-    roomsTerrain: (rooms, shard) => {
+    roomsTerrain: (rooms, shard, opts) => {
       const params = new URLSearchParams({ encoded: 'true' })
       if (shard) params.set('shard', shard)
-      return http.request('POST', `/api/game/rooms?${params}`, { rooms })
+      return http.request('POST', `/api/game/rooms?${params}`, { rooms }, opts)
     },
     createFlag: (room, x, y, name, color, secondaryColor, shard) => http.request('POST', '/api/game/create-flag', withShard({ room, x, y, name, color, secondaryColor }, shard)),
     genUniqueFlagName: () => http.request('POST', '/api/game/gen-unique-flag-name'),

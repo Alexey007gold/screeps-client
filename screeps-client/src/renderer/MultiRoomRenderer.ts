@@ -403,10 +403,6 @@ export class MultiRoomRenderer {
     return true
   }
 
-  hasFullDetailRoom(roomName: string): boolean {
-    return this.roomScenes.has(roomName)
-  }
-
   isFullDetailReady(roomName: string): boolean {
     return this.roomScenes.get(roomName)?.isReady() ?? false
   }

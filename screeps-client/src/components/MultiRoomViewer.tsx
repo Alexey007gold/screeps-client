@@ -23,7 +23,6 @@ interface MultiRoomViewerProps {
   originRoom?: string
   initialZoom?: number
   onNavigateToRoom: (room: string) => void
-  onHoveredRoomChanged?: (room: string | null) => void
   onSelectedRoomChanged?: (room: string | null) => void
   onZoomChanged?: (zoom: number) => void
   onFullDetailCountChanged?: (count: number) => void
@@ -158,16 +157,20 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
       // Only rooms actually on screen are candidates — the scroll-ahead buffer
       // (rooms in `rooms` but not `inView`) never gets promoted to full detail.
       const candidates = rooms.filter((r) => inView.has(r))
-      const desired = zoom() >= FULL_DETAIL_ZOOM_THRESHOLD
-        ? candidates.slice().sort((a, b) => {
-            const cx = candidates.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / candidates.length
-            const cy = candidates.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / candidates.length
+      let desired: string[] = []
+      if (zoom() >= FULL_DETAIL_ZOOM_THRESHOLD) {
+        const cx = candidates.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / candidates.length
+        const cy = candidates.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / candidates.length
+        desired = candidates
+          .slice()
+          .sort((a, b) => {
             const ca = parseRoomName(a), cb = parseRoomName(b)
             const da = ca ? Math.abs(ca.x - cx) + Math.abs(ca.y - cy) : 999
             const db = cb ? Math.abs(cb.x - cx) + Math.abs(cb.y - cy) : 999
             return da - db
-          }).slice(0, roomPool.capacity())
-        : []
+          })
+          .slice(0, roomPool.capacity())
+      }
       const desiredSet = new Set(desired)
 
       for (const room of [...fullDetailSet]) {
@@ -268,7 +271,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
 
     ;(async () => {
       renderer = new MultiRoomRenderer({
-        onRoomHover: (room) => props.onHoveredRoomChanged?.(room),
+        onRoomHover: () => {},
         onRoomClick: (room) => {
           if (selectedRoom() !== room) {
             selectRoom(room)

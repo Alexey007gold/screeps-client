@@ -176,15 +176,21 @@ export class FullDetailRoomCoordinator {
     return conn
   }
 
-  private handleConnectionFailure(conn: PoolConnection): void {
-    if (conn.state === 'failed') return
-    conn.state = 'failed'
-    this.failedConnections++
+  // Disconnects a pooled connection and releases its listeners. Does not touch
+  // `this.connections` or any rooms it was carrying — callers decide that part.
+  private teardownConnection(conn: PoolConnection): void {
     if (conn.reapTimer !== null) { clearTimeout(conn.reapTimer); conn.reapTimer = null }
     conn.updateSub?.dispose()
     conn.errorSub?.dispose()
     conn.serverErrorSub?.dispose()
     try { conn.client.disconnect() } catch { /* already dead */ }
+  }
+
+  // Tears down a connection, removes it from the pool, and re-places every
+  // room it was carrying (landing them on another connection with a free slot
+  // or spinning up a fresh one).
+  private retireConnection(conn: PoolConnection): void {
+    this.teardownConnection(conn)
     this.connections = this.connections.filter((s) => s !== conn)
 
     const keys = [...conn.rooms]
@@ -195,6 +201,13 @@ export class FullDetailRoomCoordinator {
       this.roomSubs.delete(key)
       this.replaceOne(key)
     }
+  }
+
+  private handleConnectionFailure(conn: PoolConnection): void {
+    if (conn.state === 'failed') return
+    conn.state = 'failed'
+    this.failedConnections++
+    this.retireConnection(conn)
   }
 
   private recordOutcome(conn: PoolConnection, success: boolean): void {
@@ -223,21 +236,7 @@ export class FullDetailRoomCoordinator {
   // — never the primary.
   private reconnectDueToContention(conn: PoolConnection): void {
     if (conn.state === 'failed') return
-    if (conn.reapTimer !== null) { clearTimeout(conn.reapTimer); conn.reapTimer = null }
-    conn.updateSub?.dispose()
-    conn.errorSub?.dispose()
-    conn.serverErrorSub?.dispose()
-    try { conn.client.disconnect() } catch { /* already dead */ }
-    this.connections = this.connections.filter((s) => s !== conn)
-
-    const keys = [...conn.rooms]
-    conn.rooms.clear()
-    for (const key of keys) {
-      if (this.roomToConn.get(key) === conn) this.roomToConn.delete(key)
-      this.roomSubs.get(key)?.dispose()
-      this.roomSubs.delete(key)
-      this.replaceOne(key)
-    }
+    this.retireConnection(conn)
   }
 
   private replaceOne(key: string): void {
@@ -290,10 +289,7 @@ export class FullDetailRoomCoordinator {
       conn.reapTimer = null
       if (conn.rooms.size > 0) return
       this.connections = this.connections.filter((s) => s !== conn)
-      conn.updateSub?.dispose()
-      conn.errorSub?.dispose()
-      conn.serverErrorSub?.dispose()
-      try { conn.client.disconnect() } catch { /* already dead */ }
+      this.teardownConnection(conn)
     }, KEEP_WARM_MS)
   }
 
@@ -347,11 +343,7 @@ export class FullDetailRoomCoordinator {
     this.tokens.clear()
     this.roomInfo.clear()
     for (const conn of this.connections) {
-      if (conn.reapTimer !== null) clearTimeout(conn.reapTimer)
-      conn.updateSub?.dispose()
-      conn.errorSub?.dispose()
-      conn.serverErrorSub?.dispose()
-      try { conn.client.disconnect() } catch { /* already dead */ }
+      this.teardownConnection(conn)
     }
     this.connections = []
     this.failedConnections = 0

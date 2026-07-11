@@ -28,7 +28,7 @@ describe('RoomStore', () => {
   it('fetches terrain from API on first call', async () => {
     const { store, http } = makeStore()
     const terrain = await store.terrain('W7N7', 'shard0')
-    expect(http.game.roomTerrain).toHaveBeenCalledWith('W7N7', 'shard0')
+    expect(http.game.roomTerrain).toHaveBeenCalledWith('W7N7', 'shard0', undefined)
     expect(terrain.get(0, 0)).toBe(TerrainType.Plain)
   })
 
