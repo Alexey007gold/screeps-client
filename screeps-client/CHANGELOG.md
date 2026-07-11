@@ -1,5 +1,29 @@
 # screeps-client
 
+## 0.16.0
+
+### Minor Changes
+
+- 66f88f8: Code panel branch management: create a new branch (clones the selected branch, with an inline name input) and set the selected branch to run on the server. The active-branch indicator now stays live via a new `set-active-branch` WebSocket subscription — `UserStore.subscribe('set-active-branch')` emits a `user:setActiveBranch` event whenever the active branch changes, including from another client or session.
+
+  The code panel can now add and delete modules: an add button in the module list opens an inline name input, and hovering a module reveals a delete button (the `main` entry module is protected). Both changes are staged locally and persisted on the next Save.
+
+  Also fixes a stale-response race in the code panel where switching branches while a previous branch's code fetch was still in flight could leave the editor showing the wrong branch's files.
+
+- 47c34f1: Code panel TypeScript support: modules can now be authored in TypeScript with full in-browser IntelliSense — completion, hover type info, and inline diagnostics for the Screeps API — powered by a TypeScript language service running in a Web Worker. When creating a module you choose `.ts` or `.js` (a branch can mix both); the module list and tab show each module's language, and a Convert to TS / Convert to JS button switches an existing module's language in place (including the protected `main` entry module).
+
+  TypeScript sources are transpiled to JavaScript on Save and pushed to the server as the runnable module, while the original `.ts` source is persisted alongside as a sibling `<name>.ts` module — hidden from the module list and never `require`d at runtime, so it survives reload without affecting the running code. The entry module still compiles to `main`. Type errors surface as squiggles but never block a Save (transpilation always emits). Each TS module also gets a read-only `<name>.js` (generated) entry that shows the transpiled output, live from the current source.
+
+  The TypeScript compiler and standard-library typings are bundled offline (no CDN) and loaded lazily in a worker only when a TS module is first opened, so pure-JavaScript branches are unaffected.
+
+- eb6f864: Custom UI: player-defined sidebar buttons driven by a memory segment. Pick a config segment (and optionally the shard to read it from) in Settings → Custom UI; the client renders the buttons it declares in the map and room sidebars. Clicking a button calls a single handler function in your bot code via the console API, passing a JSON payload with a correlation id and the current view context (shard, selected/current room, selected object ids and types, marked tile). Buttons can declare required context (`needs`) — they render disabled until it is present — and destructive ones can require a confirmation click (`confirm`).
+
+  Beyond plain buttons there are `select` elements (dropdown + trigger, the chosen option travels as `value`), `header` separators — optionally with nested `items` whose visibility they gate — and `status` elements showing a live memory value (subscribed on the shard being viewed). `showIf` conditions hide elements contextually: `selType` requires a selected object of that type, `room` matches the room's standing from the player's perspective (`own`, `reserved`, `empty`, `foreign`). An `objects` section attaches buttons/selects to matching selected objects' cards in the selection list — filtered by object type and optionally by ownership (`own`/`foreign`) — passing the clicked object as `ctx.target`. While a command awaits its response the triggering element renders disabled with an ellipsis.
+
+  Your bot answers by logging a line starting with the `SCUI` marker that echoes the id; the client turns it into a success/error toast, navigates to a room, inserts text into the console input (`console`), and/or re-reads the config segment (`reload`) — and reports "no response" after 15 seconds. Protocol lines are hidden from the Log/Console panes while the feature is enabled (toggleable in Settings for debugging). The segment format, payload shape, and a bot-side handler example are documented in docs/custom-ui.md.
+
+- 1b547e3: Memory segment editor: a new "Segments" button in the console bar (next to Memory) opens a full-canvas overlay — like the code editor — for viewing and editing raw memory segments. Pick any of the 100 segments from the list (loaded sizes are shown alongside), switch shards on multi-shard servers, and edit the content in a CodeMirror editor with JSON highlighting. Header buttons pretty-print or minify the content as JSON and compress/decompress it with lz-string (`compressToUTF16`, with a raw-`compress` fallback on decompress). A live character counter tracks the 100 KB segment limit and blocks saving oversized content; switching segments or reloading with unsaved changes asks for confirmation.
+
 ## 0.15.0
 
 ### Minor Changes
