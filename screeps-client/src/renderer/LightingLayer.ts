@@ -17,6 +17,24 @@ export interface Light {
   cy: number
 }
 
+// Types that shouldn't punch a hole in the dark overlay — flat/low structures a
+// creep can stand on don't cast light themselves.
+const LIGHT_EXCLUDED_TYPES = new Set(['road', 'constructedWall', 'rampart'])
+
+// Shared by RoomRenderer (single-room view) and RoomScene (full-detail rooms in the
+// multi-room grid) — one light per eligible object, centered on its tile.
+export function buildLights(objects: Record<string, { type?: unknown; x?: unknown; y?: unknown } | undefined>): Light[] {
+  const lights: Light[] = []
+  for (const id in objects) {
+    const obj = objects[id]
+    if (!obj) continue
+    if (typeof obj.type === 'string' && LIGHT_EXCLUDED_TYPES.has(obj.type)) continue
+    if (typeof obj.x !== 'number' || typeof obj.y !== 'number') continue
+    lights.push({ id, cx: (obj.x + 0.5) * TILE_SIZE, cy: (obj.y + 0.5) * TILE_SIZE })
+  }
+  return lights
+}
+
 // GPU lightmap: a dark full-room rectangle with soft holes erased around each
 // lit object, composited into a RenderTexture and shown as a single sprite.
 //

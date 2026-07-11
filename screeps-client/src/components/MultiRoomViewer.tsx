@@ -3,7 +3,8 @@ import { MultiRoomRenderer, MAP2_MIN_ZOOM, FULL_DETAIL_ZOOM_THRESHOLD } from '~/
 import { FullDetailRoomCoordinator } from '~/renderer/FullDetailRoomCoordinator.js'
 import type { SelectionVisual } from '~/renderer/HoverHighlightLayer.js'
 import { client, userInfo, worldBounds, setWorldBounds, tickDuration, isPrivateServer } from '~/stores/clientStore.js'
-import { showCreepLabels } from '~/stores/settingsStore.js'
+import { showCreepLabels, showRoomVisuals, roomDarkOverlay, showRoomDecorations } from '~/stores/settingsStore.js'
+import { parseRoomDecorations } from '~/renderer/roomDecorations.js'
 import { selection, setSelection, createSelectedObject, updateSelectionWithDiff, updateSelectionFromObjects } from '~/stores/selectionStore.js'
 import {
   setRoomObjectCount, setRoomOwner, setControllerLevel, setControllerProgress,
@@ -175,6 +176,12 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
         c.stores.room.terrain(room, shard)
           .then((t) => renderer?.applyFullDetailTerrain(room, t))
           .catch((err) => error(`full-detail terrain fetch failed for ${room}:`, err))
+
+        if (showRoomDecorations()) {
+          c.http.game.roomDecorations(room, shard)
+            .then((resp) => renderer?.applyFullDetailDecoration(room, parseRoomDecorations(resp)))
+            .catch((err) => log(`no decorations for ${room}: ${err}`))
+        }
       }
 
       props.onFullDetailCountChanged?.(fullDetailSet.size)
@@ -435,10 +442,14 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
       renderer?.applyFullDetailUpdate(data.room, data.objects, data.diff, {
         showLabels: showCreepLabels(),
         currentUserId: userInfo()?._id,
+        currentUserBadge: userInfo()?.badge,
         users: data.users,
         gameTime: data.gameTime,
         moveDuration: Math.round(tickMs * 0.9),
         tickDuration: tickMs,
+        visual: data.visual,
+        showRoomVisuals: showRoomVisuals(),
+        darkOverlayEnabled: roomDarkOverlay(),
       })
 
       // Only the room owning the current selection may touch the global

@@ -5,9 +5,12 @@ import { ObjectLayer } from './ObjectLayer.js'
 import { HoverHighlightLayer, type SelectionVisual } from './HoverHighlightLayer.js'
 import { ActionAnimationLayer } from './ActionAnimationLayer.js'
 import { applyActionLogAnimations } from './actionLogAnimations.js'
+import { LightingLayer, buildLights } from './LightingLayer.js'
+import { VisualLayer } from './VisualLayer.js'
 import { Z } from './RoomRenderer.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
+import type { RoomDecoration } from './roomDecorations.js'
 
 export interface RoomSceneUpdateOptions {
   showLabels: boolean
@@ -17,6 +20,9 @@ export interface RoomSceneUpdateOptions {
   gameTime?: number
   moveDuration: number
   tickDuration: number
+  visual?: string
+  showRoomVisuals?: boolean
+  darkOverlayEnabled?: boolean
 }
 
 // One full-detail room inside the multi-room grid: terrain + all game objects,
@@ -29,14 +35,30 @@ export class RoomScene {
   readonly hoverLayer: HoverHighlightLayer
 
   private readonly ticker: Ticker
+  private readonly lighting: LightingLayer
+  private readonly visualLayer: VisualLayer
   private terrainLayer: Container | null = null
   private objLayer: ObjectLayer | null = null
   private animLayer: ActionAnimationLayer | null = null
   private terrainReady = false
+  private darkOverlayEnabled = false
+  private rawTerrain: RoomTerrain | null = null
+  private rendererGpu: Renderer | null = null
+  private decoration: RoomDecoration | null = null
 
-  constructor(ticker: Ticker) {
+  constructor(ticker: Ticker, rendererGpu: Renderer, world: Container) {
     this.ticker = ticker
     this.root = new Container({ sortableChildren: true })
+
+    this.lighting = new LightingLayer(rendererGpu)
+    this.lighting.displaySprite.label = 'darkOverlay'
+    this.lighting.displaySprite.zIndex = Z.darkOverlay
+    this.lighting.displaySprite.visible = false
+    this.root.addChild(this.lighting.displaySprite)
+
+    this.visualLayer = new VisualLayer(rendererGpu, world, ticker)
+    this.visualLayer.container.zIndex = Z.visuals
+    this.root.addChild(this.visualLayer.container)
 
     this.hoverLayer = new HoverHighlightLayer(ticker)
     this.hoverLayer.container.zIndex = Z.hover
@@ -45,12 +67,35 @@ export class RoomScene {
 
   // Terrain baked (vector) exactly like the single-room view — reusing
   // createTerrainLayer means full-detail rooms are pixel-identical to RoomViewer.
+  // Bakes with whatever decoration has already arrived (order vs. applyDecoration
+  // isn't guaranteed — applyDecoration rebakes if it arrives after terrain).
   applyTerrain(terrain: RoomTerrain, rendererGpu: Renderer): void {
     if (this.terrainLayer) return // already applied; RoomScene is one-shot per mount
-    this.terrainLayer = createTerrainLayer(terrain, rendererGpu)
+    this.rawTerrain = terrain
+    this.rendererGpu = rendererGpu
+    this.terrainLayer = createTerrainLayer(terrain, rendererGpu, this.decoration?.terrain)
     this.terrainLayer.zIndex = Z.terrain
     this.root.addChildAt(this.terrainLayer, 0)
     this.terrainReady = true
+  }
+
+  // Owner-customized road/wall colors — applied to the live ObjectLayer tinting and
+  // baked into a terrain rebuild, whichever of terrain/decoration arrived last.
+  applyDecoration(decoration: RoomDecoration): void {
+    this.decoration = decoration
+
+    if (this.objLayer) {
+      if (decoration.roadColor != null) this.objLayer.setRoadColor(decoration.roadColor)
+      if (decoration.terrain?.wallFillColor != null) this.objLayer.setWallColor(decoration.terrain.wallFillColor)
+    }
+
+    if (this.rawTerrain && this.rendererGpu && this.terrainLayer) {
+      this.root.removeChild(this.terrainLayer)
+      this.terrainLayer.destroy({ children: true })
+      this.terrainLayer = createTerrainLayer(this.rawTerrain, this.rendererGpu, decoration.terrain)
+      this.terrainLayer.zIndex = Z.terrain
+      this.root.addChildAt(this.terrainLayer, 0)
+    }
   }
 
   // `diff` should always be the latest tick's diff (or undefined for a full
@@ -69,6 +114,10 @@ export class RoomScene {
       this.objLayer.container.label = 'objects'
       this.objLayer.container.zIndex = Z.objects
       this.root.addChild(this.objLayer.container)
+      this.objLayer.setLightingLayer(this.lighting)
+
+      if (this.decoration?.roadColor != null) this.objLayer.setRoadColor(this.decoration.roadColor)
+      if (this.decoration?.terrain?.wallFillColor != null) this.objLayer.setWallColor(this.decoration.terrain.wallFillColor)
 
       this.animLayer = new ActionAnimationLayer(this.ticker)
       this.animLayer.container.label = 'animations'
@@ -87,6 +136,20 @@ export class RoomScene {
       const beamDuration = opts.tickDuration * 0.6
       applyActionLogAnimations(objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId)
     }
+
+    this.visualLayer.update(opts.showRoomVisuals ? (opts.visual ?? '') : '')
+
+    if (opts.darkOverlayEnabled !== this.darkOverlayEnabled) {
+      this.darkOverlayEnabled = opts.darkOverlayEnabled ?? false
+      this.lighting.displaySprite.visible = this.darkOverlayEnabled
+      if (!this.darkOverlayEnabled) this.lighting.clear()
+    }
+    if (this.darkOverlayEnabled) this.updateLighting(objects)
+  }
+
+  private updateLighting(objects: RoomObjectMap): void {
+    this.lighting.setLights(buildLights(objects))
+    this.lighting.render()
   }
 
   // Ready once terrain is baked AND the first full object reconcile has
@@ -136,6 +199,10 @@ export class RoomScene {
       this.terrainLayer.destroy({ children: true })
       this.terrainLayer = null
     }
+    this.root.removeChild(this.visualLayer.container)
+    this.visualLayer.destroy()
+    this.root.removeChild(this.lighting.displaySprite)
+    this.lighting.destroy()
     this.root.removeChild(this.hoverLayer.container)
     this.hoverLayer.destroy()
     this.root.removeFromParent()

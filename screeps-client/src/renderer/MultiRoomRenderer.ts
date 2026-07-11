@@ -2,6 +2,7 @@ import { Application, Container, Graphics, RenderTexture, Sprite, Texture } from
 import type { RoomMap2Data, RoomObjectMap, RoomObjectDiff, RoomTerrain, RoomObject } from 'screeps-connectivity'
 import { WorldCamera, type VisibleBounds, type WorldCameraBounds } from './WorldCamera.js'
 import { RoomScene, type RoomSceneUpdateOptions } from './RoomScene.js'
+import type { RoomDecoration } from './roomDecorations.js'
 import type { SelectionVisual } from './HoverHighlightLayer.js'
 import { TILE_SIZE } from './RoomRenderer.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
@@ -382,7 +383,7 @@ export class MultiRoomRenderer {
     if (this.roomScenes.has(roomName)) return false
     const coord = parseRoomName(roomName)
     if (!coord) return false
-    const scene = new RoomScene(this.app.ticker)
+    const scene = new RoomScene(this.app.ticker, this.app.renderer, this.camera.world)
     scene.root.x = coord.x * ROOM_WORLD_SIZE
     scene.root.y = coord.y * ROOM_WORLD_SIZE
     // Appended after the (already-created) base tile for this room, so it
@@ -410,6 +411,10 @@ export class MultiRoomRenderer {
 
   applyFullDetailTerrain(roomName: string, terrain: RoomTerrain): void {
     this.roomScenes.get(roomName)?.applyTerrain(terrain, this.app.renderer)
+  }
+
+  applyFullDetailDecoration(roomName: string, decoration: RoomDecoration): void {
+    this.roomScenes.get(roomName)?.applyDecoration(decoration)
   }
 
   applyFullDetailUpdate(roomName: string, objects: RoomObjectMap, diff: RoomObjectDiff | undefined, opts: RoomSceneUpdateOptions): void {
