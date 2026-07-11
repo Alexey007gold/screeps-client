@@ -250,7 +250,10 @@ export class MultiRoomRenderer {
       return
     }
 
-    const tex = Texture.from(bitmap)
+    // skipCache: true — a freshly-baked bitmap is never reused, so without this
+    // PixiJS's global Texture.from cache would keep every baked terrain texture
+    // (and its backing pixel buffer) alive forever, even after destroy(true).
+    const tex = Texture.from(bitmap, true)
 
     if (lod === 0) {
       if (entry.texLo && !entry.texLo.destroyed) {
@@ -286,7 +289,7 @@ export class MultiRoomRenderer {
     return this.getTerrainBitmap(roomName, hi ? 1 : 0, raw).then((bitmap) => {
       if (!bitmap) return
       if (!this.activeRooms.has(roomName)) { bitmap.close(); return }
-      const tex = Texture.from(bitmap)
+      const tex = Texture.from(bitmap, true)
       if (hi) entry.texHi = tex as unknown as RenderTexture
       else entry.texLo = tex as unknown as RenderTexture
       if ((this.getLOD() === 1) === hi) entry.terrainSprite.texture = tex

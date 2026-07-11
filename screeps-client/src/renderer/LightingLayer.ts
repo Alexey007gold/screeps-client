@@ -129,7 +129,10 @@ export class LightingLayer {
     this.destroyed = true
     for (const sprite of this.lights.values()) sprite.destroy()
     this.lights.clear()
-    this.scene.destroy({ children: true })
+    // context: true — see RoomScene's terrain-destroy comment: a bare
+    // `{ children: true }` leaves the `dark` overlay Graphics's owned
+    // GraphicsContext orphaned instead of destroyed.
+    this.scene.destroy({ children: true, context: true, texture: true, textureSource: true })
     this.rt.destroy(true)
     this.gradientTexture.destroy(true)
     this.displaySprite.destroy()
@@ -153,5 +156,8 @@ function buildGradientTexture(): Texture {
   ctx.beginPath()
   ctx.arc(r, r, r, 0, Math.PI * 2)
   ctx.fill()
-  return Texture.from(canvas)
+  // skipCache: true — this canvas is unique per LightingLayer instance and never
+  // reused, so without this PixiJS's global Texture.from cache would keep every
+  // instance (and its backing canvas) alive forever, even after destroy(true).
+  return Texture.from(canvas, true)
 }

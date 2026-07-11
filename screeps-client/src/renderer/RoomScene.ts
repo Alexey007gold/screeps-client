@@ -97,7 +97,12 @@ export class RoomScene {
 
     if (this.rawTerrain && this.rendererGpu && this.terrainLayer) {
       this.root.removeChild(this.terrainLayer)
-      this.terrainLayer.destroy({ children: true })
+      // context: true — without it, Graphics.destroy() leaves each child's owned
+      // GraphicsContext (and its GPU vertex/uv/index buffers) orphaned but never
+      // freed, since Graphics.destroy() only frees an owned context when `options`
+      // is exactly `true` or has `context: true` — a bare `{ children: true }` hits
+      // neither branch.
+      this.terrainLayer.destroy({ children: true, context: true, texture: true, textureSource: true })
       this.terrainLayer = createTerrainLayer(this.rawTerrain, this.rendererGpu, decoration.terrain)
       this.terrainLayer.zIndex = Z.terrain
       this.root.addChildAt(this.terrainLayer, 0)
@@ -220,7 +225,8 @@ export class RoomScene {
     }
     if (this.terrainLayer) {
       this.root.removeChild(this.terrainLayer)
-      this.terrainLayer.destroy({ children: true })
+      // context: true — see the matching comment in applyDecoration().
+      this.terrainLayer.destroy({ children: true, context: true, texture: true, textureSource: true })
       this.terrainLayer = null
     }
     this.root.removeChild(this.visualLayer.container)
