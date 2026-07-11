@@ -1,5 +1,6 @@
 import { Container, Graphics, GraphicsContext, Text, Ticker, Sprite, Texture, BlurFilter, FillGradient } from 'pixi.js'
 import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
+import { RoomTerrain, TerrainType } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import type { Theme, ControllerSpec, FlagSpec, TombstoneSpec } from './themes/Theme.js'
 import type { AtlasCache } from './AtlasCache.js'
@@ -2469,10 +2470,127 @@ type ContainerWithTarget = Container & {
   __powerBankRadius?: number
   __keeperGlow?: Sprite   // keeper-lair pulse glow; scale + alpha driven each frame
   __keeperPhase?: number  // per-lair ping phase offset in [0,1)
+  __markedForDestruction?: boolean  // once the synthesized exit hop finishes, start a fade-out
+  __destroyAfterFade?: boolean  // once the current fade finishes, destroy the visual
+  __fadeStartT?: number  // wall-clock time the fade should start (may be in the future — scheduled)
+  __fadeDur?: number
+  __fadeFrom?: number
+  __fadeTo?: number
+  __pendingEdgeExit?: PendingEdgeExit  // waiting briefly on a cross-room lookup before committing to a target
 }
 
 function destroyVisual(visual: ContainerWithTarget): void {
   visual.destroy({ children: true })
+}
+
+// A creep crossing a room boundary is removed from the origin room's object
+// list without ever being reported at the true edge tile (0 or ROOM_MAX) — the
+// last position the server sends for it is one tile short. Continuing one
+// more step in its last known travel direction (which may be diagonal) lands
+// exactly on the missing tile; with no direction available (e.g. a creep
+// seen for the first time), fall back to snapping whichever axis is one tile
+// from an edge, independent of direction.
+const ROOM_MAX = 49
+// The multi-room grid view renders origin and destination rooms at once, so
+// the handoff is split across the tick instead of overlapping a full hop: the
+// origin slides onto the edge tile in the first half, then quickly fades out;
+// the destination stays hidden until the second half, then quickly fades in
+// and holds still. FADE_MS is the quick fade on either side of that midpoint.
+const FADE_MS = 150
+// Brief window to wait for the destination room's arrival data (multi-room
+// grid only) before falling back to the wall-avoidance heuristic — origin and
+// destination rooms subscribe independently, so there's no ordering guarantee
+// between the two room:update events for the same game tick.
+const NEIGHBOR_LOOKUP_GRACE_MS = 50
+
+function isEdgeTile(x: number, y: number): boolean {
+  return x === 0 || x === ROOM_MAX || y === 0 || y === ROOM_MAX
+}
+
+interface EdgeExitTile { x: number; y: number; dirX: number; dirY: number }
+
+// Which edge(s) a creep is one tile short of, independent of how it was
+// moving. Travel history isn't a reliable signal here: the server never
+// reports the actual final (crossing) step, so a creep can turn on that last
+// move — e.g. walking south for several ticks, then turning to step east
+// right as it leaves — and the last *observed* hop simply won't match the
+// true exit direction. dirX/dirY are only the sign of the extrapolation
+// itself (trivially unambiguous), used downstream for wall-avoidance and the
+// cross-room lookup — not a gate on whether to extrapolate at all. If both
+// axes qualify (a corner), both extrapolate — a diagonal exit falls out of
+// this naturally, with no direction history needed.
+function extrapolateEdgeExit(oldObj: RoomObject): EdgeExitTile | null {
+  let tx = oldObj.x
+  let ty = oldObj.y
+  let dirX = 0
+  let dirY = 0
+  if (oldObj.x === ROOM_MAX - 1) { tx = ROOM_MAX; dirX = 1 }
+  else if (oldObj.x === 1) { tx = 0; dirX = -1 }
+  if (oldObj.y === ROOM_MAX - 1) { ty = ROOM_MAX; dirY = 1 }
+  else if (oldObj.y === 1) { ty = 0; dirY = -1 }
+  if (dirX === 0 && dirY === 0) return null
+  return { x: tx, y: ty, dirX, dirY }
+}
+
+// If the extrapolated exit tile is a wall, the creep can't actually be
+// heading there — check the tiles immediately adjacent to it along the
+// border(s) it's crossing and use whichever isn't a wall.
+function avoidWallExit(tile: EdgeExitTile, terrain: RoomTerrain | null): { x: number; y: number } {
+  if (!terrain || terrain.get(tile.x, tile.y) !== TerrainType.Wall) return tile
+  const candidates: { x: number; y: number }[] = []
+  if (tile.x === 0 || tile.x === ROOM_MAX) {
+    candidates.push({ x: tile.x, y: tile.y - 1 }, { x: tile.x, y: tile.y + 1 })
+  }
+  if (tile.y === 0 || tile.y === ROOM_MAX) {
+    candidates.push({ x: tile.x - 1, y: tile.y }, { x: tile.x + 1, y: tile.y })
+  }
+  for (const c of candidates) {
+    if (c.x < 0 || c.x > ROOM_MAX || c.y < 0 || c.y > ROOM_MAX) continue
+    if (terrain.get(c.x, c.y) !== TerrainType.Wall) return c
+  }
+  return tile
+}
+
+interface PendingEdgeExit {
+  exitTile: EdgeExitTile
+  fallbackTile: { x: number; y: number }  // tile coords, wall-avoidance already applied
+  deadline: number
+}
+
+// A neighboring room's reported arrival position is in THAT room's own
+// coordinate frame — only the axis running along the shared border (the one
+// this room isn't crossing) is meaningful to borrow from it. The crossing
+// axis must stay this room's own true edge value (0 or ROOM_MAX): the
+// neighbor's value for that same axis reflects its OPPOSITE edge (e.g.
+// exiting this room's north edge lands at the neighbor's south edge, y=49),
+// and using it directly here would teleport the visual across this room.
+function resolveExitTargetPx(
+  exitTile: EdgeExitTile, fallbackTile: { x: number; y: number }, neighborPos: { x: number; y: number },
+): { x: number; y: number } {
+  const tx = exitTile.dirX !== 0 ? fallbackTile.x : neighborPos.x
+  const ty = exitTile.dirY !== 0 ? fallbackTile.y : neighborPos.y
+  return { x: tx * TILE_SIZE, y: ty * TILE_SIZE }
+}
+
+interface DeathTombstone { x: number; y: number; creepName: string }
+
+// A tombstone's `creep` field is a snapshot of the creep that died into it —
+// including its name, which is how we tell "died right at the edge" apart
+// from "actually left the room" for a creep that vanished near a boundary.
+function tombstoneCreepName(obj: RoomObject): string | null {
+  const creep = obj.creep as { name?: unknown } | undefined
+  return typeof creep?.name === 'string' ? creep.name : null
+}
+
+// True if a same-tick tombstone matches this creep by name and sits at or
+// adjacent to its last known tile — i.e. it died here rather than left.
+function diedNearby(oldObj: RoomObject, tombstones: readonly DeathTombstone[]): boolean {
+  const name = typeof oldObj.name === 'string' ? oldObj.name : null
+  if (!name) return false
+  for (const t of tombstones) {
+    if (t.creepName === name && Math.abs(t.x - oldObj.x) <= 1 && Math.abs(t.y - oldObj.y) <= 1) return true
+  }
+  return false
 }
 
 function buildSayBubble(message: string): Container {
@@ -2560,6 +2678,20 @@ export class ObjectLayer {
   private lastTickAt = 0       // performance.now() when the current game tick began
   private readonly EXT_ANIM_DURATION = 300
   private instantMode = false
+  // True only for rooms in the multi-room grid, where a neighboring room's
+  // ObjectLayer may be rendering the same creep's arrival at the same time —
+  // see setSplitEdgeHandoff().
+  private splitEdgeHandoff = false
+  // For wall-avoidance when extrapolating an exit tile — see avoidWallExit().
+  private terrain: RoomTerrain | null = null
+  // Multi-room grid only: queries an adjacent room's ObjectLayer for a creep
+  // that just arrived there this tick, to resolve the exact exit tile instead
+  // of guessing — see setNeighborLookup().
+  private neighborLookup: ((creepId: string, dirX: number, dirY: number) => { x: number; y: number } | null) | null = null
+  // Creeps that appeared for the first time this tick sitting on an edge tile
+  // (i.e. likely arrivals from a neighboring room) — queried by that
+  // neighbor's own ObjectLayer via neighborLookup. Rebuilt every update().
+  private freshEdgeArrivals = new Map<string, { x: number; y: number }>()
   private lastWorldScale = 1
   private showLabels: boolean
   private currentUserId?: string
@@ -2633,6 +2765,22 @@ export class ObjectLayer {
   private tick(): void {
     const tNow = performance.now()
 
+    // Resolve any exit tiles still waiting on a cross-room lookup (see
+    // setNeighborLookup) before the interpolation pass below, so a hop that
+    // resolves this frame still gets to animate this frame.
+    for (const [id, visual] of this.objects) {
+      const pending = visual.__pendingEdgeExit
+      if (!pending) continue
+      const neighborPos = this.neighborLookup?.(id, pending.exitTile.dirX, pending.exitTile.dirY) ?? null
+      if (neighborPos) {
+        visual.__pendingEdgeExit = undefined
+        this.beginExitHop(visual, resolveExitTargetPx(pending.exitTile, pending.fallbackTile, neighborPos))
+      } else if (tNow >= pending.deadline) {
+        visual.__pendingEdgeExit = undefined
+        this.beginExitHop(visual, { x: pending.fallbackTile.x * TILE_SIZE, y: pending.fallbackTile.y * TILE_SIZE })
+      }
+    }
+
     // Creep movement interpolation — linear over ~90% of the current tick duration
     // (driven from RoomViewer via setMoveDuration()). The light pool is nudged to
     // match each frame so it tracks the sprite instead of snapping at tick end.
@@ -2651,6 +2799,16 @@ export class ObjectLayer {
         visual.__moveStartT = undefined
         visual.__moveDur = undefined
         lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
+        // The synthesized exit hop (see extrapolateEdgeExit) just reached the
+        // edge tile — quickly fade out instead of destroying outright.
+        if (visual.__markedForDestruction) {
+          visual.__markedForDestruction = false
+          visual.__fadeStartT = tNow
+          visual.__fadeDur = FADE_MS
+          visual.__fadeFrom = visual.alpha
+          visual.__fadeTo = 0
+          visual.__destroyAfterFade = true
+        }
         continue
       }
       const t = elapsed / dur
@@ -2659,6 +2817,40 @@ export class ObjectLayer {
       visual.x = sx + (visual.__targetX - sx) * t
       visual.y = sy + (visual.__targetY - sy) * t
       lighting?.setLightPosition(id, visual.x + TILE_SIZE / 2, visual.y + TILE_SIZE / 2)
+    }
+
+    // Drive any in-progress fade (in or out); __fadeStartT may be scheduled in
+    // the future (a destination room's arrival fade, held for the second half
+    // of the tick) — elapsed < 0 means it just hasn't started yet.
+    const toDestroy: string[] = []
+    for (const [id, visual] of this.objects) {
+      if (visual.__fadeStartT === undefined) continue
+      const elapsed = tNow - visual.__fadeStartT
+      if (elapsed < 0) continue
+      const dur = visual.__fadeDur ?? 0
+      const from = visual.__fadeFrom ?? visual.alpha
+      const to = visual.__fadeTo ?? visual.alpha
+      if (dur <= 0 || elapsed >= dur) {
+        visual.alpha = to
+        const destroyAfter = visual.__destroyAfterFade
+        visual.__fadeStartT = undefined
+        visual.__fadeDur = undefined
+        visual.__fadeFrom = undefined
+        visual.__fadeTo = undefined
+        visual.__destroyAfterFade = undefined
+        if (destroyAfter) toDestroy.push(id)
+        continue
+      }
+      visual.alpha = from + (to - from) * (elapsed / dur)
+    }
+
+    for (const id of toDestroy) {
+      const visual = this.objects.get(id)
+      if (visual) {
+        this.container.removeChild(visual)
+        destroyVisual(visual)
+        this.objects.delete(id)
+      }
     }
 
     // Say bubbles intentionally have no timer-based expiry — their lifecycle is
@@ -2990,6 +3182,18 @@ export class ObjectLayer {
       calcSpawnFillRadius(fromEnergy, fromCapacity), calcSpawnFillRadius(toEnergy, toCapacity))
   }
 
+  // Kicks off the synthesized final hop onto a resolved exit tile; tick()
+  // fades it out once the slide completes (see extrapolateEdgeExit).
+  private beginExitHop(visual: ContainerWithTarget, targetPx: { x: number; y: number }): void {
+    visual.__moveStartX = visual.x
+    visual.__moveStartY = visual.y
+    visual.__targetX = targetPx.x
+    visual.__targetY = targetPx.y
+    visual.__moveStartT = performance.now()
+    visual.__moveDur = this.splitEdgeHandoff ? this.tickMs / 2 : this.moveDuration
+    visual.__markedForDestruction = true
+  }
+
   update(objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string; badge?: Badge }>, gameTime?: number): void {
     if (users) {
       this.users = users
@@ -2999,11 +3203,24 @@ export class ObjectLayer {
       if (gameTime !== this.currentGameTime) this.lastTickAt = performance.now()
       this.currentGameTime = gameTime
     }
+    this.freshEdgeArrivals.clear()
     let roadsChanged = false
     let wallsChanged = false
     let rampartsChanged = false
 
     if (diff) {
+      // Pre-scan this tick's tombstones so the removal pass below can tell a
+      // creep that died right at a boundary apart from one that actually left
+      // — order within the diff isn't guaranteed, so this has to run first.
+      const tombstonesThisTick: DeathTombstone[] = []
+      for (const id in diff) {
+        if (diff[id] === null) continue
+        const obj = objects[id]
+        if (!obj || obj.type !== 'tombstone') continue
+        const creepName = tombstoneCreepName(obj)
+        if (creepName) tombstonesThisTick.push({ x: obj.x, y: obj.y, creepName })
+      }
+
       // Use for...in over Object.entries to avoid array allocation per tick
       for (const id in diff) {
         const changes = diff[id]
@@ -3015,9 +3232,36 @@ export class ObjectLayer {
 
           const visual = this.objects.get(id)
           if (visual) {
-            this.container.removeChild(visual)
-            destroyVisual(visual)
-            this.objects.delete(id)
+            if (visual.__markedForDestruction) {
+              // Redundant "removed" notification for a creep already mid-exit-hop
+              // (the same tick's diff can be delivered more than once) — by now
+              // rawObjects no longer has this id, so oldObj?.type would read as
+              // undefined and wrongly fall through to an immediate destroy.
+              // Leave the in-progress hop alone; it'll finish and clean up itself.
+              continue
+            }
+            const exitTile = oldObj?.type === 'creep' && !diedNearby(oldObj, tombstonesThisTick)
+              ? extrapolateEdgeExit(oldObj) : null
+            if (exitTile) {
+              const fallbackTile = avoidWallExit(exitTile, this.terrain)
+              const neighborPos = this.neighborLookup?.(id, exitTile.dirX, exitTile.dirY) ?? null
+              if (neighborPos) {
+                this.beginExitHop(visual, resolveExitTargetPx(exitTile, fallbackTile, neighborPos))
+              } else if (this.neighborLookup) {
+                // Grid view, but the destination room's arrival hasn't landed
+                // yet (separate subscriptions, no ordering guarantee) — wait
+                // briefly rather than committing to the fallback immediately.
+                visual.__pendingEdgeExit = {
+                  exitTile, fallbackTile, deadline: performance.now() + NEIGHBOR_LOOKUP_GRACE_MS,
+                }
+              } else {
+                this.beginExitHop(visual, { x: fallbackTile.x * TILE_SIZE, y: fallbackTile.y * TILE_SIZE })
+              }
+            } else {
+              this.container.removeChild(visual)
+              destroyVisual(visual)
+              this.objects.delete(id)
+            }
             this.rawObjects.delete(id)
             this.fillAnimations.delete(id)
             this.buildGlowAnimations.delete(id)
@@ -3051,6 +3295,22 @@ export class ObjectLayer {
             const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
+            // A creep's first-ever appearance sitting exactly on an edge tile is
+            // almost always one arriving from an adjacent room (see the matching
+            // exit-hop in the removal branch above). In the grid view, hold it
+            // hidden through the first half of the tick — while the origin room
+            // is still sliding and fading out — then quickly fade in and hold
+            // still, instead of snapping in at full opacity and duplicating the
+            // origin's visual. The single-room view never shows that origin
+            // room, so there it just fades in immediately.
+            if (obj.type === 'creep' && isEdgeTile(obj.x, obj.y)) {
+              visual.alpha = 0
+              visual.__fadeStartT = this.splitEdgeHandoff ? this.lastTickAt + this.tickMs / 2 : performance.now()
+              visual.__fadeDur = FADE_MS
+              visual.__fadeFrom = 0
+              visual.__fadeTo = 1
+              this.freshEdgeArrivals.set(id, { x: obj.x, y: obj.y })
+            }
             this.applyLabelScale(visual)
             this.objects.set(id, visual)
             this.container.addChild(visual)
@@ -4111,6 +4371,33 @@ export class ObjectLayer {
   // (vanilla pulses per tick; a fixed wall-clock period would diverge at off-nominal tick rates).
   setTickDuration(ms: number): void {
     this.tickMs = Math.max(1, ms)
+  }
+
+  // Enable only for rooms in the multi-room grid: splits a creep's room-crossing
+  // handoff across the tick (origin slides + fades out in the first half,
+  // destination waits and fades in during the second) so the two rooms — both
+  // visible at once — don't briefly show the same creep twice. The single-room
+  // view never renders the neighboring room, so it stays off there and a
+  // crossing creep just slides at normal speed and fades in immediately.
+  setSplitEdgeHandoff(enabled: boolean): void {
+    this.splitEdgeHandoff = enabled
+  }
+
+  /** Terrain for this room, used to steer an extrapolated exit tile off a wall. */
+  setTerrain(terrain: RoomTerrain | null): void {
+    this.terrain = terrain
+  }
+
+  /** Multi-room grid only — see the `neighborLookup` field doc. */
+  setNeighborLookup(fn: ((creepId: string, dirX: number, dirY: number) => { x: number; y: number } | null) | null): void {
+    this.neighborLookup = fn
+  }
+
+  /** Position of a creep that arrived on an edge tile for the first time this
+   *  tick, if any — queried by an adjacent room's ObjectLayer via its own
+   *  neighborLookup to resolve exactly where a departing creep should exit. */
+  getFreshArrival(creepId: string): { x: number; y: number } | null {
+    return this.freshEdgeArrivals.get(creepId) ?? null
   }
 
   /**

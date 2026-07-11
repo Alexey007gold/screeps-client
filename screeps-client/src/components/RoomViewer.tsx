@@ -546,6 +546,7 @@ export function RoomViewer(props: RoomViewerProps) {
       objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge, users)
       objLayer.setTheme(resolveTheme(untrack(spriteTheme)), sharedAtlasCache)
       objLayer.setInstantMode(untrack(historyMode))
+      objLayer.setTerrain(untrack(terrain)?.data ?? null)
       const dec = untrack(roomDecoration)
       if (dec?.room === props.room) {
         if (dec.decoration.roadColor != null) objLayer.setRoadColor(dec.decoration.roadColor)
@@ -765,6 +766,14 @@ export function RoomViewer(props: RoomViewerProps) {
   // Sync instant-mode when entering/leaving history mode
   createEffect(() => {
     objLayer?.setInstantMode(historyMode())
+  })
+
+  // Keep the object layer's terrain (used for exit-tile wall-avoidance) in
+  // sync — covers terrain arriving after objLayer already exists; the other
+  // ordering is handled where objLayer is created above.
+  createEffect(() => {
+    const t = terrain()
+    objLayer?.setTerrain(t?.data ?? null)
   })
 
 

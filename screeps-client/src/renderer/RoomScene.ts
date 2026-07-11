@@ -45,6 +45,9 @@ export class RoomScene {
   private rawTerrain: RoomTerrain | null = null
   private rendererGpu: Renderer | null = null
   private decoration: RoomDecoration | null = null
+  // Set before the ObjectLayer exists yet (MultiRoomRenderer wires this up
+  // right after creating the scene) — applied once applyUpdate creates it.
+  private pendingNeighborLookup: ((creepId: string, dirX: number, dirY: number) => { x: number; y: number } | null) | null = null
 
   constructor(ticker: Ticker, rendererGpu: Renderer, world: Container) {
     this.ticker = ticker
@@ -77,6 +80,9 @@ export class RoomScene {
     this.terrainLayer.zIndex = Z.terrain
     this.root.addChildAt(this.terrainLayer, 0)
     this.terrainReady = true
+    // Terrain can arrive before or after the ObjectLayer exists (see
+    // applyUpdate, which covers the other ordering).
+    this.objLayer?.setTerrain(terrain)
   }
 
   // Owner-customized road/wall colors — applied to the live ObjectLayer tinting and
@@ -110,6 +116,12 @@ export class RoomScene {
 
     if (!this.objLayer) {
       this.objLayer = new ObjectLayer(this.ticker, opts.showLabels, opts.currentUserId ?? undefined, opts.currentUserBadge ?? undefined, opts.users)
+      // Every full-detail room in the grid may have a neighbor rendering at the
+      // same time — split creep room-crossing handoffs across the tick so the
+      // two rooms don't briefly show the same creep twice (see ObjectLayer).
+      this.objLayer.setSplitEdgeHandoff(true)
+      this.objLayer.setTerrain(this.rawTerrain)
+      if (this.pendingNeighborLookup) this.objLayer.setNeighborLookup(this.pendingNeighborLookup)
       this.objLayer.setTheme(defaultSpriteTheme, sharedAtlasCache)
       this.objLayer.container.label = 'objects'
       this.objLayer.container.zIndex = Z.objects
@@ -168,6 +180,18 @@ export class RoomScene {
 
   getObjectsAtTile(tx: number, ty: number): { id: string; obj: import('screeps-connectivity').RoomObject }[] {
     return this.objLayer?.getObjectsAtTile(tx, ty) ?? []
+  }
+
+  // MultiRoomRenderer calls this right after creating the scene, before the
+  // ObjectLayer exists — stashed and applied once applyUpdate creates it.
+  setNeighborLookup(fn: ((creepId: string, dirX: number, dirY: number) => { x: number; y: number } | null) | null): void {
+    this.pendingNeighborLookup = fn
+    this.objLayer?.setNeighborLookup(fn)
+  }
+
+  /** See ObjectLayer.getFreshArrival — queried by an adjacent room's lookup. */
+  getFreshArrival(creepId: string): { x: number; y: number } | null {
+    return this.objLayer?.getFreshArrival(creepId) ?? null
   }
 
   getVisualById(id: string): Container | undefined {

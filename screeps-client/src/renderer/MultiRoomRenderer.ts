@@ -389,6 +389,14 @@ export class MultiRoomRenderer {
     // naturally draws on top without needing sortableChildren on `world`.
     this.camera.world.addChild(scene.root)
     this.roomScenes.set(roomName, scene)
+    // Resolve a departing creep's exit tile from the room it's actually
+    // arriving in, when that neighbor is also rendered in full detail —
+    // more precise than the wall-avoidance heuristic ObjectLayer falls back
+    // to on its own (see ObjectLayer.setNeighborLookup).
+    scene.setNeighborLookup((creepId, dirX, dirY) => {
+      const neighborName = formatRoomName(coord.x + dirX, coord.y + dirY)
+      return this.roomScenes.get(neighborName)?.getFreshArrival(creepId) ?? null
+    })
     return true
   }
 
