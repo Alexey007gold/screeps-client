@@ -102,7 +102,7 @@ export function RoomInfoPanel(props: RoomInfoPanelProps) {
           'margin-top': '6px',
         }}
       >
-        <span>Creep-Namen</span>
+        <span>Creep-Names</span>
         <input
           type="checkbox"
           checked={showCreepLabels()}
