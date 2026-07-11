@@ -4,3 +4,8 @@ packages:
   - 'screeps-mod-client'
   - 'xxscreeps-mod-client'
   - 'screeps-desktop'
+allowBuilds:
+  '@xxscreeps/pathfinder': true
+  esbuild: true
+  isolated-vm: true
+  ivm-inspect: true
