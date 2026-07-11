@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MultiRoomRenderer, MAP2_MIN_ZOOM, FULL_DETAIL_ZOOM_THRESHOLD } from '~/renderer/MultiRoomRenderer.js'
 import { FullDetailRoomCoordinator } from '~/renderer/FullDetailRoomCoordinator.js'
 import type { SelectionVisual } from '~/renderer/HoverHighlightLayer.js'
-import { client, userInfo, worldBounds, setWorldBounds, tickDuration, isPrivateServer } from '~/stores/clientStore.js'
+import { client, userInfo, worldBounds, setWorldBounds, tickDuration, recordGameTime, isPrivateServer } from '~/stores/clientStore.js'
 import { showCreepLabels, showRoomVisuals, roomDarkOverlay, showRoomDecorations } from '~/stores/settingsStore.js'
 import { parseRoomDecorations } from '~/renderer/roomDecorations.js'
 import { selection, setSelection, createSelectedObject, updateSelectionWithDiff, updateSelectionFromObjects } from '~/stores/selectionStore.js'
@@ -180,7 +180,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
         roomSubs.set(room, roomPool.subscribeFullDetailRoom(room, shard))
         // Terrain is almost always already cached (the base-layer terrainBulk
         // fetch reconciles first) — this just reads that cache in the common case.
-        c.stores.room.terrain(room, shard)
+        c.stores.room.terrain(room, shard, { silent: true })
           .then((t) => renderer?.applyFullDetailTerrain(room, t))
           .catch(() => {})
 
@@ -211,7 +211,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
     if (terrainQueue.length === 0) return
     const batch = terrainQueue.splice(0, TERRAIN_BATCH_SIZE)
     for (const r of batch) requested.add(r)
-    c.stores.room.terrainBulk(batch, props.shard)
+    c.stores.room.terrainBulk(batch, props.shard, { silent: true })
       .then(async terrainMap => {
         const bakes: Promise<void>[] = []
         for (const [room, terrain] of terrainMap) {
@@ -380,10 +380,19 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
   // Fetch terrain, manage map2 subscriptions when visible rooms/zoom/shard change
   createEffect(() => {
     const c = client()
-    const rooms = visibleRooms()
+    let rooms = visibleRooms()
     const inView = inViewRooms()
     const shard = props.shard
     if (!c || rooms.length === 0) return
+
+    // Filter out rooms outside world bounds (important for private servers with smaller maps)
+    const bounds = worldBounds()
+    if (bounds) {
+      rooms = rooms.filter(r => {
+        const coord = parseRoomName(r)
+        return coord && isRoomInWorld(coord.x, coord.y, bounds)
+      })
+    }
 
     const visibleSet = new Set(rooms)
 
@@ -450,6 +459,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
       // must be treated as a full reconcile (mirrors RoomViewer's isFirstUpdate).
       const hadObjectLayer = renderer?.hasFullDetailObjects(data.room) ?? false
 
+      recordGameTime(data.gameTime)
       const tickMs = tickDuration() ?? 2000
       renderer?.applyFullDetailUpdate(data.room, data.objects, data.diff, {
         showLabels: showCreepLabels(),

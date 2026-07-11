@@ -7,6 +7,7 @@ import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
 import type { Subscription } from '../subscription/index.js'
+import type { ApiRoomTerrainResponse, ApiGameRoomsResponse } from '../types/api.js'
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -78,7 +79,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     this.cache = cache
   }
 
-  async terrain(room: string, shard: string | null): Promise<RoomTerrain> {
+  async terrain(room: string, shard: string | null, opts?: { silent?: boolean }): Promise<RoomTerrain> {
     const key = `terrain/${shard}/${room}`
 
     const cached = this.cache.get<RoomTerrain>(key)
@@ -96,7 +97,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     }
 
     this.logger.log('terrain', room, shard, '(fetching)')
-    const res = await this.http.game.roomTerrain(room, shard ?? undefined)
+    const res = await this.http.request<ApiRoomTerrainResponse>('GET', '/api/game/room-terrain', { room, encoded: 1, ...(shard && { shard }) }, opts)
     const entry = res.terrain[0]
     if (!entry) throw new Error(`No terrain data for room ${room} shard ${shard}`)
     const terrain = RoomTerrain.fromEncodedString(entry.terrain)
@@ -108,7 +109,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     return terrain
   }
 
-  async terrainBulk(rooms: string[], shard: string | null): Promise<Map<string, RoomTerrain>> {
+  async terrainBulk(rooms: string[], shard: string | null, opts?: { silent?: boolean }): Promise<Map<string, RoomTerrain>> {
     const result = new Map<string, RoomTerrain>()
     const needPersistentCheck: string[] = []
 
@@ -139,7 +140,9 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     if (needFetch.length === 0) return result
 
     this.logger.log('terrainBulk', `fetching ${needFetch.length} rooms`, shard)
-    const res = await this.http.game.roomsTerrain(needFetch, shard ?? undefined)
+    const params = new URLSearchParams({ encoded: 'true' })
+    if (shard) params.set('shard', shard)
+    const res = await this.http.request<ApiGameRoomsResponse>('POST', `/api/game/rooms?${params}`, { rooms: needFetch }, opts)
 
     await Promise.all(res.rooms.map(async (entry) => {
       const terrain = RoomTerrain.fromEncodedString(entry.terrain)
