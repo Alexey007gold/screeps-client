@@ -1,5 +1,4 @@
 ---
-"screeps-client-proxy": minor
 "screeps-client": minor
 ---
 
