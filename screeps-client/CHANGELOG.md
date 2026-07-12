@@ -1,5 +1,14 @@
 # screeps-client
 
+## 0.17.0
+
+### Minor Changes
+
+- 38b4198: Console improvements: the Log pane pause button now actually stops the feed (incoming messages are buffered while paused and flushed on resume, instead of just pausing the scroll), error lines are shown inline in arrival order at the bottom next to surrounding logs (previously every error was pinned above all log output), and a new regex filter button hides log/error lines that don't match the entered pattern.
+- 8e9bbd7: Custom UI editor: a visual editor for the Custom UI ("SCUI") config segment, opened from Settings → Custom UI → "Open editor". Instead of hand-writing the JSON, build the map, room and object-action sidebars through a form — add/reorder/remove elements, pick each element's type (`button`, `select`, `status`, `header`), and set `label`, `cmd`, `options`, `path`, header `items`, object `obj`/`owner`, `needs`, `confirm`, and `showIf` (`selType`, room standing) with dedicated controls. A live preview column mirrors how the elements render in the sidebar, and a toggleable raw-JSON view (CodeMirror) stays in sync for power users. The editor loads and saves the configured segment directly, validates against the same schema the client enforces before saving, respects the 100 KB segment limit, and reloads the live sidebar config on save. If the segment holds non-Custom-UI JSON it opens the raw contents so you can fix them by hand.
+- a6cb0b4: Add a "Smooth animations" toggle in Settings → Room View. When turned off, tick-driven animations snap to their new state instantly instead of interpolating between game ticks: creep movement, structure fill tweens (extensions, towers, storage, links, etc.), build glows, controller progress flashes, say bubbles, and the lab/terminal cooldown pulse. This reuses the renderer's existing instant mode (previously only engaged while scrubbing history). Wall-clock ambient effects that are not tied to tick timing — the source glow, tower barrel sweep, and keeper-lair pulse — keep animating.
+- 64b08e0: Add `screeps-client-proxy`: a standalone local proxy that serves the browser client and forwards `/api` + `/socket` (including the game WebSocket) to any Screeps server, bypassing browser CORS — the same idea as the steamless client, but for the new client. Open `http://localhost:8080/` and the client shows the desktop-style server-list login; the selected backend is embedded in the request path (`/(https://server)/…`) so no library changes are needed. Content-hashed assets are served immutable and stable-URL assets revalidate (`304`), so caching is correct. In proxy mode the client persists its server list, token and saved credentials in `localStorage` so logins survive a restart.
+
 ## 0.16.0
 
 ### Minor Changes
