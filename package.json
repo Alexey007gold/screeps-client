@@ -7,6 +7,7 @@
     "build:mod": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build:embedded",
     "build:release": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-client build:all",
     "desktop": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-desktop dev",
+    "proxy": "pnpm build && pnpm --filter screeps-client-proxy start",
     "desktop:build": "pnpm --filter screeps-connectivity build && pnpm --filter screeps-desktop build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",

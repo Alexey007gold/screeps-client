@@ -14,7 +14,15 @@ interface CachedEntry<T> {
 
 function sessionKey(suffix: string, url: string): string {
   try {
-    return `screeps:${suffix}:${new URL(url).hostname}`
+    const parsed = new URL(url)
+    // Hostname alone isn't enough: multiple worlds can live under one host via a
+    // path (screeps.com vs screeps.com/season), and behind screeps-client-proxy
+    // every backend is wrapped under the same host (localhost/(https://server)),
+    // so the path must disambiguate them. Same path-based approach as the Cache
+    // namespace in ScreepsClient; host (incl. port) also separates private
+    // servers sharing a hostname on different ports.
+    const path = parsed.pathname.replace(/\/+$/, '')
+    return `screeps:${suffix}:${path ? `${parsed.host}${path}` : parsed.host}`
   } catch {
     return `screeps:${suffix}:${url}`
   }
@@ -60,7 +68,7 @@ export async function fetchServerVersion(url: string): Promise<ServerVersion> {
 /**
  * Fetch screepsmod-auth capabilities from `/api/authmod` without authentication.
  * Returns `null` if the server does not run screepsmod-auth.
- * The result is cached in `sessionStorage` for 5 minutes (per server hostname).
+ * The result is cached in `sessionStorage` for 5 minutes (per server host+path).
  */
 export async function fetchAuthModInfo(url: string): Promise<ApiAuthModInfoResponse | null> {
   const key = sessionKey('authmod', url)

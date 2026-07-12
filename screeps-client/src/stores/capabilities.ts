@@ -1,9 +1,12 @@
 import { isTauri } from '~/utils/tauri.js'
+import { isProxy } from '~/utils/proxy.js'
 import { isEmbedded, isXxscreepsMode } from '~/utils/embedded.js'
 import { isPrivateServer, serverVersion } from './clientStore.js'
 
 export interface Capabilities {
   isDesktop: boolean
+  // Served by screeps-client-proxy (browser, /api+/socket proxied via /(backend)/).
+  isProxy: boolean
   isEmbedded: boolean
   isXxscreepsMode: boolean
   isPrivateServer: boolean | null
@@ -19,6 +22,7 @@ export interface Capabilities {
 export function capabilities(): Capabilities {
   return {
     isDesktop: isTauri(),
+    isProxy: isProxy(),
     isEmbedded: isEmbedded(),
     isXxscreepsMode: isXxscreepsMode(),
     isPrivateServer: isPrivateServer(),

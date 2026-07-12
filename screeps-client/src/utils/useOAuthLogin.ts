@@ -1,5 +1,6 @@
 import { createSignal, onCleanup } from 'solid-js'
 import { fetchAuthMeWithToken, completeProviderRegistration } from 'screeps-connectivity'
+import { isProxy, toProxyUrl } from './proxy.js'
 
 export interface OAuthPendingRegistration {
   url: string
@@ -36,7 +37,12 @@ export function useOAuthLogin(provider: string, onAuthenticated: (result: { url:
   }
 
   const startLogin = (rawUrl: string) => {
-    const url = rawUrl.replace(/\/$/, '')
+    // In proxy mode the OAuth popup and follow-up token checks must route through
+    // the proxy, so the /(backend)/api/auth/<provider> round-trip (with the
+    // proxy's returnUrl rewrite) lands back on the proxy origin and postMessage
+    // reaches this opener. The wrapped URL flows on to onAuthenticated → connect.
+    const base = isProxy() ? toProxyUrl(rawUrl) : rawUrl
+    const url = base.replace(/\/$/, '')
     const popup = window.open(`${url}/api/auth/${provider}`, `screeps-oauth-${provider}`, 'width=800,height=600,left=200,top=100')
     const onMessage = (event: MessageEvent) => {
       try {

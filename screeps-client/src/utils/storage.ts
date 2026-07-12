@@ -2,12 +2,14 @@
 // localStorage = persistent UI/settings; sessionStorage = auth tokens (cleared on browser close).
 
 import { isTauri } from './tauri.js'
+import { isProxy } from './proxy.js'
 
 // Auth keys live in sessionStorage in the browser (cleared on close). In the desktop
 // app there is no "tab close" and re-logging in every launch is poor UX, so persist
-// them in localStorage instead (private to the app's WebView data dir).
+// them in localStorage instead (private to the app's WebView data dir). The browser
+// proxy is the same story — a local single-user server — so persist there too.
 function sessionBackend(): Storage {
-  return isTauri() ? localStorage : sessionStorage
+  return isTauri() || isProxy() ? localStorage : sessionStorage
 }
 
 export const LS = {

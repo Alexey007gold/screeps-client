@@ -33,6 +33,7 @@ function willAutoConnect(): boolean {
   // In Tauri the token lives in the OS keychain (async) — if a URL is stored,
   // optimistically show the boot screen and let tryAutoConnect() decide.
   if (caps.isDesktop) return Boolean(url)
+  // Proxy mode persists url+token in localStorage (both read synchronously here).
   const token = getSession(SS.token)
   return Boolean(url && token)
 }
@@ -40,7 +41,8 @@ function willAutoConnect(): boolean {
 export function App() {
   const isConnected = () => status() === 'connected' && client() !== null
   const caps = capabilities()
-  const isDesktop = caps.isDesktop
+  // Both the desktop app and the browser proxy show the server-list login.
+  const showServerList = caps.isDesktop || caps.isProxy
   // True until the initial auto-connect attempt settles, so the boot splash is
   // only shown during startup and never re-appears (e.g. after a later logout).
   const [booting, setBooting] = createSignal(willAutoConnect())
@@ -74,7 +76,7 @@ export function App() {
         ? <Dashboard />
         : booting()
           ? <ConnectingScreen />
-          : isDesktop ? <DesktopLoginForm /> : <LoginForm />}
+          : showServerList ? <DesktopLoginForm /> : <LoginForm />}
       <SessionErrorModal />
       <RateLimitModal />
     </div>

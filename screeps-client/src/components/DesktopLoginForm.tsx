@@ -20,6 +20,7 @@ import {
   deleteSavedCredential,
 } from '~/utils/keychain.js'
 import { getScreepsmodAuth, getXxscreepsModClientFeature, getDiscordFeature, hasOfficialLike } from 'screeps-connectivity'
+import { isProxy } from '~/utils/proxy.js'
 import { useOAuthLogin } from '~/utils/useOAuthLogin.js'
 import { useServerInfo } from '~/utils/useServerInfo.js'
 import { OAuthUsernameForm } from './OAuthUsernameForm.js'
@@ -372,7 +373,9 @@ function ServerLoginForm(props: { server: ServerConfig }) {
             style={{ width: '14px', height: '14px', 'accent-color': '#238636', cursor: 'pointer', 'flex-shrink': 0 }}
           />
           <span style={{ 'font-size': '13px', color: '#8b949e' }}>
-            Save {effectiveAuth() === 'token' ? 'token' : 'password'} in keychain
+            {/* Desktop uses the OS keychain; the browser proxy has none and falls
+                back to localStorage, so name the store accurately. */}
+            Save {effectiveAuth() === 'token' ? 'token' : 'password'} in {isProxy() ? 'this browser' : 'keychain'}
           </span>
         </label>
       </Show>
