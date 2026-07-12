@@ -6,6 +6,7 @@ import {
   terrainEffects, setTerrainEffects,
   showRoomDecorations, setShowRoomDecorations,
   roomDarkOverlay, setRoomDarkOverlay,
+  smoothAnimations, setSmoothAnimations,
   spriteTheme, setSpriteTheme,
   hideCustomUiProtocol, setHideCustomUiProtocol,
 } from '~/stores/settingsStore.js'
@@ -259,6 +260,12 @@ export function SettingsPanel(props: { onClose: () => void }) {
               description="Darken the room and add per-object light glows."
               value={roomDarkOverlay()}
               onChange={setRoomDarkOverlay}
+            />
+            <Toggle
+              label="Smooth animations"
+              description="Interpolate creep movement and structure fills between game ticks. Turn off for instant, static updates."
+              value={smoothAnimations()}
+              onChange={setSmoothAnimations}
             />
             <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
               <label style={{ 'font-size': '13px', 'font-weight': '500' }}>Structure theme</label>

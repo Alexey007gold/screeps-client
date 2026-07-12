@@ -7,7 +7,7 @@ import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
 import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo, worldStatus, serverVersion, isPrivateServer } from '~/stores/clientStore.js'
-import { showCreepLabels, terrainEffects, showRoomVisuals, spriteTheme, showRoomDecorations, roomDarkOverlay } from '~/stores/settingsStore.js'
+import { showCreepLabels, terrainEffects, showRoomVisuals, spriteTheme, showRoomDecorations, roomDarkOverlay, smoothAnimations } from '~/stores/settingsStore.js'
 import { defaultSpriteTheme } from '~/renderer/themes/default.js'
 import { sharedAtlasCache } from '~/renderer/AtlasCache.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff, updateSelectionFromObjects, createSelectedObject } from '~/stores/selectionStore.js'
@@ -544,7 +544,7 @@ export function RoomViewer(props: RoomViewerProps) {
       log(`object layer created — ${props.room}`)
       objLayer = new ObjectLayer(r.app.ticker, showCreepLabels(), userInfo()?._id, userInfo()?.badge, users)
       objLayer.setTheme(resolveTheme(untrack(spriteTheme)), sharedAtlasCache)
-      objLayer.setInstantMode(untrack(historyMode))
+      objLayer.setInstantMode(untrack(historyMode) || !untrack(smoothAnimations))
       const dec = untrack(roomDecoration)
       if (dec?.room === props.room) {
         if (dec.decoration.roadColor != null) objLayer.setRoadColor(dec.decoration.roadColor)
@@ -840,9 +840,10 @@ export function RoomViewer(props: RoomViewerProps) {
     visualLayer?.update(showRoomVisuals() ? raw : '')
   })
 
-  // Sync instant-mode when entering/leaving history mode
+  // Sync instant-mode when entering/leaving history mode, or when the user toggles
+  // the "smooth animations" setting. Both force tick-driven animations to snap.
   createEffect(() => {
-    objLayer?.setInstantMode(historyMode())
+    objLayer?.setInstantMode(historyMode() || !smoothAnimations())
   })
 
 

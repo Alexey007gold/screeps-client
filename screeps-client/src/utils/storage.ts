@@ -32,6 +32,7 @@ export const LS = {
   showRoomDecorations: 'screeps:settings:showRoomDecorations',
   roomDarkOverlay: 'screeps:settings:roomDarkOverlay',
   showRoomVisuals: 'screeps:settings:showRoomVisuals',
+  smoothAnimations: 'screeps:settings:smoothAnimations',
   spriteTheme: 'screeps:settings:spriteTheme',
   showMapVisuals: 'screeps:settings:showMapVisuals',
   hideCustomUiProtocol: 'screeps:settings:hideCustomUiProtocol',
