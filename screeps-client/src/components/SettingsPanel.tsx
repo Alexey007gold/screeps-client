@@ -6,6 +6,7 @@ import {
   terrainEffects, setTerrainEffects,
   showRoomDecorations, setShowRoomDecorations,
   roomDarkOverlay, setRoomDarkOverlay,
+  smoothAnimations, setSmoothAnimations,
   spriteTheme, setSpriteTheme,
   hideCustomUiProtocol, setHideCustomUiProtocol,
 } from '~/stores/settingsStore.js'
@@ -15,6 +16,7 @@ import type { NotifyPrefs } from 'screeps-connectivity'
 import { clearAllCaches } from '~/utils/storage.js'
 import { addToast } from '~/stores/toastStore.js'
 import { uiSegment, uiShard, uiError, setUiSegment, setUiShard } from '~/stores/customUiStore.js'
+import { setShowCustomUiEditor } from '~/stores/consoleStore.js'
 
 interface ToggleProps {
   label: string
@@ -259,6 +261,12 @@ export function SettingsPanel(props: { onClose: () => void }) {
               value={roomDarkOverlay()}
               onChange={setRoomDarkOverlay}
             />
+            <Toggle
+              label="Smooth animations"
+              description="Interpolate creep movement and structure fills between game ticks. Turn off for instant, static updates."
+              value={smoothAnimations()}
+              onChange={setSmoothAnimations}
+            />
             <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
               <label style={{ 'font-size': '13px', 'font-weight': '500' }}>Structure theme</label>
               <select
@@ -371,6 +379,39 @@ export function SettingsPanel(props: { onClose: () => void }) {
                   value={hideCustomUiProtocol()}
                   onChange={setHideCustomUiProtocol}
                 />
+                <div
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    'justify-content': 'space-between',
+                    padding: '10px 0',
+                    'border-bottom': '1px solid #21262d',
+                    gap: '24px',
+                  }}
+                >
+                  <div>
+                    <div style={{ 'font-size': '13px', color: '#c9d1d9' }}>Edit config</div>
+                    <div style={{ 'font-size': '11px', color: '#8b949e', 'margin-top': '3px' }}>
+                      Open a visual editor for this segment — build the map, room and object buttons without hand-writing JSON.
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setShowCustomUiEditor(true); props.onClose() }}
+                    style={{
+                      'flex-shrink': 0,
+                      padding: '5px 14px',
+                      'border-radius': '4px',
+                      border: '1px solid #388bfd',
+                      background: '#1f3158',
+                      color: '#58a6ff',
+                      'font-size': '12px',
+                      'font-weight': 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Open editor
+                  </button>
+                </div>
                 <Show when={uiError()}>
                   <div style={{ 'font-size': '11px', color: '#f85149', padding: '8px 0' }}>{uiError()}</div>
                 </Show>

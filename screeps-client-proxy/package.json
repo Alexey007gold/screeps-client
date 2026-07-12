@@ -1,0 +1,32 @@
+{
+  "name": "screeps-client-proxy",
+  "version": "0.1.2",
+  "description": "Standalone proxy that serves the new screeps-client and forwards /api + /socket to any Screeps server, bypassing browser CORS.",
+  "type": "commonjs",
+  "bin": {
+    "screeps-client-proxy": "index.js"
+  },
+  "main": "index.js",
+  "files": [
+    "index.js"
+  ],
+  "scripts": {
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bastianh/screeps-client.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "argparse": "^2.0.1",
+    "express": "^4.21.2",
+    "http-proxy": "^1.18.1",
+    "screeps-client": "workspace:^"
+  }
+}

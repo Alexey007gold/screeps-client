@@ -1,9 +1,9 @@
-import { createEffect, createSignal, onCleanup, onMount, For, Show } from 'solid-js'
-import { Trash2, Pause, Play, X, Plus } from 'lucide-solid'
+import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show } from 'solid-js'
+import { Trash2, Pause, Play, X, Plus, Filter } from 'lucide-solid'
 import { client } from '~/stores/clientStore.js'
 import { SubscriptionGroup } from 'screeps-connectivity'
 import type { ConsoleMessage } from 'screeps-connectivity'
-import { showLog, showConsole, showMemory, toggleShowLog, toggleShowConsole, toggleShowMemory, consoleInput, setConsoleInput, registerConsoleInput } from '~/stores/consoleStore.js'
+import { showLog, showConsole, showMemory, showSegments, toggleShowLog, toggleShowConsole, toggleShowMemory, toggleShowSegments, consoleInput, setConsoleInput, registerConsoleInput } from '~/stores/consoleStore.js'
 import { watches, tempWatch, memoryValues, addWatch, removeWatch, clearTempWatch, initMemorySubscriptions } from '~/stores/memoryStore.js'
 import { isCustomUiLine } from '~/stores/customUiStore.js'
 import { hideCustomUiProtocol } from '~/stores/settingsStore.js'
@@ -148,6 +148,10 @@ function MemoryPane(props: { shard: string | null; width: number }) {
 export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boolean; onToggle?: () => void }) {
   const [entries, setEntries] = createSignal<ConsoleEntry[]>([])
   const [autoScroll, setAutoScroll] = createSignal(true)
+  // When paused, incoming console messages are held here instead of being
+  // appended to the feed, then flushed on resume.
+  const [paused, setPaused] = createSignal(false)
+  let pendingEntries: ConsoleEntry[] = []
   const DEFAULT_WEIGHTS = [1, 1, 1] as const
   const [weights, setWeights] = createSignal<number[]>(getJson(LS.consoleWeights, [...DEFAULT_WEIGHTS]))
   const [dragging, setDragging] = createSignal<number | null>(null)
@@ -164,6 +168,9 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
 
     const group = new SubscriptionGroup()
     group.add(c.stores.user.subscribe('console'))
+    // Subscription callback (an event handler); reading paused() here is an
+    // intentional read of the current value, not a reactive dependency.
+    // eslint-disable-next-line solid/reactivity
     group.add(c.stores.user.on('user:console', (data) => {
       const msg = data.messages as ConsoleMessage
       const entry: ConsoleEntry = {
@@ -171,6 +178,11 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
         log: msg.log ?? [],
         results: msg.results ?? [],
         error: msg.error ?? [],
+      }
+      if (paused()) {
+        pendingEntries.push(entry)
+        if (pendingEntries.length > 200) pendingEntries = pendingEntries.slice(pendingEntries.length - 200)
+        return
       }
       setEntries((prev) => {
         const next = [...prev, entry]
@@ -339,8 +351,43 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
   // customUiStore consumes them and turns them into toasts/navigation. The
   // filter can be turned off in Settings for debugging.
   const hideLine = (l: string) => hideCustomUiProtocol() && isCustomUiLine(l)
-  const logLines = () => entries().flatMap((e) => e.log).filter((l) => !hideLine(l))
-  const errorLines = () => entries().flatMap((e) => e.error)
+
+  // Regex filter for the Log pane. Compiled once per filter-text change; an
+  // invalid pattern is surfaced (red input) and matches nothing is applied.
+  const [showFilter, setShowFilter] = createSignal(false)
+  const [filterText, setFilterText] = createSignal('')
+  const compiledFilter = createMemo<{ re: RegExp | null; error: boolean }>(() => {
+    const t = filterText().trim()
+    if (!t) return { re: null, error: false }
+    try {
+      return { re: new RegExp(t, 'i'), error: false }
+    } catch {
+      return { re: null, error: true }
+    }
+  })
+  // Strip HTML colour markup for filter matching. DOMParser produces an inert
+  // document (no script execution, no resource loads), so this extracts the
+  // visible text without a fragile tag-stripping regex.
+  const stripMarkup = (line: string) =>
+    new DOMParser().parseFromString(line, 'text/html').body.textContent ?? ''
+
+  // Match against the visible text, ignoring the HTML colour markup in the line.
+  const matchesFilter = (line: string) => {
+    const re = compiledFilter().re
+    if (!re) return true
+    return re.test(stripMarkup(line))
+  }
+
+  // Log pane shows logs and errors together in arrival order: within a tick,
+  // logs first then errors, and ticks stay chronological so new lines (errors
+  // included) land at the bottom next to the surrounding log output.
+  const logPaneLines = () =>
+    entries()
+      .flatMap((e) => [
+        ...e.log.filter((l) => !hideLine(l)).map((line) => ({ kind: 'log' as const, line })),
+        ...e.error.map((line) => ({ kind: 'error' as const, line })),
+      ])
+      .filter((item) => matchesFilter(item.line))
   const resultLines = () => entries().flatMap((e) => e.results).filter((l) => !hideLine(l))
 
   const monoStyle = {
@@ -361,12 +408,26 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
     'justify-content': 'center',
   } as const
 
-  const resumeAutoScroll = () => {
-    setAutoScroll(true)
+  const scrollToBottom = () => {
     requestAnimationFrame(() => {
       if (showLog() && logScrollRef) logScrollRef.scrollTop = logScrollRef.scrollHeight
       if (showConsole() && consoleScrollRef) consoleScrollRef.scrollTop = consoleScrollRef.scrollHeight
     })
+  }
+
+  // Resume the feed: flush any messages buffered while paused, then scroll down.
+  const resumeConsole = () => {
+    if (pendingEntries.length > 0) {
+      const flush = pendingEntries
+      pendingEntries = []
+      setEntries((prev) => {
+        const next = [...prev, ...flush]
+        return next.length > 200 ? next.slice(next.length - 200) : next
+      })
+    }
+    setPaused(false)
+    setAutoScroll(true)
+    scrollToBottom()
   }
 
   return (
@@ -386,6 +447,9 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
         <button onClick={toggleShowLog} style={toggleBtnStyle(showLog())}>Log</button>
         <button onClick={toggleShowConsole} style={toggleBtnStyle(showConsole())}>Console</button>
         <button onClick={toggleShowMemory} style={toggleBtnStyle(showMemory())}>Memory</button>
+        <div style={{ width: '1px', height: '16px', background: '#30363d' }} />
+        {/* Not a pane toggle — opens the full-canvas segment editor overlay. */}
+        <button onClick={toggleShowSegments} title="View and edit raw memory segments" style={toggleBtnStyle(showSegments())}>Segments</button>
       </div>
 
       <style>{`
@@ -431,11 +495,11 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
                 gap: '6px',
               }}>
                 <button
-                  onClick={() => autoScroll() ? setAutoScroll(false) : resumeAutoScroll()}
-                  title={autoScroll() ? 'Pause scrolling' : 'Resume scrolling'}
+                  onClick={() => paused() ? resumeConsole() : setPaused(true)}
+                  title={paused() ? 'Resume console' : 'Pause console'}
                   style={iconBtnStyle}
                 >
-                  {autoScroll() ? <Pause size={16} /> : <Play size={16} />}
+                  {paused() ? <Play size={16} /> : <Pause size={16} />}
                 </button>
                 <button
                   onClick={() => setEntries([])}
@@ -444,36 +508,68 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
                 >
                   <Trash2 size={16} />
                 </button>
+                <button
+                  onClick={() => setShowFilter((v) => !v)}
+                  title={filterText().trim() ? `Filter: ${filterText()}` : 'Filter (regex)'}
+                  style={{ ...iconBtnStyle, color: filterText().trim() ? '#58a6ff' : '#8b949e' }}
+                >
+                  <Filter size={16} />
+                </button>
               </div>
 
-              <div
-                ref={logScrollRef}
-                class="console-scroll"
-                onScroll={() => {
-                  if (!logScrollRef) return
-                  setAutoScroll(logScrollRef.scrollHeight - logScrollRef.scrollTop - logScrollRef.clientHeight < 20)
-                }}
-                style={{ flex: 1, overflow: 'auto', padding: '8px', ...monoStyle }}
-              >
-                {logLines().length === 0 && errorLines().length === 0 && (
-                  <div style={{ color: '#484f58', 'font-style': 'italic' }}>No log output yet…</div>
-                )}
-                <For each={errorLines()}>
-                  {(line) => (
-                    <div style={{ 'margin-bottom': '4px', color: '#f85149', 'white-space': 'pre-wrap', 'word-break': 'break-word' }}
-                      /* eslint-disable-next-line solid/no-innerhtml */
-                      innerHTML={line}
+              <div style={{ flex: 1, display: 'flex', 'flex-direction': 'column', overflow: 'hidden' }}>
+                {/* Regex filter bar */}
+                <Show when={showFilter()}>
+                  <div style={{ display: 'flex', 'align-items': 'center', gap: '6px', padding: '6px 8px', 'border-bottom': '1px solid #30363d' }}>
+                    <input
+                      type="text"
+                      value={filterText()}
+                      onInput={(e) => setFilterText(e.currentTarget.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setShowFilter(false) }}
+                      ref={(el) => requestAnimationFrame(() => el.focus())}
+                      placeholder="filter regex — e.g. error|creep"
+                      style={{
+                        flex: 1,
+                        padding: '4px 8px',
+                        'border-radius': '4px',
+                        border: `1px solid ${compiledFilter().error ? '#f85149' : '#30363d'}`,
+                        background: '#161b22',
+                        color: '#c9d1d9',
+                        'font-size': '12px',
+                        'font-family': 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      }}
                     />
+                    <Show when={filterText()}>
+                      <button style={iconBtnStyle} title="Clear filter" onClick={() => setFilterText('')}>
+                        <X size={14} />
+                      </button>
+                    </Show>
+                  </div>
+                </Show>
+
+                <div
+                  ref={logScrollRef}
+                  class="console-scroll"
+                  onScroll={() => {
+                    if (!logScrollRef) return
+                    setAutoScroll(logScrollRef.scrollHeight - logScrollRef.scrollTop - logScrollRef.clientHeight < 20)
+                  }}
+                  style={{ flex: 1, overflow: 'auto', padding: '8px', ...monoStyle }}
+                >
+                  {logPaneLines().length === 0 && (
+                    <div style={{ color: '#484f58', 'font-style': 'italic' }}>
+                      {filterText().trim() && entries().length > 0 ? 'No lines match the filter.' : 'No log output yet…'}
+                    </div>
                   )}
-                </For>
-                <For each={logLines()}>
-                  {(line) => (
-                    <div style={{ 'margin-bottom': '4px', color: '#c9d1d9', 'white-space': 'pre-wrap', 'word-break': 'break-word' }}
-                      /* eslint-disable-next-line solid/no-innerhtml */
-                      innerHTML={line}
-                    />
-                  )}
-                </For>
+                  <For each={logPaneLines()}>
+                    {(item) => (
+                      <div style={{ 'margin-bottom': '4px', color: item.kind === 'error' ? '#f85149' : '#c9d1d9', 'white-space': 'pre-wrap', 'word-break': 'break-word' }}
+                        /* eslint-disable-next-line solid/no-innerhtml */
+                        innerHTML={item.line}
+                      />
+                    )}
+                  </For>
+                </div>
               </div>
             </div>
           </Show>

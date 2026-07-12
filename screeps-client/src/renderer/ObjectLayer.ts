@@ -2877,7 +2877,9 @@ export class ObjectLayer {
     // so the rhythm stretches/compresses with the tick rate the way vanilla does, rather than
     // running at a fixed wall-clock period.
     const tickFrac = Math.min(1, (now - this.lastTickAt) / this.tickMs)
-    const cooldownPulse = Math.sin(tickFrac * Math.PI)   // one breath per tick, shared by lab + terminal glows
+    // one breath per tick, shared by lab + terminal glows. In instant mode the tick-aligned
+    // pulse is frozen to a steady glow so the on-cooldown state still reads without animating.
+    const cooldownPulse = this.instantMode ? 1 : Math.sin(tickFrac * Math.PI)
     for (const visual of this.objects.values()) {
       if (visual.__barrelContainer) {
         const turret = visual.__barrelContainer

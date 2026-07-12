@@ -1,5 +1,30 @@
 # xxscreeps-mod-client
 
+## 0.3.6
+
+### Patch Changes
+
+- 38b4198: Console improvements: the Log pane pause button now actually stops the feed (incoming messages are buffered while paused and flushed on resume, instead of just pausing the scroll), error lines are shown inline in arrival order at the bottom next to surrounding logs (previously every error was pinned above all log output), and a new regex filter button hides log/error lines that don't match the entered pattern.
+- 8e9bbd7: Rebuild embedded client with the Custom UI editor.
+- 64b08e0: Update the required `screeps-client` version for both mod packages after the next client release.
+  Adjust this summary if the release notes should say something more specific.
+- Updated dependencies [38b4198]
+- Updated dependencies [8e9bbd7]
+- Updated dependencies [a6cb0b4]
+- Updated dependencies [64b08e0]
+  - screeps-client@0.17.0
+
+## 0.3.5
+
+### Patch Changes
+
+- eb6f864: Rebuild embedded client with the latest screeps-client changes.
+- Updated dependencies [66f88f8]
+- Updated dependencies [47c34f1]
+- Updated dependencies [eb6f864]
+- Updated dependencies [1b547e3]
+  - screeps-client@0.16.0
+
 ## 0.3.4
 
 ### Patch Changes

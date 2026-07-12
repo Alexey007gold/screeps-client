@@ -21,6 +21,10 @@ export const [terrainEffects, setTerrainEffects] = boolSetting(LS.terrainEffects
 export const [showRoomDecorations, setShowRoomDecorations] = boolSetting(LS.showRoomDecorations, false)
 export const [roomDarkOverlay, setRoomDarkOverlay] = boolSetting(LS.roomDarkOverlay, true)
 export const [showRoomVisuals, setShowRoomVisuals] = boolSetting(LS.showRoomVisuals, true)
+// When off, tick-driven animations (creep movement, fill tweens, build glows, cooldown
+// pulses) snap instantly instead of interpolating between ticks. Wall-clock ambient
+// pulses (source glow, tower sweep, keeper-lair glow) are unaffected.
+export const [smoothAnimations, setSmoothAnimations] = boolSetting(LS.smoothAnimations, true)
 export const [spriteTheme, setSpriteTheme] = strSetting(LS.spriteTheme, 'default')
 export const [showMapVisuals, setShowMapVisuals] = boolSetting(LS.showMapVisuals, true)
 export const [hideCustomUiProtocol, setHideCustomUiProtocol] = boolSetting(LS.hideCustomUiProtocol, true)

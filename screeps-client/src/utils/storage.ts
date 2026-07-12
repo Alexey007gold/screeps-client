@@ -2,12 +2,14 @@
 // localStorage = persistent UI/settings; sessionStorage = auth tokens (cleared on browser close).
 
 import { isTauri } from './tauri.js'
+import { isProxy } from './proxy.js'
 
 // Auth keys live in sessionStorage in the browser (cleared on close). In the desktop
 // app there is no "tab close" and re-logging in every launch is poor UX, so persist
-// them in localStorage instead (private to the app's WebView data dir).
+// them in localStorage instead (private to the app's WebView data dir). The browser
+// proxy is the same story — a local single-user server — so persist there too.
 function sessionBackend(): Storage {
-  return isTauri() ? localStorage : sessionStorage
+  return isTauri() || isProxy() ? localStorage : sessionStorage
 }
 
 export const LS = {
@@ -22,6 +24,8 @@ export const LS = {
   codeBranch: 'screeps:code:branch',
   codeModule: 'screeps:code:module',
   codeCursors: 'screeps:code:cursors',
+  segmentsLast: 'screeps:segments:last',
+  customUiEditorView: 'screeps:customUi:editorView',
   widescreenMode: 'screeps:settings:widescreenMode',
   showCreepLabels: 'screeps:settings:showCreepLabels',
   showMapRoomNames: 'screeps:settings:showMapRoomNames',
@@ -30,6 +34,7 @@ export const LS = {
   showRoomDecorations: 'screeps:settings:showRoomDecorations',
   roomDarkOverlay: 'screeps:settings:roomDarkOverlay',
   showRoomVisuals: 'screeps:settings:showRoomVisuals',
+  smoothAnimations: 'screeps:settings:smoothAnimations',
   spriteTheme: 'screeps:settings:spriteTheme',
   showMapVisuals: 'screeps:settings:showMapVisuals',
   hideCustomUiProtocol: 'screeps:settings:hideCustomUiProtocol',

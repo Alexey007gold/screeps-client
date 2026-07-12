@@ -251,7 +251,7 @@ function parseElements(raw: unknown, where: string, opts: { allowItems?: boolean
   })
 }
 
-function parseConfig(data: string): CustomUiConfig {
+export function parseConfig(data: string): CustomUiConfig {
   if (!data || !data.trim()) throw new Error('segment is empty')
   let raw: unknown
   try {

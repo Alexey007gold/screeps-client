@@ -4,6 +4,7 @@ import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, 
 import { addToast } from './toastStore.js'
 import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
 import { isTauri } from '~/utils/tauri.js'
+import { isProxy, toProxyUrl } from '~/utils/proxy.js'
 import { createLogger } from '~/utils/log.js'
 import { SS, getSession, setSession, removeSession } from '~/utils/storage.js'
 import {
@@ -159,7 +160,16 @@ interface ConnectOpts {
 // not flip `status` away from 'connected' mid-attempt or the Dashboard would
 // unmount underneath the SessionErrorModal on every failed attempt.
 async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
-  const opts = isEmbedded() ? { ...rawOpts, url: embeddedServerUrl() } : rawOpts
+  let opts = rawOpts
+  if (isEmbedded()) {
+    opts = { ...opts, url: embeddedServerUrl() }
+  } else if (isProxy()) {
+    // Route through the local proxy: /(backend)/api… avoids browser CORS. The
+    // wrapped URL becomes the effective origin everywhere downstream (baseUrl,
+    // WS URL, persisted SS.url, keychain account). toProxyUrl is idempotent, so
+    // auto-connect re-passing an already-wrapped URL is a no-op.
+    opts = { ...opts, url: toProxyUrl(opts.url) }
+  }
   log(`connecting to ${opts.url} (auth: ${opts.auth})`)
 
   let authStrategy: AuthStrategy
