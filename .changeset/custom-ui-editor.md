@@ -1,0 +1,4 @@
+---
+"screeps-client": minor
+---
+Custom UI editor: a visual editor for the Custom UI ("SCUI") config segment, opened from Settings → Custom UI → "Open editor". Instead of hand-writing the JSON, build the map, room and object-action sidebars through a form — add/reorder/remove elements, pick each element's type (`button`, `select`, `status`, `header`), and set `label`, `cmd`, `options`, `path`, header `items`, object `obj`/`owner`, `needs`, `confirm`, and `showIf` (`selType`, room standing) with dedicated controls. A live preview column mirrors how the elements render in the sidebar, and a toggleable raw-JSON view (CodeMirror) stays in sync for power users. The editor loads and saves the configured segment directly, validates against the same schema the client enforces before saving, respects the 100 KB segment limit, and reloads the live sidebar config on save. If the segment holds non-Custom-UI JSON it opens the raw contents so you can fix them by hand.
