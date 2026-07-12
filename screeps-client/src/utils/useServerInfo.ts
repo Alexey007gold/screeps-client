@@ -1,6 +1,7 @@
 import { createSignal, createEffect, onCleanup } from 'solid-js'
 import { fetchServerVersion, fetchAuthModInfo, getScreepsmodAuth } from 'screeps-connectivity'
 import type { ServerVersion, ApiAuthModInfoResponse } from 'screeps-connectivity'
+import { isProxy, toProxyUrl } from './proxy.js'
 
 /**
  * Probes a candidate server URL (before login) for its version/feature info,
@@ -14,6 +15,8 @@ export function useServerInfo(url: () => string) {
 
   createEffect(() => {
     const rawUrl = url()
+    // In proxy mode the pre-login capability probes must go through the proxy too.
+    const probeUrl = isProxy() ? toProxyUrl(rawUrl) : rawUrl
     setServerVersion(null)
     setAuthModInfo(null)
     setServerError(null)
@@ -21,12 +24,12 @@ export function useServerInfo(url: () => string) {
     let cancelled = false
     const timer = setTimeout(async () => {
       try {
-        const v = await fetchServerVersion(rawUrl)
+        const v = await fetchServerVersion(probeUrl)
         if (cancelled) return
         setServerVersion(v)
         setServerError(null)
         if (getScreepsmodAuth(v)) {
-          const mod = await fetchAuthModInfo(rawUrl)
+          const mod = await fetchAuthModInfo(probeUrl)
           if (!cancelled) setAuthModInfo(mod)
         }
       } catch {

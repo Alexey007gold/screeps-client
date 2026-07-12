@@ -1,9 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './tauri.js'
+import { isProxy } from './proxy.js'
 import { createLogger } from './log.js'
 
 const { log } = createLogger('keychain')
 const SERVICE = 'screeps-desktop'
+
+// Browser proxy mode has no OS keychain, so saved credentials fall back to
+// localStorage (private to the proxy's origin). See screeps-client-proxy/README
+// for the security note. Namespaced so it never collides with other keys.
+const LS_PREFIX = 'screeps:keychain:'
+const lsKey = (account: string) => `${LS_PREFIX}${account}`
 
 async function keychainSave(account: string, secret: string): Promise<void> {
   log(`save  [${account}]`)
@@ -43,47 +50,56 @@ const tokenAccount = (url: string) => `${url}:token`
 const serverPasswordAccount = (url: string) => `${url}:serverPassword`
 const savedCredentialAccount = (url: string) => `${url}:savedCredential`
 
+// Dispatch: OS keychain under Tauri, localStorage under the browser proxy, no-op
+// otherwise (plain browser without a secure store).
+async function secretSave(account: string, secret: string): Promise<void> {
+  if (isTauri()) return keychainSave(account, secret)
+  if (isProxy()) { localStorage.setItem(lsKey(account), secret); return }
+}
+
+async function secretLoad(account: string): Promise<string | null> {
+  if (isTauri()) return keychainLoad(account)
+  if (isProxy()) return localStorage.getItem(lsKey(account))
+  return null
+}
+
+async function secretDelete(account: string): Promise<void> {
+  if (isTauri()) return keychainDelete(account)
+  if (isProxy()) { localStorage.removeItem(lsKey(account)); return }
+}
+
 export async function saveTokenForUrl(url: string, token: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainSave(tokenAccount(url), token)
+  await secretSave(tokenAccount(url), token)
 }
 
 export async function loadTokenForUrl(url: string): Promise<string | null> {
-  if (!isTauri()) return null
-  return keychainLoad(tokenAccount(url))
+  return secretLoad(tokenAccount(url))
 }
 
 export async function deleteTokenForUrl(url: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainDelete(tokenAccount(url))
+  await secretDelete(tokenAccount(url))
 }
 
 export async function saveServerPasswordForUrl(url: string, password: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainSave(serverPasswordAccount(url), password)
+  await secretSave(serverPasswordAccount(url), password)
 }
 
 export async function loadServerPasswordForUrl(url: string): Promise<string | null> {
-  if (!isTauri()) return null
-  return keychainLoad(serverPasswordAccount(url))
+  return secretLoad(serverPasswordAccount(url))
 }
 
 export async function deleteServerPasswordForUrl(url: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainDelete(serverPasswordAccount(url))
+  await secretDelete(serverPasswordAccount(url))
 }
 
 export async function saveSavedCredential(url: string, credential: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainSave(savedCredentialAccount(url), credential)
+  await secretSave(savedCredentialAccount(url), credential)
 }
 
 export async function loadSavedCredential(url: string): Promise<string | null> {
-  if (!isTauri()) return null
-  return keychainLoad(savedCredentialAccount(url))
+  return secretLoad(savedCredentialAccount(url))
 }
 
 export async function deleteSavedCredential(url: string): Promise<void> {
-  if (!isTauri()) return
-  await keychainDelete(savedCredentialAccount(url))
+  await secretDelete(savedCredentialAccount(url))
 }

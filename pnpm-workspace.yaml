@@ -4,3 +4,4 @@ packages:
   - 'screeps-mod-client'
   - 'xxscreeps-mod-client'
   - 'screeps-desktop'
+  - 'screeps-client-proxy'
