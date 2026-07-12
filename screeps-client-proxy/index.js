@@ -122,6 +122,13 @@ function extract(url) {
   return null
 }
 
+// The client only ever requests these backend paths through the proxy
+// (HttpClient → /api + /room-history, SocketClient → /socket). Anything else
+// arriving in wrapped form is a browser navigation — e.g. a pasted
+// steamless-client-style URL like `/(https://screeps.com)/` — and must reach
+// the SPA, not the backend's website.
+const PROXY_ENDPOINTS = /^\/(api|socket|room-history)(\/|\?|$)/
+
 // ── proxy ────────────────────────────────────────────────────────────────────
 
 const proxy = httpProxy.createProxyServer({ changeOrigin: true })
@@ -150,6 +157,19 @@ app.use((req, res, next) => {
   const info = extract(req.url)
   if (!info) return next()
 
+  if (!PROXY_ENDPOINTS.test(info.endpoint)) {
+    // Pinned mode wraps every path, so a non-API path is a normal SPA route
+    // (deep link, asset miss) — fall through to the SPA handler unchanged.
+    if (pinnedBackend) return next()
+    // Explicit `/(backend)/…` page URL: redirect to the unwrapped path so the
+    // client loads (the login screen picks the backend). Guard against `//…`
+    // becoming a protocol-relative open redirect.
+    if (req.method === 'GET') {
+      return res.redirect(info.endpoint.startsWith('//') ? '/' : info.endpoint)
+    }
+    return next()
+  }
+
   // OAuth (Steam/Discord/…) does an OpenID round-trip; append returnUrl so the
   // provider redirects back to the correct backend after auth.
   if (info.endpoint.startsWith('/api/auth')) {
@@ -171,8 +191,7 @@ app.use((req, res, next) => {
 })
 
 const server = app.listen(port, host, () => {
-  const suffix = pinnedBackend ? '' : '(https://screeps.com)/'
-  console.log(`🌎 screeps-client-proxy listening — http://${host}:${port}/${suffix}`)
+  console.log(`🌎 screeps-client-proxy listening — http://${host}:${port}/`)
   if (pinnedBackend) console.log(`   backend pinned to ${pinnedBackend}`)
 })
 server.on('error', (err) => console.error('[server]', err.message))
@@ -180,7 +199,7 @@ server.on('error', (err) => console.error('[server]', err.message))
 // Proxy WebSocket upgrades (the game socket) to the same backend.
 server.on('upgrade', (req, socket, head) => {
   const info = extract(req.url ?? '')
-  if (info && req.headers.upgrade?.toLowerCase() === 'websocket') {
+  if (info && PROXY_ENDPOINTS.test(info.endpoint) && req.headers.upgrade?.toLowerCase() === 'websocket') {
     req.url = info.endpoint
     proxy.ws(req, socket, head, { target: argv.internal_backend ?? info.backend })
     socket.on('error', (err) => console.error('[ws]', err.message))
