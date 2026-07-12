@@ -23,6 +23,7 @@ export const LS = {
   codeModule: 'screeps:code:module',
   codeCursors: 'screeps:code:cursors',
   segmentsLast: 'screeps:segments:last',
+  customUiEditorView: 'screeps:customUi:editorView',
   widescreenMode: 'screeps:settings:widescreenMode',
   showCreepLabels: 'screeps:settings:showCreepLabels',
   showMapRoomNames: 'screeps:settings:showMapRoomNames',
