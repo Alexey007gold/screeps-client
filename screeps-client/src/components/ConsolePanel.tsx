@@ -365,11 +365,24 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
       return { re: null, error: true }
     }
   })
+  // Strip HTML colour markup for filter matching. Repeats the replace to a
+  // fixed point so nested/malformed tags (e.g. "<scr<script>ipt>") can't
+  // reassemble into a tag after a single pass.
+  const stripMarkup = (line: string) => {
+    let prev = line
+    let next = line.replace(/<[^>]*>/g, '')
+    while (next !== prev) {
+      prev = next
+      next = next.replace(/<[^>]*>/g, '')
+    }
+    return next
+  }
+
   // Match against the visible text, ignoring the HTML colour markup in the line.
   const matchesFilter = (line: string) => {
     const re = compiledFilter().re
     if (!re) return true
-    return re.test(line.replace(/<[^>]*>/g, ''))
+    return re.test(stripMarkup(line))
   }
 
   // Log pane shows logs and errors together in arrival order: within a tick,
