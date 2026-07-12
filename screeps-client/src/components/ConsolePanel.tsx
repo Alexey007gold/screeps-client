@@ -365,18 +365,11 @@ export function ConsolePanel(props: { shard?: string | null; isCollapsed?: boole
       return { re: null, error: true }
     }
   })
-  // Strip HTML colour markup for filter matching. Repeats the replace to a
-  // fixed point so nested/malformed tags (e.g. "<scr<script>ipt>") can't
-  // reassemble into a tag after a single pass.
-  const stripMarkup = (line: string) => {
-    let prev = line
-    let next = line.replace(/<[^>]*>/g, '')
-    while (next !== prev) {
-      prev = next
-      next = next.replace(/<[^>]*>/g, '')
-    }
-    return next
-  }
+  // Strip HTML colour markup for filter matching. DOMParser produces an inert
+  // document (no script execution, no resource loads), so this extracts the
+  // visible text without a fragile tag-stripping regex.
+  const stripMarkup = (line: string) =>
+    new DOMParser().parseFromString(line, 'text/html').body.textContent ?? ''
 
   // Match against the visible text, ignoring the HTML colour markup in the line.
   const matchesFilter = (line: string) => {
