@@ -4,6 +4,7 @@ packages:
   - 'screeps-mod-client'
   - 'xxscreeps-mod-client'
   - 'screeps-desktop'
+autoInstallPeers: false
 allowBuilds:
   '@xxscreeps/pathfinder': true
   esbuild: true
