@@ -32,6 +32,24 @@ const port = argv.port ?? 8080
 const host = argv.host ?? 'localhost'
 const pinnedBackend = argv.backend ? argv.backend.replace(/\/+$/, '') : null
 
+// Only http(s) backends may be proxied. The target host is user-chosen by design
+// (this is a proxy, bound to localhost by default), but rejecting other schemes
+// stops a crafted `/(file:///…)/` path from turning the proxy into an
+// arbitrary-scheme client.
+function isWebUrl(value) {
+  try {
+    const { protocol } = new URL(value)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+if (pinnedBackend && !isWebUrl(pinnedBackend)) {
+  console.error(`--backend must be an http(s) URL, got: ${argv.backend}`)
+  process.exit(1)
+}
+
 // ── locate the standalone client build ────────────────────────────────────────
 
 const distDir = argv.dist
@@ -95,7 +113,11 @@ function extract(url) {
   }
   const groups = /^\/\((?<backend>[^)]+)\)(?<endpoint>\/.*)$/.exec(url)?.groups
   if (groups) {
-    return { backend: groups.backend.replace(/\/+$/, ''), endpoint: groups.endpoint }
+    const backend = groups.backend.replace(/\/+$/, '')
+    // Reject non-http(s) targets; the request then falls through to the SPA/404
+    // instead of being proxied to an arbitrary scheme.
+    if (!isWebUrl(backend)) return null
+    return { backend, endpoint: groups.endpoint }
   }
   return null
 }

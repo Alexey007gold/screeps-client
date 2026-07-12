@@ -20,18 +20,24 @@ describe('fetchAuthModInfo — session cache namespacing', () => {
     // Both URLs share host `localhost:8080`; only the /(backend) path differs —
     // exactly how screeps-client-proxy addresses distinct servers. The cache key
     // must include the path, otherwise the second lookup returns the first's data.
+    const worldUrl = 'http://localhost:8080/(https://screeps.com)'
+    const privUrl = 'http://localhost:8080/(http://my-private-server:21025)'
+    // Exact URL → payload map (no substring host matching).
+    const payloads: Record<string, string> = {
+      [`${worldUrl}/api/authmod`]: 'official',
+      [`${privUrl}/api/authmod`]: 'private',
+    }
     const fetchMock = vi.fn().mockImplementation((input: string) => {
-      const backend = input.includes('screeps.com') ? 'official' : 'private'
       return Promise.resolve(
-        new Response(JSON.stringify({ ok: 1, backend }), {
+        new Response(JSON.stringify({ ok: 1, backend: payloads[input] }), {
           headers: { 'content-type': 'application/json' },
         }),
       )
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const world = await fetchAuthModInfo('http://localhost:8080/(https://screeps.com)')
-    const priv = await fetchAuthModInfo('http://localhost:8080/(http://my-private-server:21025)')
+    const world = await fetchAuthModInfo(worldUrl)
+    const priv = await fetchAuthModInfo(privUrl)
 
     expect((world as { backend?: string })?.backend).toBe('official')
     expect((priv as { backend?: string })?.backend).toBe('private')
@@ -39,7 +45,7 @@ describe('fetchAuthModInfo — session cache namespacing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
 
     // A repeat of the first URL is served from cache (no third fetch).
-    const worldAgain = await fetchAuthModInfo('http://localhost:8080/(https://screeps.com)')
+    const worldAgain = await fetchAuthModInfo(worldUrl)
     expect((worldAgain as { backend?: string })?.backend).toBe('official')
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
