@@ -178,6 +178,20 @@ function DefaultDetails(props: { item: SelectedObject }) {
         if (gt !== null) finalValue = String(v - gt)
       }
 
+      if (k === 'decayTime' && typeof v === 'number') {
+        const gt = gameTime()
+        if (gt !== null) finalValue = String(v - gt)
+        if (finalValue !== null) pairs.push({ key: k, label: `${camelToLabel(k)} (in)`, value: finalValue })
+        continue
+      }
+
+      if (k === 'deathTime' && typeof v === 'number') {
+        const gt = gameTime()
+        if (gt !== null) finalValue = String(gt - v)
+        if (finalValue !== null) pairs.push({ key: k, label: `${camelToLabel(k)} (ticks ago)`, value: finalValue })
+        continue
+      }
+
       if (k === 'nextRegenerationTime' && typeof v === 'number') {
         const gt = gameTime()
         if (gt !== null) finalValue = String(v - gt)
