@@ -5,7 +5,9 @@ import { BadgeTextureCache } from './BadgeTextureCache.js'
 import type { Theme, ControllerSpec, FlagSpec, TombstoneSpec } from './themes/Theme.js'
 import type { AtlasCache } from './AtlasCache.js'
 import type { LightingLayer } from './LightingLayer.js'
+import { createLogger } from '~/utils/log.js'
 
+const { error: logError } = createLogger('ObjectLayer')
 const sharedBadgeCache = new BadgeTextureCache()
 import { TILE_SIZE } from './RoomRenderer.js'
 import { CONTROLLER_DOWNGRADE } from '~/utils/gameConstants.js'
@@ -1240,7 +1242,7 @@ function createObjectVisual(
           if (!badgeSprite.destroyed) {
             badgeSprite.texture = texture
           }
-        }).catch(() => {})
+        }).catch(err => logError('atlas/badge texture load failed', err))
       } else if (isForeign) {
         const markG = new Graphics()
         markG.circle(0, 0, CREEP_INNER_R * 0.82)
@@ -1312,7 +1314,7 @@ function createObjectVisual(
         container.addChild(bs)
         container.addChild(bsMask)
         cwt.__spawnBadgeSprite = bs
-        badgeCache.getOrCreate(spawnBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
+        badgeCache.getOrCreate(spawnBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(err => logError('atlas/badge texture load failed', err))
       }
 
       // Inner yellow disc, scaled to reflect stored energy (percentage full).
@@ -1433,7 +1435,7 @@ function createObjectVisual(
         } else {
           atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
             if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
       } else {
         // Fallback: colored disc + letter glyph
@@ -1482,7 +1484,7 @@ function createObjectVisual(
           } else {
             atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
               if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
-            }).catch(() => {})
+            }).catch(err => logError('atlas/badge texture load failed', err))
           }
         }
         break
@@ -1538,7 +1540,7 @@ function createObjectVisual(
         } else {
           loadAtlas().then(sheet => {
             if (!bgSprite.destroyed) bgSprite.texture = sheet.textures[ctrlSpec.backgroundFrame] ?? Texture.EMPTY
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
         const existingSegTex = atlasCache.getTexture(theme!.atlasUrl, ctrlSpec.segmentFrame)
         if (existingSegTex) {
@@ -1547,7 +1549,7 @@ function createObjectVisual(
           loadAtlas().then(sheet => {
             const tex = sheet.textures[ctrlSpec.segmentFrame] ?? Texture.EMPTY
             for (const seg of segSprites) { if (!seg.destroyed) seg.texture = tex }
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
       } else {
         // Graphics fallback: octagon + arc segments
@@ -1602,7 +1604,7 @@ function createObjectVisual(
         container.addChild(bs)
         bs.mask = bsMask
         container.addChild(bsMask)
-        badgeCache.getOrCreate(ctrlBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(() => {})
+        badgeCache.getOrCreate(ctrlBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(err => logError('atlas/badge texture load failed', err))
       }
 
       break
@@ -1690,7 +1692,7 @@ function createObjectVisual(
               body.texture = t
               if (!container.destroyed) applyScale(t)
             }
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
         break
       }
@@ -1758,7 +1760,7 @@ function createObjectVisual(
           } else {
             atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
               if (!sprite.destroyed) applyTexture(sprite, sheet.textures[layer.frame] ?? Texture.EMPTY)
-            }).catch(() => {})
+            }).catch(err => logError('atlas/badge texture load failed', err))
           }
         }
         const storageFillG = new Graphics()
@@ -2070,7 +2072,7 @@ function createObjectVisual(
         } else {
           loadAtlas().then(sheet => {
             if (!mainSprite.destroyed) applyTex(mainSprite, sheet.textures[flagSpec.mainFrame] ?? Texture.EMPTY)
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
 
         if (secColorIdx !== colorIdx) {
@@ -2087,7 +2089,7 @@ function createObjectVisual(
           } else {
             loadAtlas().then(sheet => {
               if (!secondSprite.destroyed) applyTex(secondSprite, sheet.textures[flagSpec.secondFrame] ?? Texture.EMPTY)
-            }).catch(() => {})
+            }).catch(err => logError('atlas/badge texture load failed', err))
           }
         }
       } else {
@@ -2208,7 +2210,7 @@ function createObjectVisual(
         } else {
           loadAtlas().then(sheet => {
             if (!shellSprite.destroyed) shellSprite.texture = sheet.textures[tsSpec.shellFrame] ?? Texture.EMPTY
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
 
         const crossTex = atlasCache.getTexture(theme!.atlasUrl, tsSpec.crossFrame)
@@ -2217,7 +2219,7 @@ function createObjectVisual(
         } else {
           loadAtlas().then(sheet => {
             if (!crossSprite.destroyed) crossSprite.texture = sheet.textures[tsSpec.crossFrame] ?? Texture.EMPTY
-          }).catch(() => {})
+          }).catch(err => logError('atlas/badge texture load failed', err))
         }
       } else {
         // Graphics fallback
@@ -4298,7 +4300,8 @@ export class ObjectLayer {
       visual.__creepBadgeSprite = badgeSprite
       this.badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
         if (!badgeSprite.destroyed) badgeSprite.texture = texture
-      }).catch(() => {
+      }).catch(err => {
+        logError('foreign creep badge texture load failed', err)
         if (!badgeSprite.destroyed) {
           bodyContainer.removeChild(badgeSprite)
           badgeSprite.destroy()

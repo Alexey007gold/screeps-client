@@ -10,25 +10,26 @@ export class AtlasCache {
   private readonly frames = new Map<string, Record<string, Texture>>()
 
   getOrLoad(atlasUrl: string): Promise<Spritesheet> {
-    const cached = this.cache.get(atlasUrl)
+    const url = resolveUrl(atlasUrl)
+    const cached = this.cache.get(url)
     if (cached) return Promise.resolve(cached)
-    const inFlight = this.pending.get(atlasUrl)
+    const inFlight = this.pending.get(url)
     if (inFlight) return inFlight
-    const p = Assets.load<Spritesheet>(atlasUrl).then(sheet => {
-      this.cache.set(atlasUrl, sheet)
-      this.frames.set(atlasUrl, mergeFrames(sheet))
-      this.pending.delete(atlasUrl)
+    const p = Assets.load<Spritesheet>(url).then(sheet => {
+      this.cache.set(url, sheet)
+      this.frames.set(url, mergeFrames(sheet))
+      this.pending.delete(url)
       return sheet
     }).catch(err => {
-      this.pending.delete(atlasUrl)
+      this.pending.delete(url)
       throw err
     })
-    this.pending.set(atlasUrl, p)
+    this.pending.set(url, p)
     return p
   }
 
   getTexture(atlasUrl: string, frame: string): Texture | undefined {
-    return this.frames.get(atlasUrl)?.[frame]
+    return this.frames.get(resolveUrl(atlasUrl))?.[frame]
   }
 
   destroy(): void {
@@ -40,6 +41,16 @@ export class AtlasCache {
     this.frames.clear()
     this.pending.clear()
   }
+}
+
+// PixiJS's own path resolver (pixi.js/utils/path.js `isUrl`) only recognizes
+// http(s) origins, so under Tauri's macOS webview (origin `tauri://localhost`)
+// it drops the host when resolving a root-relative atlas URL, sending requests
+// to e.g. `tauri://themes/...` instead of `tauri://localhost/themes/...`.
+// Resolving via the native URL API first hands Pixi an already-absolute URL,
+// which it recognizes as-is and never tries to re-resolve.
+function resolveUrl(url: string): string {
+  return new URL(url, document.baseURI).href
 }
 
 function mergeFrames(sheet: Spritesheet): Record<string, Texture> {
