@@ -537,12 +537,12 @@ function ControllerDetails(props: { item: SelectedObject }) {
   const level = () => typeof raw().level === 'number' ? (raw().level as number) : 0
   const progress = () => typeof raw().progress === 'number' ? (raw().progress as number) : null
   const progressTotal = () => {
-    if (typeof raw().progressTotal === 'number') return raw().progressTotal as number
+    if (typeof raw().progressTotal === 'number' && !!raw().progressTotal) return raw().progressTotal as number
     return CONTROLLER_LEVEL_TOTAL[level()] ?? null
   }
   const downgradeTime = () => typeof raw().downgradeTime === 'number' ? (raw().downgradeTime as number) : null
   const safeModeAvailable = () => typeof raw().safeModeAvailable === 'number' ? (raw().safeModeAvailable as number) : 0
-  const safeMode = () => typeof raw().safeMode === 'number' ? (raw().safeMode as number) : null
+  const safeMode = () => typeof raw().safeMode === 'number' ? ticksRemaining(raw().safeMode as number) : null
   const isPowerEnabled = () => raw().isPowerEnabled === true
   const reservation = () => raw().reservation as { user: string; endTime: number } | undefined
   const userId = () => typeof raw().user === 'string' ? (raw().user as string) : null
@@ -554,15 +554,14 @@ function ControllerDetails(props: { item: SelectedObject }) {
   }
 
 
-  const ticksRemaining = () => {
-    const dt = downgradeTime()
+  const ticksRemaining = (until: number | null) => {
     const gt = gameTime()
-    if (dt !== null && gt !== null) return Math.max(0, dt - gt)
+    if (until !== null && gt !== null) return Math.max(0, until - gt)
     return null
   }
 
   const downgradeLabel = () => {
-    const ticks = ticksRemaining()
+    const ticks = ticksRemaining(downgradeTime())
     if (ticks === null) return '—'
     const max = CONTROLLER_DOWNGRADE[level()]
     if (max !== undefined && ticks >= max) return 'Max'
