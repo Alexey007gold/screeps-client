@@ -1,11 +1,11 @@
 import type { RoomObjectMap } from 'screeps-connectivity'
 import type { ActionAnimationLayer } from './ActionAnimationLayer.js'
-import type { ObjectLayer } from './ObjectLayer.js'
+import type { ObjectLayer, EdgeExitTile } from './ObjectLayer.js'
 
 // Queries a neighboring room (multi-room grid only) for the actionLog a creep carried
 // when it arrived there this tick, so a departure can recover its own beam — see the
 // recovery pass at the end of applyActionLogAnimations.
-type NeighborActionLogLookup = (creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null
+export type NeighborActionLogLookup = (creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null
 
 // Draws whichever of the five creep target-beams are present in actionLog, from
 // (fromX, fromY) — the creep's position in the frame these coordinates belong to.
@@ -42,8 +42,30 @@ function renderCreepActionBeams(
   }
 }
 
+// One attempt at recovering a departed creep's beam from the neighboring room it
+// landed in this tick. Returns true once drawn. Used both by the immediate pass in
+// applyActionLogAnimations and by a caller's own grace-period retry (the neighbor's
+// room:update for this same game tick may simply not have arrived yet — see
+// RoomScene's pendingActionLogRecoveries) — false just means "not yet", not "never".
+export function tryRecoverDepartureBeam(
+  creepId: string,
+  exitTile: EdgeExitTile,
+  getNeighborActionLog: NeighborActionLogLookup,
+  animLayer: ActionAnimationLayer,
+  objLayer: ObjectLayer,
+  beamDuration: number,
+): boolean {
+  const actionLog = getNeighborActionLog(creepId, exitTile.dirX, exitTile.dirY)
+  if (!actionLog) return false
+  renderCreepActionBeams(actionLog, exitTile.x, exitTile.y, animLayer, objLayer, beamDuration)
+  return true
+}
+
 // Shared by RoomViewer (single-room view) and RoomScene (full-detail rooms in the
 // multi-room grid) so both render identical action beams from the same actionLog data.
+// Returns the departures that couldn't be recovered yet (neighbor's actionLog hadn't
+// landed at the time of this call) — RoomScene retries these via tryRecoverDepartureBeam
+// for a short grace period rather than dropping them immediately.
 export function applyActionLogAnimations(
   objects: RoomObjectMap,
   animLayer: ActionAnimationLayer,
@@ -51,7 +73,7 @@ export function applyActionLogAnimations(
   beamDuration: number,
   currentUserId: string | null | undefined,
   getNeighborActionLog?: NeighborActionLogLookup | null,
-): void {
+): Map<string, EdgeExitTile> {
   animLayer.clear()
   const sayingIds = new Set<string>()
 
@@ -133,13 +155,20 @@ export function applyActionLogAnimations(
   // own local coordinates. Only fires when that neighbor also happens to be
   // rendered in full detail — otherwise the beam is simply lost (see the "how does
   // this behave in single-room view" caveat: it isn't recoverable there).
+  //
+  // The neighbor's own room:update for this game tick may not have landed yet —
+  // separate subscriptions, no cross-room ordering guarantee — so a miss here isn't
+  // final; it's returned as "unresolved" for the caller to retry over a short grace
+  // period (see RoomScene.pendingActionLogRecoveries) before giving up for good.
+  const unresolved = new Map<string, EdgeExitTile>()
   if (getNeighborActionLog) {
     for (const [id, exitTile] of objLayer.getFreshDepartures()) {
-      const actionLog = getNeighborActionLog(id, exitTile.dirX, exitTile.dirY)
-      if (!actionLog) continue
-      renderCreepActionBeams(actionLog, exitTile.x, exitTile.y, animLayer, objLayer, beamDuration)
+      if (!tryRecoverDepartureBeam(id, exitTile, getNeighborActionLog, animLayer, objLayer, beamDuration)) {
+        unresolved.set(id, exitTile)
+      }
     }
   }
 
   objLayer.pruneSayBubblesExcept(sayingIds)
+  return unresolved
 }

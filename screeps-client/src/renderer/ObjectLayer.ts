@@ -2509,7 +2509,7 @@ function isEdgeTile(x: number, y: number): boolean {
   return x === 0 || x === ROOM_MAX || y === 0 || y === ROOM_MAX
 }
 
-interface EdgeExitTile { x: number; y: number; dirX: number; dirY: number }
+export interface EdgeExitTile { x: number; y: number; dirX: number; dirY: number }
 
 // Which edge(s) a creep is one tile short of, independent of how it was
 // moving. Travel history isn't a reliable signal here: the server never

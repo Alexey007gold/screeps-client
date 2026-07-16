@@ -1,16 +1,28 @@
 import { Container, type Renderer, type Ticker } from 'pixi.js'
 import type { Badge, RoomObjectMap, RoomObjectDiff, RoomTerrain } from 'screeps-connectivity'
 import { createTerrainLayer } from './TerrainLayer.js'
-import { ObjectLayer } from './ObjectLayer.js'
+import { ObjectLayer, type EdgeExitTile } from './ObjectLayer.js'
 import { HoverHighlightLayer, type SelectionVisual } from './HoverHighlightLayer.js'
 import { ActionAnimationLayer } from './ActionAnimationLayer.js'
-import { applyActionLogAnimations } from './actionLogAnimations.js'
+import { applyActionLogAnimations, tryRecoverDepartureBeam, type NeighborActionLogLookup } from './actionLogAnimations.js'
 import { LightingLayer, buildLights } from './LightingLayer.js'
 import { VisualLayer } from './VisualLayer.js'
 import { Z } from './RoomRenderer.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
 import type { RoomDecoration } from './roomDecorations.js'
+
+// Same grace window as ObjectLayer's NEIGHBOR_LOOKUP_GRACE_MS (the sprite handoff's
+// equivalent retry) — brief enough that it can't bleed into the next game tick, long
+// enough to cover the neighbor's room:update landing a beat late (rooms subscribe
+// independently; no ordering guarantee between them for the same tick).
+const ACTION_LOG_RECOVERY_GRACE_MS = 50
+
+interface PendingActionLogRecovery {
+  exitTile: EdgeExitTile
+  beamDuration: number
+  deadline: number
+}
 
 export interface RoomSceneUpdateOptions {
   showLabels: boolean
@@ -51,11 +63,16 @@ export class RoomScene {
   // Set by MultiRoomRenderer right after creating the scene — used directly by
   // applyActionLogAnimations each tick, so (unlike pendingNeighborLookup) it
   // doesn't need to be stashed for a not-yet-existing ObjectLayer.
-  private neighborActionLogLookup: ((creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null) | null = null
+  private neighborActionLogLookup: NeighborActionLogLookup | null = null
+  // Departures whose beam couldn't be recovered from the neighbor yet this tick —
+  // retried every animation frame (via checkPendingActionLogRecoveries) until the
+  // neighbor's data lands or ACTION_LOG_RECOVERY_GRACE_MS runs out.
+  private pendingActionLogRecoveries = new Map<string, PendingActionLogRecovery>()
 
   constructor(ticker: Ticker, rendererGpu: Renderer, world: Container) {
     this.ticker = ticker
     this.root = new Container({ sortableChildren: true })
+    this.ticker.add(this.checkPendingActionLogRecoveries)
 
     this.lighting = new LightingLayer(rendererGpu)
     this.lighting.displaySprite.label = 'darkOverlay'
@@ -155,7 +172,15 @@ export class RoomScene {
     // harvest/upgrade/build/etc. action lines as the single-room view.
     if (this.animLayer) {
       const beamDuration = opts.tickDuration * 0.6
-      applyActionLogAnimations(objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId, this.neighborActionLogLookup)
+      const unresolved = applyActionLogAnimations(
+        objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId, this.neighborActionLogLookup,
+      )
+      if (unresolved.size > 0) {
+        const deadline = performance.now() + ACTION_LOG_RECOVERY_GRACE_MS
+        for (const [id, exitTile] of unresolved) {
+          this.pendingActionLogRecoveries.set(id, { exitTile, beamDuration, deadline })
+        }
+      }
     }
 
     this.visualLayer.update(opts.showRoomVisuals ? (opts.visual ?? '') : '')
@@ -212,8 +237,26 @@ export class RoomScene {
   // MultiRoomRenderer calls this right after creating the scene — used by
   // applyActionLogAnimations to recover a departing creep's stale actionLog
   // from whichever neighboring room it lands in this tick.
-  setNeighborActionLogLookup(fn: ((creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null) | null): void {
+  setNeighborActionLogLookup(fn: NeighborActionLogLookup | null): void {
     this.neighborActionLogLookup = fn
+  }
+
+  // Runs every animation frame (independent of this room's own tick cadence) so a
+  // recovery isn't gated on this room's next room:update — the neighbor's data can
+  // land at any point within the grace window. Deletes entries as they resolve or
+  // expire; safe to delete the current entry mid-iteration (Map iterators handle it).
+  private readonly checkPendingActionLogRecoveries = (): void => {
+    if (this.pendingActionLogRecoveries.size === 0) return
+    if (!this.animLayer || !this.objLayer || !this.neighborActionLogLookup) return
+    const now = performance.now()
+    for (const [id, pending] of this.pendingActionLogRecoveries) {
+      const recovered = tryRecoverDepartureBeam(
+        id, pending.exitTile, this.neighborActionLogLookup, this.animLayer, this.objLayer, pending.beamDuration,
+      )
+      if (recovered || now >= pending.deadline) {
+        this.pendingActionLogRecoveries.delete(id)
+      }
+    }
   }
 
   getVisualById(id: string): Container | undefined {
@@ -229,6 +272,8 @@ export class RoomScene {
   }
 
   dispose(): void {
+    this.ticker.remove(this.checkPendingActionLogRecoveries)
+    this.pendingActionLogRecoveries.clear()
     if (this.animLayer) {
       this.root.removeChild(this.animLayer.container)
       this.animLayer.destroy()
