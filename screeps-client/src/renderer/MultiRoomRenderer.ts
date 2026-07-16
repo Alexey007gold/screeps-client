@@ -400,6 +400,15 @@ export class MultiRoomRenderer {
       const neighborName = formatRoomName(coord.x + dirX, coord.y + dirY)
       return this.roomScenes.get(neighborName)?.getFreshArrival(creepId) ?? null
     })
+    // Recovers a same-tick action's beam (repair/build/harvest/etc.) for a creep
+    // that acted here and crossed into a neighboring room before this tick's
+    // render — the neighbor's applyActionLogAnimations otherwise drops it since
+    // its target coordinates only make sense in this room's frame. Only
+    // available when that neighbor also happens to be rendered in full detail.
+    scene.setNeighborActionLogLookup((creepId, dirX, dirY) => {
+      const neighborName = formatRoomName(coord.x + dirX, coord.y + dirY)
+      return this.roomScenes.get(neighborName)?.getFreshArrivalActionLog(creepId) ?? null
+    })
     return true
   }
 

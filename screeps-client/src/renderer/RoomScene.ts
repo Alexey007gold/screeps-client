@@ -48,6 +48,10 @@ export class RoomScene {
   // Set before the ObjectLayer exists yet (MultiRoomRenderer wires this up
   // right after creating the scene) — applied once applyUpdate creates it.
   private pendingNeighborLookup: ((creepId: string, dirX: number, dirY: number) => { x: number; y: number } | null) | null = null
+  // Set by MultiRoomRenderer right after creating the scene — used directly by
+  // applyActionLogAnimations each tick, so (unlike pendingNeighborLookup) it
+  // doesn't need to be stashed for a not-yet-existing ObjectLayer.
+  private neighborActionLogLookup: ((creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null) | null = null
 
   constructor(ticker: Ticker, rendererGpu: Renderer, world: Container) {
     this.ticker = ticker
@@ -151,7 +155,7 @@ export class RoomScene {
     // harvest/upgrade/build/etc. action lines as the single-room view.
     if (this.animLayer) {
       const beamDuration = opts.tickDuration * 0.6
-      applyActionLogAnimations(objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId)
+      applyActionLogAnimations(objects, this.animLayer, this.objLayer, beamDuration, opts.currentUserId, this.neighborActionLogLookup)
     }
 
     this.visualLayer.update(opts.showRoomVisuals ? (opts.visual ?? '') : '')
@@ -197,6 +201,19 @@ export class RoomScene {
   /** See ObjectLayer.getFreshArrival — queried by an adjacent room's lookup. */
   getFreshArrival(creepId: string): { x: number; y: number } | null {
     return this.objLayer?.getFreshArrival(creepId) ?? null
+  }
+
+  /** See ObjectLayer.getFreshArrivalActionLog — queried by an adjacent room's
+   *  neighborActionLogLookup to recover a same-tick action's beam. */
+  getFreshArrivalActionLog(creepId: string): Record<string, unknown> | null {
+    return this.objLayer?.getFreshArrivalActionLog(creepId) ?? null
+  }
+
+  // MultiRoomRenderer calls this right after creating the scene — used by
+  // applyActionLogAnimations to recover a departing creep's stale actionLog
+  // from whichever neighboring room it lands in this tick.
+  setNeighborActionLogLookup(fn: ((creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null) | null): void {
+    this.neighborActionLogLookup = fn
   }
 
   getVisualById(id: string): Container | undefined {

@@ -2694,6 +2694,18 @@ export class ObjectLayer {
   // (i.e. likely arrivals from a neighboring room) — queried by that
   // neighbor's own ObjectLayer via neighborLookup. Rebuilt every update().
   private freshEdgeArrivals = new Map<string, { x: number; y: number }>()
+  // The same-tick actionLog carried by a fresh edge arrival, if any. That
+  // actionLog actually describes an action performed in the room the creep
+  // just left (see applyActionLogAnimations) — exposed so that room can
+  // recover it and draw the beam using its own local coordinates instead of
+  // this room's. Rebuilt every update(), alongside freshEdgeArrivals.
+  private freshEdgeArrivalActionLogs = new Map<string, Record<string, unknown> | null>()
+  // Creeps that departed this room via edge-crossing this tick, keyed by id,
+  // with the exit tile (this room's own local coordinates) they were last
+  // seen heading toward. Queried by applyActionLogAnimations to recover a
+  // same-tick action's beam from whichever neighboring room mistakenly
+  // received this creep's actionLog. Rebuilt every update().
+  private freshDepartures = new Map<string, EdgeExitTile>()
   private lastWorldScale = 1
   private showLabels: boolean
   private currentUserId?: string
@@ -3209,6 +3221,8 @@ export class ObjectLayer {
       this.currentGameTime = gameTime
     }
     this.freshEdgeArrivals.clear()
+    this.freshEdgeArrivalActionLogs.clear()
+    this.freshDepartures.clear()
     let roadsChanged = false
     let wallsChanged = false
     let rampartsChanged = false
@@ -3248,6 +3262,7 @@ export class ObjectLayer {
             const exitTile = oldObj?.type === 'creep' && !diedNearby(oldObj, tombstonesThisTick)
               ? extrapolateEdgeExit(oldObj) : null
             if (exitTile) {
+              this.freshDepartures.set(id, exitTile)
               const fallbackTile = avoidWallExit(exitTile, this.terrain)
               const neighborPos = this.neighborLookup?.(id, exitTile.dirX, exitTile.dirY) ?? null
               if (neighborPos) {
@@ -3315,6 +3330,7 @@ export class ObjectLayer {
               visual.__fadeFrom = 0
               visual.__fadeTo = 1
               this.freshEdgeArrivals.set(id, { x: obj.x, y: obj.y })
+              this.freshEdgeArrivalActionLogs.set(id, (obj.actionLog as Record<string, unknown> | null | undefined) ?? null)
             }
             this.applyLabelScale(visual)
             this.objects.set(id, visual)
@@ -4404,6 +4420,18 @@ export class ObjectLayer {
    *  neighborLookup to resolve exactly where a departing creep should exit. */
   getFreshArrival(creepId: string): { x: number; y: number } | null {
     return this.freshEdgeArrivals.get(creepId) ?? null
+  }
+
+  /** Same-tick actionLog carried by a creep that arrived on an edge tile for
+   *  the first time this tick, if any — see freshEdgeArrivalActionLogs. */
+  getFreshArrivalActionLog(creepId: string): Record<string, unknown> | null {
+    return this.freshEdgeArrivalActionLogs.get(creepId) ?? null
+  }
+
+  /** Creeps that departed this room via edge-crossing this tick, with the
+   *  exit tile (this room's own local coordinates) — see freshDepartures. */
+  getFreshDepartures(): ReadonlyMap<string, EdgeExitTile> {
+    return this.freshDepartures
   }
 
   /**
