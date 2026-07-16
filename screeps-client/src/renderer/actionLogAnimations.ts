@@ -58,27 +58,38 @@ export function applyActionLogAnimations(
 
     if (obj.type !== 'creep') continue
 
-    const harvest = actionLog.harvest as { x: number; y: number } | null | undefined
-    if (harvest) {
-      animLayer.addHarvest(harvest.x, harvest.y, obj.x, obj.y, beamDuration)
+    // A creep that just crossed into this room this tick still carries the actionLog
+    // entry from whatever it did in the room it left — the target coordinates belong
+    // to that other room's tile grid, not this one. Rendering them here would draw a
+    // beam to a bogus point in this room. objLayer already tracks this exact case for
+    // the edge-handoff visual (see ObjectLayer.getFreshArrival), so reuse that signal
+    // to skip the stale, foreign-room beams while still letting say bubbles through.
+    const freshArrival = objLayer.getFreshArrival(id) != null
+
+    if (!freshArrival) {
+      const harvest = actionLog.harvest as { x: number; y: number } | null | undefined
+      if (harvest) {
+        animLayer.addHarvest(harvest.x, harvest.y, obj.x, obj.y, beamDuration)
+      }
+      const upgrade = actionLog.upgradeController as { x: number; y: number } | null | undefined
+      if (upgrade) {
+        animLayer.addUpgradeController(obj.x, obj.y, upgrade.x, upgrade.y, beamDuration)
+      }
+      const build = actionLog.build as { x: number; y: number } | null | undefined
+      if (build) {
+        animLayer.addBuild(obj.x, obj.y, build.x, build.y, beamDuration)
+        objLayer.triggerBuildAt(build.x, build.y, beamDuration)
+      }
+      const repair = actionLog.repair as { x: number; y: number } | null | undefined
+      if (repair) {
+        animLayer.addRepair(obj.x, obj.y, repair.x, repair.y, beamDuration)
+      }
+      const transfer = actionLog.transfer as { x: number; y: number } | null | undefined
+      if (transfer) {
+        animLayer.addTransfer(obj.x, obj.y, transfer.x, transfer.y, beamDuration)
+      }
     }
-    const upgrade = actionLog.upgradeController as { x: number; y: number } | null | undefined
-    if (upgrade) {
-      animLayer.addUpgradeController(obj.x, obj.y, upgrade.x, upgrade.y, beamDuration)
-    }
-    const build = actionLog.build as { x: number; y: number } | null | undefined
-    if (build) {
-      animLayer.addBuild(obj.x, obj.y, build.x, build.y, beamDuration)
-      objLayer.triggerBuildAt(build.x, build.y, beamDuration)
-    }
-    const repair = actionLog.repair as { x: number; y: number } | null | undefined
-    if (repair) {
-      animLayer.addRepair(obj.x, obj.y, repair.x, repair.y, beamDuration)
-    }
-    const transfer = actionLog.transfer as { x: number; y: number } | null | undefined
-    if (transfer) {
-      animLayer.addTransfer(obj.x, obj.y, transfer.x, transfer.y, beamDuration)
-    }
+
     const say = actionLog.say as { message?: unknown; isPublic?: boolean } | null | undefined
     if (say && typeof say.message === 'string' && say.message.length > 0) {
       // Non-public sayings are only visible to the creep's owner. The server may still
