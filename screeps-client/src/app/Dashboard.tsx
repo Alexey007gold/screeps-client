@@ -381,25 +381,6 @@ export function Dashboard() {
     window.addEventListener('popstate', syncViewFromUrl)
     onCleanup(() => window.removeEventListener('popstate', syncViewFromUrl))
 
-    const nav = client()?.stores.navigation
-    if (nav) {
-      const navSub = nav.on('navigation:change', (state) => {
-        if (state.room === null) return
-        if (untrack(historyMode)) exitHistoryMode()
-        setRoom(state.room)
-        setShard(state.shard)
-        setViewMode('room')
-        setHoveredRoomInfo(null)
-        setSelectedRoomInfo(null)
-        setGridSelectedRoom(null)
-        setStr(LS.room, state.room)
-        if (state.shard) setStr(LS.shard, state.shard)
-        else removeLocal(LS.shard)
-        history.pushState(null, '', buildRoomUrl(state.room, state.shard))
-      })
-      onCleanup(() => navSub.dispose())
-    }
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return
       if (e.key === 'o' || e.key === 'O') {
@@ -428,6 +409,28 @@ export function Dashboard() {
     }
     window.addEventListener('keydown', onKeyDown)
     onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+  })
+
+  // Reconnecting swaps in a brand-new ScreepsClient (and NavigationStore), so this
+  // must re-subscribe whenever client() changes rather than binding once in onMount.
+  createEffect(() => {
+    const nav = client()?.stores.navigation
+    if (!nav) return
+    const navSub = nav.on('navigation:change', (state) => {
+      if (state.room === null) return
+      if (untrack(historyMode)) exitHistoryMode()
+      setRoom(state.room)
+      setShard(state.shard)
+      setViewMode('room')
+      setHoveredRoomInfo(null)
+      setSelectedRoomInfo(null)
+      setGridSelectedRoom(null)
+      setStr(LS.room, state.room)
+      if (state.shard) setStr(LS.shard, state.shard)
+      else removeLocal(LS.shard)
+      history.pushState(null, '', buildRoomUrl(state.room, state.shard))
+    })
+    onCleanup(() => navSub.dispose())
   })
 
   const canvasArea = () => (
