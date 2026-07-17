@@ -114,6 +114,13 @@ export class MapRenderer {
   private pinchStartScale = 0
   private lastVisibleKey = ''
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  // Wheel events fire at native OS rate (WebKit dispatches trackpad scroll/pinch
+  // uncoalesced, far faster than Chromium's rAF-aligned coalescing), so raw per-event
+  // work here can outpace the frame budget on Safari/Tauri. Batch to one zoom per frame.
+  private pendingWheelFactor: number | null = null
+  private pendingWheelPivotX = 0
+  private pendingWheelPivotY = 0
+  private wheelRafId: number | null = null
   private selectedRoom: string | null = null
   private currentUserId: string | null = null
   private readonly badgeCache = new BadgeTextureCache()
@@ -837,6 +844,10 @@ export class MapRenderer {
       clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = null
     }
+    if (this.wheelRafId !== null) {
+      cancelAnimationFrame(this.wheelRafId)
+      this.wheelRafId = null
+    }
     for (const [, entry] of this.activeRooms) {
       if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
       if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
@@ -1099,10 +1110,21 @@ export class MapRenderer {
       e.preventDefault()
       if (this.isDragging || this.isPinching) return
       this.isAnimating = false
-      const scale  = this.world.scale.x
       const factor = e.deltaY < 0 ? 1.1 : 0.9
-      const next   = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor))
-      this.applyZoomAt(next, e.offsetX, e.offsetY)
+      this.pendingWheelFactor = (this.pendingWheelFactor ?? 1) * factor
+      this.pendingWheelPivotX = e.offsetX
+      this.pendingWheelPivotY = e.offsetY
+      if (this.wheelRafId === null) {
+        this.wheelRafId = requestAnimationFrame(() => {
+          this.wheelRafId = null
+          const pending = this.pendingWheelFactor
+          this.pendingWheelFactor = null
+          if (pending === null) return
+          const scale = this.world.scale.x
+          const next  = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * pending))
+          this.applyZoomAt(next, this.pendingWheelPivotX, this.pendingWheelPivotY)
+        })
+      }
     }, { passive: false })
   }
 
