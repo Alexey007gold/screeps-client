@@ -63,7 +63,7 @@ export class RoomRenderer {
     this.lightLayer = new Container()
     this.lightLayer.label = 'lightLayer'
 
-    this.hoverLayer = new HoverHighlightLayer(app.ticker)
+    this.hoverLayer = new HoverHighlightLayer(app.ticker, () => this.contextRecovery.isLost)
     this.hoverLayer.container.zIndex = Z.hover
     this.world.addChild(this.hoverLayer.container)
 

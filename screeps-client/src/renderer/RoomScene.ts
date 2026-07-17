@@ -84,7 +84,7 @@ export class RoomScene {
     this.visualLayer.container.zIndex = Z.visuals
     this.root.addChild(this.visualLayer.container)
 
-    this.hoverLayer = new HoverHighlightLayer(ticker)
+    this.hoverLayer = new HoverHighlightLayer(ticker, isContextLost)
     this.hoverLayer.container.zIndex = Z.hover
     this.root.addChild(this.hoverLayer.container)
   }

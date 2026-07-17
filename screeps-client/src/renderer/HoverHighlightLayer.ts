@@ -27,8 +27,10 @@ export class HoverHighlightLayer {
 
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
+  private readonly isContextLost: () => boolean
 
-  constructor(ticker?: Ticker) {
+  constructor(ticker?: Ticker, isContextLost: () => boolean = () => false) {
+    this.isContextLost = isContextLost
     this.container = new Container()
     this.container.label = 'hoverHighlight'
     this.container.eventMode = 'none'
@@ -54,6 +56,7 @@ export class HoverHighlightLayer {
 
   /** Update the hover highlight to the given tile, or clear if null. */
   setHoveredTile(tx: number | null, ty: number | null): void {
+    if (this.isContextLost()) return
     this.hoverGraphics.clear()
     if (tx === null || ty === null) return
 
@@ -103,6 +106,7 @@ export class HoverHighlightLayer {
 
   /** Show a crosshair marker on the given tile, or clear if null. */
   setPendingTile(tx: number | null, ty: number | null): void {
+    if (this.isContextLost()) return
     this.pendingGraphics.clear()
     if (tx === null || ty === null) return
 
@@ -130,6 +134,7 @@ export class HoverHighlightLayer {
   }
 
   private drawCreepRing(g: Graphics, x: number, y: number): void {
+    if (this.isContextLost()) return
     g.clear()
     const cx = x + TILE_SIZE / 2
     const cy = y + TILE_SIZE / 2
@@ -139,6 +144,7 @@ export class HoverHighlightLayer {
   }
 
   private drawStructureBox(g: Graphics, x: number, y: number): void {
+    if (this.isContextLost()) return
     g.clear()
     const pad = 1
     g.rect(x + pad, y + pad, TILE_SIZE - pad * 2, TILE_SIZE - pad * 2)
@@ -149,6 +155,7 @@ export class HoverHighlightLayer {
 
   /** Called each ticker frame to keep creep rings locked to their animated visuals. */
   private trackCreepRings(): void {
+    if (this.isContextLost()) return
     for (const [id, g] of this.selectionGraphics) {
       if (this.selectionTypes.get(id) !== 'creep') continue
       const visual = this.selectionVisuals.get(id)
