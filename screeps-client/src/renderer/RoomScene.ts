@@ -8,8 +8,6 @@ import { applyActionLogAnimations, tryRecoverDepartureBeam, type NeighborActionL
 import { LightingLayer, buildLights } from './LightingLayer.js'
 import { VisualLayer } from './VisualLayer.js'
 import { Z } from './RoomRenderer.js'
-import { sharedAtlasCache } from './AtlasCache.js'
-import { defaultSpriteTheme } from './themes/default.js'
 import type { RoomDecoration } from './roomDecorations.js'
 
 // Same grace window as ObjectLayer's NEIGHBOR_LOOKUP_GRACE_MS (the sprite handoff's
@@ -148,7 +146,6 @@ export class RoomScene {
       this.objLayer.setSplitEdgeHandoff(true)
       this.objLayer.setTerrain(this.rawTerrain)
       if (this.pendingNeighborLookup) this.objLayer.setNeighborLookup(this.pendingNeighborLookup)
-      this.objLayer.setTheme(defaultSpriteTheme, sharedAtlasCache)
       this.objLayer.container.label = 'objects'
       this.objLayer.container.zIndex = Z.objects
       this.root.addChild(this.objLayer.container)
