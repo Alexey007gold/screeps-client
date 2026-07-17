@@ -2,8 +2,9 @@ import { Container, Graphics, GraphicsContext, Text, Ticker, Sprite, Texture, Bl
 import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
 import { RoomTerrain, TerrainType } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
-import type { Theme, ControllerSpec, FlagSpec, TombstoneSpec } from './themes/Theme.js'
-import type { AtlasCache } from './AtlasCache.js'
+import type { ControllerSpec, FlagSpec } from './themes/Theme.js'
+import { sharedAtlasCache } from './AtlasCache.js'
+import { defaultSpriteTheme } from './themes/default.js'
 import type { LightingLayer } from './LightingLayer.js'
 import { createLogger } from '~/utils/log.js'
 
@@ -164,6 +165,7 @@ const EXTRACTOR_RING_R = TILE_SIZE * 0.975  // 0.75 × the original ~2.6-tile fo
 const EXTRACTOR_RING_W = Math.max(1, TILE_SIZE * 0.18)
 const EXTRACTOR_GAP    = Math.PI / 3  // rad gap; equals the segment arc (3 segments + 3 gaps = 2π)
 const EXTRACTOR_Z_INDEX = 1    // ring spins above the mineral
+const TOMBSTONE_Z_INDEX = 4    // sits above roads and containers, below creeps
 
 function drawExtractorRing(g: Graphics, color: number): void {
   g.clear()
@@ -490,11 +492,40 @@ function updateTowerFill(visual: ContainerWithTarget, level: number): void {
 }
 
 // ── Storage helpers ────────────────────────────────────────────────────────
-// Box inner rect in container coords (cx = cy = TILE_SIZE/2, so rect x = 0, rect y = -TILE_SIZE*0.1)
-const STORAGE_BOX_X = 0
-const STORAGE_BOX_Y = -TILE_SIZE * 0.1
-const STORAGE_BOX_W = TILE_SIZE * 1.0
-const STORAGE_BOX_H = TILE_SIZE * 1.2
+// Geometry follows the official client's storage art: a rounded "barrel" shell
+// (dark fill, owner-tinted outline) over a grey inner box, bands on top. Upstream
+// draws it at 200px on a 100px tile, so it overhangs by half a tile in each
+// direction (1.54 × 1.94 tiles). We keep that silhouette but scale it down to just
+// over a tile — the one knob for the structure's overall size.
+const STORAGE_SCALE = 0.65
+
+// The shell and inner box come from storage-border.svg / storage.svg, authored in a
+// 177.15 viewBox rendered at 200px — one SVG unit is 0.0112897 tiles before scaling.
+const STORAGE_SVG_U = TILE_SIZE * 0.0112897 * STORAGE_SCALE
+
+// Upstream's metadata sizes the fill bars in tile pixels rather than SVG units.
+const STORAGE_PX_U = TILE_SIZE * 0.01 * STORAGE_SCALE
+
+// Shell arc endpoints span a 120×140 box around the tile centre; the caps (r=120)
+// bulge outward top/bottom, the sides (r=300) bulge left/right.
+const STORAGE_SHELL_HW = 60 * STORAGE_SVG_U
+const STORAGE_SHELL_HH = 70 * STORAGE_SVG_U
+const STORAGE_SHELL_CAP_R = 120 * STORAGE_SVG_U
+const STORAGE_SHELL_SIDE_R = 300 * STORAGE_SVG_U
+const STORAGE_SHELL_STROKE = 7 * STORAGE_SVG_U
+
+// Grey inner box: 100×120, centred on the tile.
+const STORAGE_INNER_W = 100 * STORAGE_SVG_U
+const STORAGE_INNER_H = 120 * STORAGE_SVG_U
+
+// Fill-band rect in container coords (cx = cy = TILE_SIZE/2). Upstream's bars are
+// 110 wide, 140 tall at a full store, with the floor 70 below the centre. At a full
+// store they therefore overhang the grey box slightly top and bottom — the shell's
+// outline absorbs it, as upstream.
+const STORAGE_BOX_W = 110 * STORAGE_PX_U
+const STORAGE_BOX_H = 140 * STORAGE_PX_U
+const STORAGE_BOX_X = TILE_SIZE * 0.5 - STORAGE_BOX_W / 2
+const STORAGE_BOX_Y = TILE_SIZE * 0.5 + 70 * STORAGE_PX_U - STORAGE_BOX_H
 
 interface StoreBand { color: number; amount: number }
 
@@ -586,6 +617,21 @@ function updateContainerFill(visual: ContainerWithTarget, height: number): void 
   drawStoreBands(fill, CONT_X, CONT_Y + CONT_H, CONT_W, height, visual.__containerBands, visual.__containerUsed ?? 0, CONT_MARGIN)
 }
 
+// Transcribed from storage-border.svg's single path: start top-left, cap across the
+// top, down the right side, cap back across the bottom, up the left side. Issued once
+// per fill and once per stroke, since either consumes the current path.
+function storageShellPath(g: Graphics, cx: number, cy: number): void {
+  const left = cx - STORAGE_SHELL_HW, right = cx + STORAGE_SHELL_HW
+  const top = cy - STORAGE_SHELL_HH, bottom = cy + STORAGE_SHELL_HH
+  const cap = STORAGE_SHELL_CAP_R, side = STORAGE_SHELL_SIDE_R
+  g.moveTo(left, top)
+  g.arcToSvg(cap, cap, 0, 0, 1, right, top)
+  g.arcToSvg(side, side, 0, 0, 1, right, bottom)
+  g.arcToSvg(cap, cap, 0, 0, 1, left, bottom)
+  g.arcToSvg(side, side, 0, 0, 1, left, top)
+  g.closePath()
+}
+
 function calcStorageFillHeight(used: number, capacity: number): number {
   if (capacity <= 0 || used <= 0) return 0
   return STORAGE_BOX_H * Math.min(1, used / capacity)
@@ -616,8 +662,42 @@ function calcSpawnFillRadius(energy: number, capacity: number): number {
   return SPAWN_INNER_R * calcCenterFillFraction(energy, capacity)
 }
 
+// ── Terminal ───────────────────────────────────────────────────────────────
+// Geometry follows the official client's terminal art (terminal-border.svg,
+// terminal.svg, terminal-arrows.svg, terminal-highlight.svg): an owner-outlined
+// octagon over four arrows around a dark plate with a grey face. Those are authored
+// in a 200 viewBox rendered at 200px on a 100px tile, so one unit is 0.01 tiles and
+// upstream's terminal spans 1.7 tiles. Scaled to just over a tile, as storage is.
+const TERMINAL_SCALE = 0.75
+const TERMINAL_U = TILE_SIZE * 0.01 * TERMINAL_SCALE
+
+// Converts terminal reference-art coords (tile centre = origin, 1 unit = TERMINAL_U px)
+function tpts(cx: number, cy: number, pts: ReadonlyArray<readonly [number, number]>): number[] {
+  return pts.flatMap(([rx, ry]) => [cx + rx * TERMINAL_U, cy + ry * TERMINAL_U])
+}
+
+// Octagon: corners at ±85 on the axes, ±55 diagonally.
+const TERMINAL_OCTAGON: ReadonlyArray<readonly [number, number]> = [
+  [85, 0], [55, -55], [0, -85], [-55, -55], [-85, 0], [-55, 55], [0, 85], [55, 55],
+]
+const TERMINAL_STROKE = 7 * TERMINAL_U
+const TERMINAL_PLATE = 90 * TERMINAL_U  // dark plate; the grey face insets 7 inside it
+const TERMINAL_FACE = 76 * TERMINAL_U
+
+// Four arrows pointing out from behind the plate: tips at ±67, bases at ±48 (just
+// clear of the plate's ±45 edge) and 70 wide.
+const TERMINAL_ARROWS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
+  [[0, -67], [-35, -48], [35, -48]],  // up
+  [[67, 0], [48, -35], [48, 35]],     // right
+  [[0, 67], [35, 48], [-35, 48]],     // down
+  [[-67, 0], [-48, 35], [-48, -35]],  // left
+]
+const TERMINAL_ARROW_COLOR = 0xCCCCCC
+const TERMINAL_ARROW_CD_ALPHA = 0.1  // arrows dim while on send cooldown
+
 // Terminal: a square that grows from the plate centre, tinted by the dominant resource.
-const TERMINAL_FILL_HALF = TILE_SIZE * 0.35
+// Upstream sizes its (nested, per-resource) squares off the same 76 face.
+const TERMINAL_FILL_HALF = TERMINAL_FACE / 2
 function updateTerminalFill(visual: ContainerWithTarget, fraction: number): void {
   const fill = visual.__terminalFillG
   if (!fill) return
@@ -630,24 +710,18 @@ function updateTerminalFill(visual: ContainerWithTarget, fraction: number): void
   }
 }
 
-// Terminal cooldown pulse: vanilla breathes a highlight over the terminal's four cardinal
-// triangles once per tick while on send cooldown. Our terminal already forms those triangles
-// where the light inner octagon (apex at ±0.65) shows around the grey plate (±0.45); we overlay
-// a white highlight on exactly those four tabs, drawn once at peak and alpha-pulsed by the
-// ticker (0 → peak → 0), matching the lab idiom.
+// Terminal cooldown pulse: vanilla breathes a white highlight over the ring between the
+// octagon and the plate — the band the arrows sit in — once per tick while on send
+// cooldown, and dims the arrows underneath it. The plate is cut out so the grey face and
+// the resource fill don't flash with it. Drawn once at peak and alpha-pulsed by the ticker
+// (0 → peak → 0), matching the lab idiom.
 const TERMINAL_GLOW_COLOR = 0xFFFFFF
 const TERMINAL_GLOW_ALPHA = 0.55   // peak; the ticker scales it by the per-tick pulse
-const TERMINAL_TRIANGLES: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
-  [[0, -0.65], [-0.45, -0.45], [0.45, -0.45]],  // top
-  [[0.65, 0], [0.45, -0.45], [0.45, 0.45]],     // right
-  [[0, 0.65], [0.45, 0.45], [-0.45, 0.45]],     // bottom
-  [[-0.65, 0], [-0.45, 0.45], [-0.45, -0.45]],  // left
-]
 function drawTerminalCooldownGlow(g: Graphics, cx: number, cy: number): void {
-  for (const tri of TERMINAL_TRIANGLES) {
-    g.poly(spts(cx, cy, tri))
-    g.fill({ color: TERMINAL_GLOW_COLOR, alpha: TERMINAL_GLOW_ALPHA })
-  }
+  g.poly(tpts(cx, cy, TERMINAL_OCTAGON))
+  g.fill({ color: TERMINAL_GLOW_COLOR, alpha: TERMINAL_GLOW_ALPHA })
+  g.rect(cx - TERMINAL_PLATE / 2, cy - TERMINAL_PLATE / 2, TERMINAL_PLATE, TERMINAL_PLATE)
+  g.cut()
 }
 
 // Lab: energy fills the base bar (left→right); the single stored mineral fills the bowl
@@ -723,6 +797,18 @@ function keeperGlowTexture(): Texture {
 // frame — `cooldownTime` is sent once and never re-sent, so a cached boolean would never clear.
 function cooldownEnd(obj: RoomObject): number {
   return typeof obj.cooldownTime === 'number' ? obj.cooldownTime : 0
+}
+
+// Tombstones fade out over their lifetime, as vanilla does: full alpha at deathTime,
+// gone at decayTime. Both are absolute ticks, so the ticker compares them against the
+// live game clock rather than caching a fraction. Neither field is declared on
+// RoomObject (the server's payload is untyped) and servers may omit them entirely —
+// without a sane pair the tombstone just stays fully opaque.
+function tombstoneDecay(obj: RoomObject): { death: number; decay: number } | undefined {
+  const death = typeof obj.deathTime === 'number' ? obj.deathTime : undefined
+  const decay = typeof obj.decayTime === 'number' ? obj.decayTime : undefined
+  if (death === undefined || decay === undefined || decay <= death) return undefined
+  return { death, decay }
 }
 
 function getLabContents(obj: RoomObject): {
@@ -1086,14 +1172,14 @@ function npcCreepName(obj: RoomObject, users?: Record<string, { username: string
 // structures (the spawn body + progress ring then render over it) instead of popping
 // on top. Other creeps stay above structures. Re-applied on update so the born
 // transition (spawning → false) restores the normal creep tier.
-function computeZIndex(obj: RoomObject, theme?: Theme | null): number {
+function computeZIndex(obj: RoomObject): number {
   const baseZ = obj.type === 'creep' ? (obj.spawning ? -1 : 100) : obj.type === 'flag' ? 200 : 0
-  const specZ = obj.type === 'flag' ? (theme?.flag?.zIndex ?? 0)
-    : obj.type === 'controller' ? (theme?.controller?.zIndex ?? 0)
-    : obj.type === 'tombstone' ? (theme?.tombstone?.zIndex ?? 0)
-    : obj.type === 'mineral' ? (theme?.mineral?.zIndex ?? 0)
+  const specZ = obj.type === 'flag' ? (defaultSpriteTheme.flag?.zIndex ?? 0)
+    : obj.type === 'controller' ? (defaultSpriteTheme.controller?.zIndex ?? 0)
+    : obj.type === 'tombstone' ? TOMBSTONE_Z_INDEX
+    : obj.type === 'mineral' ? (defaultSpriteTheme.mineral?.zIndex ?? 0)
     : obj.type === 'extractor' ? EXTRACTOR_Z_INDEX
-    : (theme?.sprites[obj.type]?.zIndex ?? 0)
+    : 0
   return baseZ + specZ
 }
 
@@ -1104,8 +1190,6 @@ function createObjectVisual(
   _badge?: Badge,
   badgeCache?: BadgeTextureCache,
   users?: Record<string, { _id: string; username: string; badge?: Badge }>,
-  theme?: Theme | null,
-  atlasCache?: AtlasCache | null,
 ): Container {
   const container = new Container()
   const g = new Graphics()
@@ -1415,8 +1499,8 @@ function createObjectVisual(
     }
     case 'mineral': {
       const mtype = typeof obj.mineralType === 'string' ? obj.mineralType : '?'
-      const mineralSpec = theme?.mineral
-      if (mineralSpec && atlasCache) {
+      const mineralSpec = defaultSpriteTheme.mineral
+      if (mineralSpec) {
         const frame = `mineral/${mtype}`
         const targetSize = TILE_SIZE * mineralSpec.tileScale
         const applyTexture = (sprite: Sprite, tex: Texture) => {
@@ -1429,11 +1513,11 @@ function createObjectVisual(
         sprite.x = cx
         sprite.y = cy
         container.addChild(sprite)
-        const tex = atlasCache.getTexture(theme!.atlasUrl, frame)
+        const tex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, frame)
         if (tex) {
           applyTexture(sprite, tex)
         } else {
-          atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
+          sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
             if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
           }).catch(err => logError('atlas/badge texture load failed', err))
         }
@@ -1458,8 +1542,8 @@ function createObjectVisual(
     }
     case 'deposit': {
       const depType = typeof obj.depositType === 'string' ? obj.depositType : undefined
-      const depSpec = theme?.deposit
-      if (depType && depSpec && atlasCache) {
+      const depSpec = defaultSpriteTheme.deposit
+      if (depType && depSpec) {
         const targetSize = TILE_SIZE * depSpec.tileScale
         const applyTexture = (sprite: Sprite, tex: Texture) => {
           sprite.texture = tex
@@ -1478,18 +1562,18 @@ function createObjectVisual(
           if (tintColor !== undefined) sprite.tint = tintColor
           if (isFill) sprite.alpha = DEPOSIT_FILL_ALPHA
           container.addChild(sprite)
-          const tex = atlasCache.getTexture(theme!.atlasUrl, frame)
+          const tex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, frame)
           if (tex) {
             applyTexture(sprite, tex)
           } else {
-            atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
+            sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
               if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
             }).catch(err => logError('atlas/badge texture load failed', err))
           }
         }
         break
       }
-      // Fallback: colored rect (no theme/atlas or unknown deposit type)
+      // Fallback: colored rect (unknown deposit type)
       g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
       g.fill(color)
       container.addChild(g)
@@ -1506,8 +1590,8 @@ function createObjectVisual(
         : undefined
       const ctrlBadge = ctrlUserId ? users?.[ctrlUserId]?.badge : undefined
 
-      const ctrlSpec: ControllerSpec | undefined = theme?.controller
-      if (ctrlSpec && atlasCache) {
+      const ctrlSpec: ControllerSpec | undefined = defaultSpriteTheme.controller
+      if (ctrlSpec) {
         const targetSize = TILE_SIZE * ctrlSpec.tileScale
         const segScale = targetSize / 600
 
@@ -1533,8 +1617,8 @@ function createObjectVisual(
         ;(container as ContainerWithTarget).__ctrlSegSprites = segSprites
         updateControllerSegSprites(container as ContainerWithTarget, level, progress, progressTotal)
 
-        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => atlasCache.getOrLoad(theme!.atlasUrl)
-        const bgTex = atlasCache.getTexture(theme!.atlasUrl, ctrlSpec.backgroundFrame)
+        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl)
+        const bgTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, ctrlSpec.backgroundFrame)
         if (bgTex) {
           bgSprite.texture = bgTex
         } else {
@@ -1542,7 +1626,7 @@ function createObjectVisual(
             if (!bgSprite.destroyed) bgSprite.texture = sheet.textures[ctrlSpec.backgroundFrame] ?? Texture.EMPTY
           }).catch(err => logError('atlas/badge texture load failed', err))
         }
-        const existingSegTex = atlasCache.getTexture(theme!.atlasUrl, ctrlSpec.segmentFrame)
+        const existingSegTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, ctrlSpec.segmentFrame)
         if (existingSegTex) {
           for (const seg of segSprites) seg.texture = existingSegTex
         } else {
@@ -1632,8 +1716,8 @@ function createObjectVisual(
     case 'tower': {
       const { energy: towerEnergy, capacity: towerCap } = getExtensionEnergy(obj)
 
-      const towerSpec = theme?.tower
-      if (towerSpec && atlasCache) {
+      const towerSpec = defaultSpriteTheme.tower
+      if (towerSpec) {
         const targetSize = TILE_SIZE * towerSpec.tileScale
 
         // Static ring (footprint, tinted by ownership)
@@ -1678,14 +1762,14 @@ function createObjectVisual(
           updateTowerFill(container as ContainerWithTarget, calcTowerFillHeight(towerEnergy, towerCap))
         }
 
-        const ringTex = atlasCache.getTexture(theme!.atlasUrl, towerSpec.ringFrame)
-        const bodyTex = atlasCache.getTexture(theme!.atlasUrl, towerSpec.bodyFrame)
+        const ringTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, towerSpec.ringFrame)
+        const bodyTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, towerSpec.bodyFrame)
         if (ringTex && bodyTex) {
           ring.texture = ringTex
           body.texture = bodyTex
           applyScale(bodyTex)
         } else {
-          atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
+          sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
             if (!ring.destroyed) ring.texture = sheet.textures[towerSpec.ringFrame] ?? Texture.EMPTY
             if (!body.destroyed) {
               const t = sheet.textures[towerSpec.bodyFrame] ?? Texture.EMPTY
@@ -1738,50 +1822,12 @@ function createObjectVisual(
       break
     }
     case 'storage': {
-      const spec = theme?.sprites['storage']
-      if (spec && atlasCache) {
-        const { bands: storageBands, used: storageUsed, capacity: storageCap } = getStoreBands(obj)
-        const targetSize = TILE_SIZE * spec.tileScale
-        const applyTexture = (sprite: Sprite, tex: Texture) => {
-          sprite.texture = tex
-          sprite.width = targetSize
-          sprite.height = targetSize
-        }
-        for (const layer of spec.layers) {
-          const sprite = new Sprite()
-          sprite.anchor.set(0.5, 0.5)
-          sprite.x = cx
-          sprite.y = cy
-          if (layer.tint === 'owner') sprite.tint = outlineColor
-          container.addChild(sprite)
-          const tex = atlasCache.getTexture(theme!.atlasUrl, layer.frame)
-          if (tex) {
-            applyTexture(sprite, tex)
-          } else {
-            atlasCache.getOrLoad(theme!.atlasUrl).then(sheet => {
-              if (!sprite.destroyed) applyTexture(sprite, sheet.textures[layer.frame] ?? Texture.EMPTY)
-            }).catch(err => logError('atlas/badge texture load failed', err))
-          }
-        }
-        const storageFillG = new Graphics()
-        container.addChild(storageFillG)
-        ;(container as ContainerWithTarget).__storageFillG = storageFillG
-        ;(container as ContainerWithTarget).__storageBands = storageBands
-        ;(container as ContainerWithTarget).__storageUsed = storageUsed
-        ;(container as ContainerWithTarget).__storageCapacity = storageCap
-        updateStorageFill(container as ContainerWithTarget, calcStorageFillHeight(storageUsed, storageCap))
-        break
-      }
       const { bands: storageBands, used: storageUsed, capacity: storageCap } = getStoreBands(obj)
-      const storagePts = spts(cx, cy, [
-        [-0.6, -0.7], [0, -0.8], [0.6, -0.7], [0.65, 0],
-        [0.6, 0.7], [0, 0.8], [-0.6, 0.7], [-0.65, 0], [-0.6, -0.7],
-      ])
-      g.poly(storagePts)
+      storageShellPath(g, cx, cy)
       g.fill(ST_DARK)
-      g.poly(storagePts)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
+      storageShellPath(g, cx, cy)
+      g.stroke({ width: STORAGE_SHELL_STROKE, color: outlineColor })
+      g.rect(cx - STORAGE_INNER_W / 2, cy - STORAGE_INNER_H / 2, STORAGE_INNER_W, STORAGE_INNER_H)
       g.fill(ST_GRAY)
       container.addChild(g)
 
@@ -1792,33 +1838,31 @@ function createObjectVisual(
       ;(container as ContainerWithTarget).__storageUsed = storageUsed
       ;(container as ContainerWithTarget).__storageCapacity = storageCap
       updateStorageFill(container as ContainerWithTarget, calcStorageFillHeight(storageUsed, storageCap))
-
-      const storageBorderG = new Graphics()
-      storageBorderG.rect(cx - TILE_SIZE * 0.5, cy - TILE_SIZE * 0.6, TILE_SIZE * 1.0, TILE_SIZE * 1.2)
-      storageBorderG.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
-      container.addChild(storageBorderG)
       break
     }
     case 'terminal': {
-      const termOuter = spts(cx, cy, [
-        [0, -0.8], [0.55, -0.55], [0.8, 0], [0.55, 0.55],
-        [0, 0.8], [-0.55, 0.55], [-0.8, 0], [-0.55, -0.55], [0, -0.8],
-      ])
-      const termInner = spts(cx, cy, [
-        [0, -0.65], [0.45, -0.45], [0.65, 0], [0.45, 0.45],
-        [0, 0.65], [-0.45, 0.45], [-0.65, 0], [-0.45, -0.45], [0, -0.65],
-      ])
-      g.poly(termOuter)
+      const termOctagon = tpts(cx, cy, TERMINAL_OCTAGON)
+      g.poly(termOctagon)
       g.fill(ST_DARK)
-      g.poly(termOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.poly(termInner)
-      g.fill(ST_LIGHT)
-      g.rect(cx - TILE_SIZE * 0.45, cy - TILE_SIZE * 0.45, TILE_SIZE * 0.9, TILE_SIZE * 0.9)
-      g.fill(ST_GRAY)
-      g.rect(cx - TILE_SIZE * 0.45, cy - TILE_SIZE * 0.45, TILE_SIZE * 0.9, TILE_SIZE * 0.9)
-      g.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
+      g.poly(termOctagon)
+      g.stroke({ width: TERMINAL_STROKE, color: outlineColor })
       container.addChild(g)
+
+      // Arrows sit between the octagon and the plate, and dim on send cooldown — so they
+      // need their own Graphics for the ticker to alpha (see __terminalArrowsG).
+      const termArrowsG = new Graphics()
+      for (const arrow of TERMINAL_ARROWS) {
+        termArrowsG.poly(tpts(cx, cy, arrow))
+        termArrowsG.fill(TERMINAL_ARROW_COLOR)
+      }
+      container.addChild(termArrowsG)
+
+      const termPlateG = new Graphics()
+      termPlateG.rect(cx - TERMINAL_PLATE / 2, cy - TERMINAL_PLATE / 2, TERMINAL_PLATE, TERMINAL_PLATE)
+      termPlateG.fill(ST_DARK)
+      termPlateG.rect(cx - TERMINAL_FACE / 2, cy - TERMINAL_FACE / 2, TERMINAL_FACE, TERMINAL_FACE)
+      termPlateG.fill(ST_GRAY)
+      container.addChild(termPlateG)
 
       // Store fill: a square that grows from the centre, tinted by the dominant resource,
       // animated each tick via the shared fill-tween loop (see startTerminalFillAnimation).
@@ -1833,13 +1877,15 @@ function createObjectVisual(
       termVisual.__terminalCapacity = termCap
       updateTerminalFill(termVisual, calcCenterFillFraction(termUsed, termCap))
 
-      // Cooldown pulse: a white highlight over the four triangles, alpha-pulsed by the ticker
-      // while on send cooldown. cooldownTime is absolute, so store it and compare against the
-      // live game clock each frame (see cooldownEnd) instead of caching a boolean.
+      // Cooldown pulse: a white highlight over the arrow ring, alpha-pulsed by the ticker
+      // while on send cooldown, with the arrows dimmed under it. cooldownTime is absolute,
+      // so store it and compare against the live game clock each frame (see cooldownEnd)
+      // instead of caching a boolean.
       const termCooldownG = new Graphics()
       drawTerminalCooldownGlow(termCooldownG, cx, cy)
       termCooldownG.alpha = 0
       container.addChild(termCooldownG)
+      termVisual.__terminalArrowsG = termArrowsG
       termVisual.__terminalCooldownG = termCooldownG
       termVisual.__terminalCooldownTime = cooldownEnd(obj)
       break
@@ -2049,10 +2095,10 @@ function createObjectVisual(
       const flagColor = FLAG_COLORS[colorIdx] ?? FLAG_COLORS[0]
       const secColor = FLAG_COLORS[secColorIdx] ?? FLAG_COLORS[0]
 
-      const flagSpec: FlagSpec | undefined = theme?.flag
-      if (flagSpec && atlasCache) {
+      const flagSpec: FlagSpec | undefined = defaultSpriteTheme.flag
+      if (flagSpec) {
         const targetSize = TILE_SIZE * flagSpec.tileScale
-        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => atlasCache.getOrLoad(theme!.atlasUrl)
+        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl)
         const applyTex = (sprite: Sprite, tex: Texture) => {
           sprite.texture = tex
           sprite.width = targetSize
@@ -2066,7 +2112,7 @@ function createObjectVisual(
         mainSprite.tint = flagColor
         container.addChild(mainSprite)
 
-        const mainTex = atlasCache.getTexture(theme!.atlasUrl, flagSpec.mainFrame)
+        const mainTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, flagSpec.mainFrame)
         if (mainTex) {
           applyTex(mainSprite, mainTex)
         } else {
@@ -2083,7 +2129,7 @@ function createObjectVisual(
           secondSprite.tint = secColor
           container.addChild(secondSprite)
 
-          const secondTex = atlasCache.getTexture(theme!.atlasUrl, flagSpec.secondFrame)
+          const secondTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, flagSpec.secondFrame)
           if (secondTex) {
             applyTex(secondSprite, secondTex)
           } else {
@@ -2182,76 +2228,36 @@ function createObjectVisual(
       const isMine = tsUser !== undefined && tsUser === currentUserId
       const tsColor = isMine ? CS_OWN : OBJ_FOREIGN
 
-      const tsSpec: TombstoneSpec | undefined = theme?.tombstone
-      if (tsSpec && atlasCache) {
-        const targetSize = TILE_SIZE * tsSpec.tileScale
-        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => atlasCache.getOrLoad(theme!.atlasUrl)
+      const w = TILE_SIZE * 0.62
+      const h = TILE_SIZE * 0.82
+      const x0 = cx - w / 2
+      const y0 = cy - h / 2
+      const r = w / 2
 
-        const shellSprite = new Sprite()
-        shellSprite.anchor.set(0.5, 0.5)
-        shellSprite.x = cx
-        shellSprite.y = cy
-        shellSprite.width = targetSize
-        shellSprite.height = targetSize
-        container.addChild(shellSprite)
+      // Outline only — the terrain shows through the headstone, as vanilla's does.
+      const tg = new Graphics()
+      tg.moveTo(x0, y0 + r)
+      tg.arc(cx, y0 + r, r, Math.PI, 0, false)
+      tg.lineTo(x0 + w, y0 + h)
+      tg.lineTo(x0, y0 + h)
+      tg.closePath()
+      tg.stroke({ width: TILE_SIZE * 0.07, color: tsColor, alpha: 0.9 })
+      container.addChild(tg)
 
-        const crossSprite = new Sprite()
-        crossSprite.anchor.set(0.5, 0.5)
-        crossSprite.x = cx
-        crossSprite.y = cy
-        crossSprite.width = targetSize
-        crossSprite.height = targetSize
-        crossSprite.tint = tsColor
-        container.addChild(crossSprite)
+      const xR = TILE_SIZE * 0.18
+      const xMark = new Graphics()
+      xMark.moveTo(cx - xR, cy - xR * 0.6)
+      xMark.lineTo(cx + xR, cy + xR * 0.6)
+      xMark.moveTo(cx + xR, cy - xR * 0.6)
+      xMark.lineTo(cx - xR, cy + xR * 0.6)
+      xMark.stroke({ width: TILE_SIZE * 0.09, color: tsColor, cap: 'round' })
+      container.addChild(xMark)
 
-        const shellTex = atlasCache.getTexture(theme!.atlasUrl, tsSpec.shellFrame)
-        if (shellTex) {
-          shellSprite.texture = shellTex
-        } else {
-          loadAtlas().then(sheet => {
-            if (!shellSprite.destroyed) shellSprite.texture = sheet.textures[tsSpec.shellFrame] ?? Texture.EMPTY
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-
-        const crossTex = atlasCache.getTexture(theme!.atlasUrl, tsSpec.crossFrame)
-        if (crossTex) {
-          crossSprite.texture = crossTex
-        } else {
-          loadAtlas().then(sheet => {
-            if (!crossSprite.destroyed) crossSprite.texture = sheet.textures[tsSpec.crossFrame] ?? Texture.EMPTY
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-      } else {
-        // Graphics fallback
-        const w = TILE_SIZE * 0.62
-        const h = TILE_SIZE * 0.82
-        const x0 = cx - w / 2
-        const y0 = cy - h / 2
-        const r = w / 2
-
-        const tg = new Graphics()
-        tg.moveTo(x0, y0 + r)
-        tg.arc(cx, y0 + r, r, Math.PI, 0, false)
-        tg.lineTo(x0 + w, y0 + h)
-        tg.lineTo(x0, y0 + h)
-        tg.closePath()
-        tg.fill(ST_DARK)
-        tg.moveTo(x0, y0 + r)
-        tg.arc(cx, y0 + r, r, Math.PI, 0, false)
-        tg.lineTo(x0 + w, y0 + h)
-        tg.lineTo(x0, y0 + h)
-        tg.closePath()
-        tg.stroke({ width: TILE_SIZE * 0.07, color: tsColor, alpha: 0.9 })
-        container.addChild(tg)
-
-        const xR = TILE_SIZE * 0.18
-        const xMark = new Graphics()
-        xMark.moveTo(cx - xR, cy - xR * 0.6)
-        xMark.lineTo(cx + xR, cy + xR * 0.6)
-        xMark.moveTo(cx + xR, cy - xR * 0.6)
-        xMark.lineTo(cx - xR, cy + xR * 0.6)
-        xMark.stroke({ width: TILE_SIZE * 0.09, color: tsColor, cap: 'round' })
-        container.addChild(xMark)
+      const tsDecay = tombstoneDecay(obj)
+      if (tsDecay) {
+        const tsVisual = container as ContainerWithTarget
+        tsVisual.__tombstoneDeath = tsDecay.death
+        tsVisual.__tombstoneDecayTime = tsDecay.decay
       }
       break
     }
@@ -2351,7 +2357,7 @@ function createObjectVisual(
     container.addChild(label)
   }
 
-  container.zIndex = computeZIndex(obj, theme)
+  container.zIndex = computeZIndex(obj)
 
   container.position.set(obj.x * TILE_SIZE, obj.y * TILE_SIZE)
   return container
@@ -2397,6 +2403,9 @@ type ContainerWithTarget = Container & {
   __terminalDominant?: string
   __terminalUsed?: number
   __terminalCapacity?: number
+  __tombstoneDeath?: number
+  __tombstoneDecayTime?: number        // absolute tick the tombstone vanishes; alpha ramps down from __tombstoneDeath
+  __terminalArrowsG?: Graphics
   __terminalCooldownG?: Graphics
   __terminalCooldownTime?: number      // absolute tick the send cooldown ends; pulse runs while > gameTime
   __labMineralG?: Graphics
@@ -2712,8 +2721,6 @@ export class ObjectLayer {
   private badge?: Badge
   private readonly badgeCache = sharedBadgeCache
   private users?: Record<string, { _id: string; username: string; badge?: Badge }>
-  private activeTheme: Theme | null = null
-  private atlasCache: AtlasCache | null = null
   private roadColor: number = OBJ_ROAD
   private wallColor: number = ST_DARK
   private lighting: LightingLayer | null = null
@@ -2752,11 +2759,6 @@ export class ObjectLayer {
       this.tickerCallback = () => this.tick()
       ticker.add(this.tickerCallback)
     }
-  }
-
-  setTheme(theme: Theme | null, cache: AtlasCache | null): void {
-    this.activeTheme = theme
-    this.atlasCache = cache
   }
 
   setRoadColor(color: number): void {
@@ -2946,11 +2948,20 @@ export class ObjectLayer {
         const onCd = (visual.__labCooldownTime ?? 0) > this.currentGameTime
         visual.__labCooldownG.alpha = onCd ? cooldownPulse : 0
       }
-      // Terminal cooldown pulse: the four triangles breathe once per game tick (same tick-aligned
-      // pulse as the lab) while the absolute cooldownTime is still ahead of the live game clock.
+      // Tombstone decay: fades from full at deathTime to nothing at decayTime, matching vanilla.
+      // Only set when the server sent a sane pair (see tombstoneDecay), so elsewhere it stays opaque.
+      if (visual.__tombstoneDecayTime !== undefined) {
+        const death = visual.__tombstoneDeath ?? 0
+        const span = visual.__tombstoneDecayTime - death
+        visual.alpha = Math.min(1, Math.max(0, 1 - (this.currentGameTime - death) / span))
+      }
+      // Terminal cooldown: the arrow ring breathes once per game tick (same tick-aligned pulse
+      // as the lab) and the arrows dim under it, while the absolute cooldownTime is still ahead
+      // of the live game clock.
       if (visual.__terminalCooldownG) {
         const onCd = (visual.__terminalCooldownTime ?? 0) > this.currentGameTime
         visual.__terminalCooldownG.alpha = onCd ? cooldownPulse : 0
+        if (visual.__terminalArrowsG) visual.__terminalArrowsG.alpha = onCd ? TERMINAL_ARROW_CD_ALPHA : 1
       }
       // Keeper-lair pulse: expand-and-fade glow on a free-running wall-clock cycle, offset per lair
       // so neighbours don't ping in lockstep. Pure scale + alpha on the shared glow sprite; the sin
@@ -3312,7 +3323,7 @@ export class ObjectLayer {
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
-            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
             visual.__tileX = obj.x
             visual.__tileY = obj.y
             // A creep's first-ever appearance sitting exactly on an edge tile is
@@ -3370,7 +3381,7 @@ export class ObjectLayer {
                 existing.__creepCapacity = capacity
               }
               // Re-tier on the spawning → born transition (and vice-versa).
-              const cz = computeZIndex(obj, this.activeTheme)
+              const cz = computeZIndex(obj)
               if (existing.zIndex !== cz) existing.zIndex = cz
             } else if (obj.type === 'flag') {
               const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
@@ -3382,7 +3393,7 @@ export class ObjectLayer {
                 this.container.removeChild(existing)
                 destroyVisual(existing)
                 this.objects.delete(id)
-                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
                 visual.__tileX = obj.x
                 visual.__tileY = obj.y
                 this.applyLabelScale(visual)
@@ -3555,7 +3566,7 @@ export class ObjectLayer {
                 this.container.removeChild(existing)
                 destroyVisual(existing)
                 this.objects.delete(id)
-                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
                 visual.__tileX = obj.x
                 visual.__tileY = obj.y
                 this.applyLabelScale(visual)
@@ -3620,7 +3631,7 @@ export class ObjectLayer {
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)
         if (!existing) {
-          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
           visual.__tileX = obj.x
           visual.__tileY = obj.y
           this.applyLabelScale(visual)
@@ -3661,7 +3672,7 @@ export class ObjectLayer {
               existing.__creepCapacity = capacity
             }
             // Re-tier on the spawning → born transition (and vice-versa).
-            const cz = computeZIndex(obj, this.activeTheme)
+            const cz = computeZIndex(obj)
             if (existing.zIndex !== cz) existing.zIndex = cz
           } else if (obj.type === 'flag') {
             const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
@@ -3673,7 +3684,7 @@ export class ObjectLayer {
               this.container.removeChild(existing)
               destroyVisual(existing)
               this.objects.delete(id)
-              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
               visual.__tileX = obj.x
               visual.__tileY = obj.y
               this.applyLabelScale(visual)
@@ -3730,7 +3741,7 @@ export class ObjectLayer {
               this.container.removeChild(existing)
               destroyVisual(existing)
               this.objects.delete(id)
-              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users, this.activeTheme, this.atlasCache)
+              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
               visual.__tileX = obj.x
               visual.__tileY = obj.y
               this.applyLabelScale(visual)

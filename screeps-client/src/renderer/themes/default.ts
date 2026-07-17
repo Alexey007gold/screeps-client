@@ -13,15 +13,6 @@ export const defaultSpriteTheme: Theme = {
   id: 'default',
   name: 'Default',
   atlasUrl: `${basePath()}/themes/default/sprite-0.json${atlasQuery}`,
-  sprites: {
-    storage: {
-      layers: [
-        { frame: 'storage/shell', tint: 'owner' },
-        { frame: 'storage/fill' },
-      ],
-      tileScale: 1.75,
-    },
-  },
   controller: {
     backgroundFrame: 'controller/background',
     segmentFrame: 'controller/segment',
@@ -32,12 +23,6 @@ export const defaultSpriteTheme: Theme = {
     secondFrame: 'flag/second',
     tileScale: 3,
     zIndex: 5,
-  },
-  tombstone: {
-    shellFrame: 'grave/shell',
-    crossFrame: 'grave/cross',
-    tileScale: 1.0,
-    zIndex: 4,
   },
   deposit: {
     tileScale: 1.2,
