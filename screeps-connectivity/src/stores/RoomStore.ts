@@ -17,15 +17,20 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 // changed. Nested objects (`store`, `storeCapacityResource`, `effects`, …) are diffed
 // recursively rather than replaced wholesale — a plain shallow spread would clobber the whole
 // `store` with that tick's single changed resource (e.g. `{ energy }`), silently dropping every
-// other resource until it next changes. A `null` leaf means the field was removed; arrays and
-// primitives replace as-is. Returns fresh objects so previously returned snapshots are never
-// mutated.
+// other resource until it next changes. A `null` leaf means the field was removed. A full array
+// (e.g. a fresh `body`) replaces as-is; but the server also diffs an *existing* array field as an
+// index-keyed object (`{ "0": … }`, or an empty `{}` when nothing inside changed), which must be
+// merged element-wise — replacing the array with that object would turn `body` into a non-array
+// and break every consumer that iterates it. Returns fresh objects so previously returned
+// snapshots are never mutated.
 function mergeObjectDiff(prev: Record<string, unknown>, diff: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...prev }
   for (const key in diff) {
     const next = diff[key]
     if (next === null) {
       delete out[key]
+    } else if (isPlainObject(next) && Array.isArray(out[key])) {
+      out[key] = mergeArrayDiff(out[key] as unknown[], next)
     } else if (isPlainObject(next) && isPlainObject(out[key])) {
       out[key] = mergeObjectDiff(out[key] as Record<string, unknown>, next)
     } else {
@@ -33,6 +38,29 @@ function mergeObjectDiff(prev: Record<string, unknown>, diff: Record<string, unk
     }
   }
   return out
+}
+
+// Merge an index-keyed array diff onto a copy of the previous array. Keys are element indices;
+// a `null` value removes that element (holes are compacted away so consumers always see a dense
+// array); an object value is merged recursively into the existing element. An empty diff leaves
+// the array unchanged.
+function mergeArrayDiff(prev: unknown[], diff: Record<string, unknown>): unknown[] {
+  const out = prev.slice()
+  let removed = false
+  for (const key of Object.keys(diff)) {
+    const idx = Number(key)
+    if (!Number.isInteger(idx) || idx < 0) continue
+    const next = diff[key]
+    if (next === null) {
+      delete out[idx]
+      removed = true
+    } else if (isPlainObject(next) && isPlainObject(out[idx])) {
+      out[idx] = mergeObjectDiff(out[idx] as Record<string, unknown>, next)
+    } else {
+      out[idx] = next
+    }
+  }
+  return removed ? out.filter(() => true) : out
 }
 
 export class RoomStore extends TypedStore<RoomStoreEvents> {

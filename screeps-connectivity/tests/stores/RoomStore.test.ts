@@ -145,6 +145,43 @@ describe('RoomStore', () => {
     expect((store.objects('W7N7', 'shard0')?.['c1'] as { body: unknown[] }).body).toEqual([{ type: 'carry' }])
   })
 
+  it('keeps an array field an array when the diff sends an empty object (unchanged)', async () => {
+    const { store, socket } = makeStore()
+    let messageHandler: (data: unknown) => void = () => {}
+    ;(socket.on as ReturnType<typeof vi.fn>).mockImplementation((_ch: string, cb: (data: unknown) => void) => {
+      messageHandler = cb
+      return { dispose: vi.fn() }
+    })
+
+    store.subscribe('W7N7', 'shard0')
+    messageHandler({ objects: { c1: { _id: 'c1', type: 'creep', room: 'W7N7', body: [{ type: 'work' }, { type: 'move' }] } }, gameTime: 1000 })
+    // Defensive: an object-shaped diff for an array field must never leave the field a non-array
+    // (regression — a non-array body crashed every consumer that iterates it). An empty object is
+    // the degenerate case and must leave the array untouched.
+    messageHandler({ objects: { c1: { x: 5, body: {} } }, gameTime: 1001 })
+
+    const body = (store.objects('W7N7', 'shard0')?.['c1'] as { body: unknown }).body
+    expect(Array.isArray(body)).toBe(true)
+    expect(body).toEqual([{ type: 'work' }, { type: 'move' }])
+  })
+
+  it('merges an index-keyed array diff onto the existing array', async () => {
+    const { store, socket } = makeStore()
+    let messageHandler: (data: unknown) => void = () => {}
+    ;(socket.on as ReturnType<typeof vi.fn>).mockImplementation((_ch: string, cb: (data: unknown) => void) => {
+      messageHandler = cb
+      return { dispose: vi.fn() }
+    })
+
+    store.subscribe('W7N7', 'shard0')
+    messageHandler({ objects: { c1: { _id: 'c1', type: 'creep', room: 'W7N7', body: [{ type: 'tough', hits: 100 }, { type: 'move', hits: 100 }] } }, gameTime: 1000 })
+    // Only the first part took damage — sent as an index-keyed diff.
+    messageHandler({ objects: { c1: { body: { 0: { hits: 50 } } } }, gameTime: 1001 })
+
+    expect((store.objects('W7N7', 'shard0')?.['c1'] as { body: unknown[] }).body)
+      .toEqual([{ type: 'tough', hits: 50 }, { type: 'move', hits: 100 }])
+  })
+
   it('does not mutate a previously returned snapshot when applying a diff', async () => {
     const { store, socket } = makeStore()
     let messageHandler: (data: unknown) => void = () => {}
