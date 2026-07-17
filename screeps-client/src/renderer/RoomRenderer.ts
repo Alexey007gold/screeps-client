@@ -1,6 +1,7 @@
 import { Application, Container, Graphics, Sprite, Point, Rectangle } from 'pixi.js'
 import { HoverHighlightLayer } from './HoverHighlightLayer.js'
 import { LightingLayer, buildLights } from './LightingLayer.js'
+import { ContextRecovery } from './ContextRecovery.js'
 
 export const TILE_SIZE = 12
 export const ROOM_SIZE = 50 * TILE_SIZE
@@ -25,6 +26,8 @@ export class RoomRenderer {
   readonly darkOverlay: Sprite
   readonly lightLayer: Container
   readonly lighting: LightingLayer
+  private readonly contextRecovery: ContextRecovery
+  private onContextRestoredCallback: (() => void) | null = null
   private destroyed = false
   private canDrag = false
   private container: HTMLElement
@@ -45,7 +48,12 @@ export class RoomRenderer {
     this.world = new Container({ sortableChildren: true })
     this.app.stage.addChild(this.world)
 
-    this.lighting = new LightingLayer(this.app.renderer)
+    this.contextRecovery = new ContextRecovery(app, () => {
+      this.lighting.refreshAfterContextRestore()
+      this.onContextRestoredCallback?.()
+    })
+
+    this.lighting = new LightingLayer(this.app.renderer, () => this.contextRecovery.isLost)
     this.darkOverlay = this.lighting.displaySprite
     this.darkOverlay.label = 'darkOverlay'
     this.darkOverlay.zIndex = Z.darkOverlay
@@ -614,6 +622,18 @@ export class RoomRenderer {
     this.lighting.render()
   }
 
+  isContextLost(): boolean {
+    return this.contextRecovery.isLost
+  }
+
+  // Registered by the owning component (RoomViewer) to rebake its externally-owned
+  // GPU-only content (the terrain layer's wall-noise sprite) once the WebGL context
+  // comes back — see ContextRecovery for why this can't self-heal like CPU-backed
+  // textures do.
+  onContextRestored(cb: (() => void) | null): void {
+    this.onContextRestoredCallback = cb
+  }
+
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
@@ -621,6 +641,7 @@ export class RoomRenderer {
     this.cancelWheelTimeout()
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.contextRecovery.dispose()
     this.hoverLayer.destroy()
     this.lighting.destroy()
     this.app.destroy(true, { children: true })

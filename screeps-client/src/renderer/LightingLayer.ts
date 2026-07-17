@@ -55,11 +55,13 @@ export class LightingLayer {
   private readonly scene: Container
   private readonly gradientTexture: Texture
   private readonly lights = new Map<string, Sprite>()
+  private readonly isContextLost: () => boolean
   private dirty = false
   private destroyed = false
 
-  constructor(renderer: Renderer) {
+  constructor(renderer: Renderer, isContextLost: () => boolean = () => false) {
     this.renderer = renderer
+    this.isContextLost = isContextLost
     this.gradientTexture = buildGradientTexture()
 
     this.rt = RenderTexture.create({ width: ROOM_SIZE, height: ROOM_SIZE })
@@ -111,10 +113,22 @@ export class LightingLayer {
 
   // Composite the lightmap into the RenderTexture if anything changed. Cheap
   // no-op otherwise. Must run before the main frame is presented.
+  //
+  // Guarded against a lost WebGL context: unlike the app's own ticker-driven render
+  // pass, this is called directly from room:update handling (see RoomScene.applyUpdate),
+  // so it can run even while the context is down — attempting it would throw.
   render(): void {
-    if (this.destroyed || !this.dirty) return
+    if (this.destroyed || !this.dirty || this.isContextLost()) return
     this.renderer.render({ container: this.scene, target: this.rt, clear: true })
     this.dirty = false
+  }
+
+  // Called once the WebGL context comes back after a loss. The RenderTexture's GPU
+  // storage was wiped regardless of whether `dirty` was set at the time of loss, so
+  // this repaints unconditionally rather than relying on the dirty flag.
+  refreshAfterContextRestore(): void {
+    this.dirty = true
+    this.render()
   }
 
   clear(): void {

@@ -2,6 +2,7 @@ import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture 
 import type { RoomMap2Data, Badge, TerrainColors } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { MapVisualLayer } from './MapVisualLayer.js'
+import { ContextRecovery } from './ContextRecovery.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
@@ -90,6 +91,7 @@ export class MapRenderer {
   public currentShard: string = 'shard0'
   private readonly callbacks: MapRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
+  private contextRecovery: ContextRecovery | null = null
   private _destroyed = false
   private showRoomNames = false
   private worldBoundsSet: { minX: number; maxX: number; minY: number; maxY: number } | null = null
@@ -156,6 +158,11 @@ export class MapRenderer {
       antialias: false,
       preference: 'webgl',
     })
+
+    // All of this renderer's textures (baked terrain bitmaps, badges) are CPU-backed
+    // and self-heal automatically once the context is restored — this just pauses the
+    // ticker while the context is down so nothing spams draw calls at a dead context.
+    this.contextRecovery = new ContextRecovery(this.app, () => {})
 
     this.resizeObserver = new ResizeObserver((entries) => {
       const { width: newW, height: newH } = entries[0].contentRect
@@ -840,6 +847,8 @@ export class MapRenderer {
     this._destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.contextRecovery?.dispose()
+    this.contextRecovery = null
     if (this.visibleDebounceTimer !== null) {
       clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = null

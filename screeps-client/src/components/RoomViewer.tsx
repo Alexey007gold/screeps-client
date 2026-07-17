@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount, untrack, Show } from 'solid-js'
 import { RoomRenderer, Z } from '~/renderer/RoomRenderer.js'
-import { createTerrainLayer, setTerrainEffectsVisible } from '~/renderer/TerrainLayer.js'
+import { createTerrainLayer, setTerrainEffectsVisible, rebakeWallNoise } from '~/renderer/TerrainLayer.js'
 import { parseRoomDecorations, type RoomDecoration } from '~/renderer/roomDecorations.js'
 import { OBJ_ROAD, ST_DARK } from '~/renderer/colors.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
@@ -75,6 +75,18 @@ export function RoomViewer(props: RoomViewerProps) {
   onMount(async () => {
     if (!containerRef) return
     const r = await RoomRenderer.create(containerRef)
+    // The terrain layer's wall-noise sprite and the visual layer's canvas texture are
+    // both GPU-only content owned here (not inside RoomRenderer) — see ContextRecovery
+    // for why they don't self-heal from a WebGL context loss and need an explicit repaint.
+    // eslint-disable-next-line solid/reactivity -- fires later, off a WebGL event, not during render
+    r.onContextRestored(() => {
+      const t = untrack(terrain)
+      if (terrainLayerRef && t && t.room === props.room) {
+        const dec = untrack(roomDecoration)
+        rebakeWallNoise(terrainLayerRef, t.data, r.app.renderer, dec?.room === props.room ? dec.decoration.terrain : undefined)
+      }
+      visualLayer?.refresh()
+    })
     setRenderer(r)
   })
 
@@ -562,7 +574,7 @@ export function RoomViewer(props: RoomViewerProps) {
       animLayer.container.zIndex = Z.animations
       r.world.addChild(animLayer.container)
 
-      visualLayer = new VisualLayer(r.app.renderer, r.world, r.app.ticker)
+      visualLayer = new VisualLayer(r.app.renderer, r.world, r.app.ticker, () => r.isContextLost())
       visualLayer.container.zIndex = Z.visuals
       r.world.addChild(visualLayer.container)
 

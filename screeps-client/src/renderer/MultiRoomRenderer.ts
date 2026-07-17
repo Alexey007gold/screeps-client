@@ -2,6 +2,7 @@ import { Application, Container, Graphics, RenderTexture, Sprite, Texture } from
 import type { RoomMap2Data, RoomObjectMap, RoomObjectDiff, RoomTerrain, RoomObject } from 'screeps-connectivity'
 import { WorldCamera, type VisibleBounds, type WorldCameraBounds } from './WorldCamera.js'
 import { RoomScene, type RoomSceneUpdateOptions } from './RoomScene.js'
+import { ContextRecovery } from './ContextRecovery.js'
 import type { RoomDecoration } from './roomDecorations.js'
 import type { SelectionVisual } from './HoverHighlightLayer.js'
 import { TILE_SIZE } from './RoomRenderer.js'
@@ -87,6 +88,7 @@ export class MultiRoomRenderer {
   public currentShard: string = 'shard0'
   private readonly callbacks: MultiRoomRendererCallbacks
   private resizeObserver: ResizeObserver | null = null
+  private contextRecovery: ContextRecovery | null = null
   private _destroyed = false
   private worldBoundsSet: WorldCameraBounds | null = null
   private lastVisibleBounds: VisibleBounds | null = null
@@ -127,6 +129,13 @@ export class MultiRoomRenderer {
       preference: 'webgl',
     })
 
+    // Every live room scene owns GPU-only content (baked wall-noise sprite, lighting
+    // RT, visual-layer canvas texture) that doesn't self-heal from a WebGL context
+    // loss the way CPU-backed textures do — see ContextRecovery / RoomScene.
+    this.contextRecovery = new ContextRecovery(this.app, () => {
+      for (const scene of this.roomScenes.values()) scene.handleContextRestored()
+    })
+
     this.resizeObserver = new ResizeObserver((entries) => {
       const { width: newW, height: newH } = entries[0].contentRect
       const oldW = this.app.screen.width
@@ -149,6 +158,10 @@ export class MultiRoomRenderer {
 
     this.boundsGraphics = new Graphics()
     this.camera.world.addChild(this.boundsGraphics)
+  }
+
+  isContextLost(): boolean {
+    return this.contextRecovery?.isLost ?? false
   }
 
   get zoom(): number {
@@ -385,7 +398,7 @@ export class MultiRoomRenderer {
     if (this.roomScenes.has(roomName)) return false
     const coord = parseRoomName(roomName)
     if (!coord) return false
-    const scene = new RoomScene(this.app.ticker, this.app.renderer, this.camera.world)
+    const scene = new RoomScene(this.app.ticker, this.app.renderer, this.camera.world, () => this.isContextLost())
     scene.root.x = coord.x * ROOM_WORLD_SIZE
     scene.root.y = coord.y * ROOM_WORLD_SIZE
     // Appended after the (already-created) base tile for this room, so it
@@ -521,6 +534,8 @@ export class MultiRoomRenderer {
     this._destroyed = true
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
+    this.contextRecovery?.dispose()
+    this.contextRecovery = null
     this.clearAllFullDetailRooms()
     this.camera?.destroy()
     for (const [, entry] of this.activeRooms) {

@@ -43,14 +43,16 @@ export class VisualLayer {
   private readonly resolution: number
   private readonly world: Container
   private readonly ticker: Ticker
+  private readonly isContextLost: () => boolean
   private lastRaw = ''
   private lastPhysSize = 0
   private prevScaleX = -1   // for detecting zoom-settled (scale unchanged for 1 frame)
 
-  constructor(renderer: Renderer, world: Container, ticker: Ticker) {
+  constructor(renderer: Renderer, world: Container, ticker: Ticker, isContextLost: () => boolean = () => false) {
     this.resolution = renderer.resolution
     this.world = world
     this.ticker = ticker
+    this.isContextLost = isContextLost
 
     this.canvas = document.createElement('canvas')
     this.ctx = this.canvas.getContext('2d')!
@@ -89,10 +91,22 @@ export class VisualLayer {
     this.prevScaleX = scaleX
   }
 
+  // Guarded against a lost WebGL context: unlike onTick (paused along with the app's
+  // ticker), this runs directly off incoming room:update messages, so it can fire even
+  // while the context is down — touching the canvas texture then would throw. `lastRaw`
+  // is still recorded so a subsequent refresh() picks up the latest data once restored.
   update(raw: string): void {
     this.lastRaw = raw
+    if (this.isContextLost()) return
     const physSize = this.idealPhysSize()
     if (physSize !== this.lastPhysSize) this.resizeTo(physSize)
+    this.redraw()
+  }
+
+  // Called once the WebGL context comes back after a loss. The canvas texture's GPU
+  // storage was wiped regardless of whether the visuals actually changed while lost,
+  // so this repaints unconditionally from the last known raw data.
+  refresh(): void {
     this.redraw()
   }
 

@@ -358,3 +358,35 @@ export function setTerrainEffectsVisible(layer: Container, visible: boolean): vo
   layer.getChildByLabel('swampGlow')!.visible = visible
   layer.getChildByLabel('wallNoise')!.visible = visible
 }
+
+// Called once the WebGL context comes back after a loss. Every other child of
+// createTerrainLayer's container is vector Graphics — Pixi rebuilds their GPU
+// geometry automatically from the retained CPU-side path data. The wall-noise
+// sprite is the one exception: it's baked once via `renderer.generateTexture`
+// with no CPU-side source, so its GPU storage comes back blank and must be
+// explicitly rebaked here.
+export function rebakeWallNoise(layer: Container, terrain: RoomTerrain, renderer: Renderer, decoration?: TerrainDecoration): void {
+  const old = layer.getChildByLabel('wallNoise') as Sprite | undefined
+  if (!old) return
+  const idx = layer.getChildIndex(old)
+  const wasVisible = old.visible
+  const colors = resolveColors(decoration)
+
+  old.removeFromParent()
+  if (!old.destroyed) old.destroy({ texture: true, textureSource: true })
+
+  const fresh = createWallNoise(terrain, renderer, colors)
+  fresh.visible = wasVisible
+  layer.addChildAt(fresh, idx)
+
+  // Re-wrap destroy so the container's teardown (see createTerrainLayer) frees the
+  // new sprite's texture instead of trying to re-destroy the one we just disposed.
+  const wrappedDestroy = layer.destroy.bind(layer)
+  layer.destroy = (options?: DestroyOptions) => {
+    if (!fresh.destroyed) {
+      fresh.removeFromParent()
+      fresh.destroy({ texture: true, textureSource: true })
+    }
+    wrappedDestroy(options)
+  }
+}

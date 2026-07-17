@@ -1,6 +1,6 @@
 import { Container, type Renderer, type Ticker } from 'pixi.js'
 import type { Badge, RoomObjectMap, RoomObjectDiff, RoomTerrain } from 'screeps-connectivity'
-import { createTerrainLayer } from './TerrainLayer.js'
+import { createTerrainLayer, rebakeWallNoise } from './TerrainLayer.js'
 import { ObjectLayer, type EdgeExitTile } from './ObjectLayer.js'
 import { HoverHighlightLayer, type SelectionVisual } from './HoverHighlightLayer.js'
 import { ActionAnimationLayer } from './ActionAnimationLayer.js'
@@ -69,18 +69,18 @@ export class RoomScene {
   // neighbor's data lands or ACTION_LOG_RECOVERY_GRACE_MS runs out.
   private pendingActionLogRecoveries = new Map<string, PendingActionLogRecovery>()
 
-  constructor(ticker: Ticker, rendererGpu: Renderer, world: Container) {
+  constructor(ticker: Ticker, rendererGpu: Renderer, world: Container, isContextLost: () => boolean = () => false) {
     this.ticker = ticker
     this.root = new Container({ sortableChildren: true })
     this.ticker.add(this.checkPendingActionLogRecoveries)
 
-    this.lighting = new LightingLayer(rendererGpu)
+    this.lighting = new LightingLayer(rendererGpu, isContextLost)
     this.lighting.displaySprite.label = 'darkOverlay'
     this.lighting.displaySprite.zIndex = Z.darkOverlay
     this.lighting.displaySprite.visible = false
     this.root.addChild(this.lighting.displaySprite)
 
-    this.visualLayer = new VisualLayer(rendererGpu, world, ticker)
+    this.visualLayer = new VisualLayer(rendererGpu, world, ticker, isContextLost)
     this.visualLayer.container.zIndex = Z.visuals
     this.root.addChild(this.visualLayer.container)
 
@@ -196,6 +196,17 @@ export class RoomScene {
   private updateLighting(objects: RoomObjectMap): void {
     this.lighting.setLights(buildLights(objects))
     this.lighting.render()
+  }
+
+  // Called (via MultiRoomRenderer, for every live scene) once the WebGL context comes
+  // back after a loss — repaints this scene's GPU-only content, none of which self-heals
+  // the way CPU-backed textures do. See ContextRecovery.
+  handleContextRestored(): void {
+    if (this.terrainLayer && this.rawTerrain && this.rendererGpu) {
+      rebakeWallNoise(this.terrainLayer, this.rawTerrain, this.rendererGpu, this.decoration?.terrain)
+    }
+    this.lighting.refreshAfterContextRestore()
+    this.visualLayer.refresh()
   }
 
   // Ready once terrain is baked AND the first full object reconcile has
