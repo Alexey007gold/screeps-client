@@ -300,25 +300,53 @@ function drawTerrainQuadrants(
  * the wall and swamp masks, the wall shadow, the lit wall face.
  *
  * Sharing the GraphicsContext shares its tessellation, so the 2500-tile walk that
- * dominates layer construction runs twice per room instead of six times. The cache holds
- * one room: entering a room builds the terrain layer, then builds it again a moment later
- * when the decorations arrive over their own request, and that second pass is the one the
- * eye catches. Keyed on the RoomTerrain instance, so the rebuild is a straight hit.
+ * dominates layer construction runs twice per room instead of six times. Entering a room
+ * builds the terrain layer, then builds it again a moment later when the decorations arrive
+ * over their own request, and that second pass is the one the eye catches — keyed on the
+ * RoomTerrain instance, so the rebuild is a straight hit.
+ *
+ * Reference-counted rather than single-slot: the multi-room grid view keeps several rooms'
+ * terrain layers alive at once, each with its own RoomTerrain, so a naive "cache holds one
+ * room" scheme would destroy a still-live sibling room's context out from under it (the
+ * renderer then crashes trying to rebuild batches from a null context). acquireShape/
+ * releaseShape bracket one createTerrainLayer call's lifetime; the entry is only actually
+ * freed once nothing references it — deferred a tick so the destroy-then-immediately-
+ * recreate-for-the-same-room pattern (decoration rebuild) still hits the cache instead of
+ * tearing it down first.
  */
-let shapeCache: { terrain: RoomTerrain; wall: GraphicsContext; swamp: GraphicsContext } | null = null
+interface ShapeEntry { wall: GraphicsContext; swamp: GraphicsContext; refCount: number }
+const shapeCache = new Map<RoomTerrain, ShapeEntry>()
 
-function terrainShape(terrain: RoomTerrain, type: TerrainType.Wall | TerrainType.Swamp): GraphicsContext {
-  if (shapeCache?.terrain !== terrain) {
-    shapeCache?.wall.destroy()
-    shapeCache?.swamp.destroy()
+function acquireShape(terrain: RoomTerrain): void {
+  let entry = shapeCache.get(terrain)
+  if (!entry) {
     const build = (t: TerrainType) => {
       const context = new GraphicsContext()
       drawTerrainQuadrants(context, terrain, t, (c) => c.fill(0xffffff))
       return context
     }
-    shapeCache = { terrain, wall: build(TerrainType.Wall), swamp: build(TerrainType.Swamp) }
+    entry = { wall: build(TerrainType.Wall), swamp: build(TerrainType.Swamp), refCount: 0 }
+    shapeCache.set(terrain, entry)
   }
-  return type === TerrainType.Wall ? shapeCache.wall : shapeCache.swamp
+  entry.refCount++
+}
+
+function releaseShape(terrain: RoomTerrain): void {
+  const entry = shapeCache.get(terrain)
+  if (!entry) return
+  entry.refCount--
+  if (entry.refCount > 0) return
+  queueMicrotask(() => {
+    if (entry.refCount > 0 || shapeCache.get(terrain) !== entry) return
+    entry.wall.destroy()
+    entry.swamp.destroy()
+    shapeCache.delete(terrain)
+  })
+}
+
+function terrainShape(terrain: RoomTerrain, type: TerrainType.Wall | TerrainType.Swamp): GraphicsContext {
+  const entry = shapeCache.get(terrain)!
+  return type === TerrainType.Wall ? entry.wall : entry.swamp
 }
 
 /**
@@ -508,6 +536,7 @@ export function createTerrainLayer(
   decoration?: TerrainDecoration,
   lighting?: LightingLayer,
 ): Container {
+  acquireShape(terrain)
   const colors = resolveColors(decoration)
   const container = new Container()
   const baseDestroy = container.destroy.bind(container)
@@ -523,6 +552,7 @@ export function createTerrainLayer(
     container.mask = null
     for (const child of container.removeChildren()) destroyTree(child)
     baseDestroy(options)
+    releaseShape(terrain)
   }
 
   container.addChild(createFloorBase(colors))            // index 0: plain floor colour

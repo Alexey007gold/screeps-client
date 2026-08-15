@@ -193,7 +193,7 @@ export function getServerFeature<T extends ServerFeature = ServerFeature>(
   version: ServerVersion,
   name: string,
 ): T | undefined {
-  return version.serverData.features.find(f => f.name === name) as T | undefined
+  return version.serverData.features?.find(f => f.name === name) as T | undefined
 }
 
 /**
