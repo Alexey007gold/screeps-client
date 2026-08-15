@@ -19,6 +19,7 @@ export const LS = {
   consoleHeight: 'screeps:consoleHeight',
   consoleSplit: 'screeps:consoleSplit',
   consoleWeights: 'screeps:consoleWeights',
+  consoleHistory: 'screeps:console:history',
   memoryWatches: 'screeps:memoryWatches',
   mapZoom: 'screeps:mapZoom',
   codeBranch: 'screeps:code:branch',
@@ -37,6 +38,7 @@ export const LS = {
   smoothAnimations: 'screeps:settings:smoothAnimations',
   showMapVisuals: 'screeps:settings:showMapVisuals',
   hideCustomUiProtocol: 'screeps:settings:hideCustomUiProtocol',
+  alliances: 'screeps:alliances',
   // Per-server prefixes — the active server URL is appended as ':<url>'.
   customUiSegment: 'screeps:customUi:segment',
   customUiShard: 'screeps:customUi:shard',

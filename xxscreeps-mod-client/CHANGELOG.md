@@ -1,5 +1,129 @@
 # xxscreeps-mod-client
 
+## 0.3.16
+
+### Patch Changes
+
+- acfa85b: Rebuild the embedded client so the mods ship the current `screeps-client` fixes.
+- Updated dependencies [acfa85b]
+- Updated dependencies [55194c5]
+- Updated dependencies [0867a1b]
+  - screeps-client@0.24.3
+
+## 0.3.15
+
+### Patch Changes
+
+- 4016760: Update the embedded client (RoomVisual text and shape style defaults now match the official client; map visual text now matches the reference client's opacity, stroke and background-box behaviour; room decoration landscapes now tile, stretch and outline at the official geometry).
+- Updated dependencies [3d0aa73]
+- Updated dependencies [677c063]
+- Updated dependencies [f29d41a]
+- Updated dependencies [526e00c]
+- Updated dependencies [4016760]
+- Updated dependencies [d63cb89]
+- Updated dependencies [7ec6fc4]
+  - screeps-client@0.24.1
+
+## 0.3.14
+
+### Patch Changes
+
+- 01a3551: Update the embedded client (badge symbols granted by decorations appear in the badge editor; OAuth registration gains a "Disable email notifications" checkbox; WASM modules can be uploaded and managed in the code editor).
+- Updated dependencies [01a3551]
+- Updated dependencies [7d2e2f4]
+- Updated dependencies [40f5076]
+- Updated dependencies [e74c83c]
+  - screeps-client@0.24.0
+
+## 0.3.13
+
+### Patch Changes
+
+- 1accbd8: Update the required `screeps-client` version for both mod packages after the next client release.
+  Adjust this summary if the release notes should say something more specific.
+- Updated dependencies [1accbd8]
+- Updated dependencies [0b62464]
+- Updated dependencies [3d31ab2]
+- Updated dependencies [ae911fa]
+- Updated dependencies [3020fec]
+  - screeps-client@0.23.0
+
+## 0.3.12
+
+### Patch Changes
+
+- 35df8bd: Update the required `screeps-client` version for both mod packages after the next client release.
+- Updated dependencies [0adbd5f]
+- Updated dependencies [564ce4e]
+- Updated dependencies [b510e92]
+- Updated dependencies [b510e92]
+- Updated dependencies [35df8bd]
+- Updated dependencies [b6b228d]
+  - screeps-client@0.22.0
+
+## 0.3.11
+
+### Patch Changes
+
+- b6df4b5: Update the required `screeps-client` version for both mod packages after the next client release.
+- Updated dependencies [ef5eba7]
+- Updated dependencies [5253263]
+- Updated dependencies [afb753d]
+- Updated dependencies [127adca]
+- Updated dependencies [66bf09f]
+- Updated dependencies [b6df4b5]
+- Updated dependencies [682f31e]
+- Updated dependencies [66bf09f]
+  - screeps-client@0.21.0
+
+## 0.3.10
+
+### Patch Changes
+
+- Updated dependencies [764b871]
+- Updated dependencies [be68680]
+- Updated dependencies [552bb32]
+- Updated dependencies [e33e5fc]
+- Updated dependencies [278230a]
+- Updated dependencies [0e8b382]
+- Updated dependencies [975c619]
+- Updated dependencies [4d4167f]
+- Updated dependencies [5a0355a]
+- Updated dependencies [5173461]
+- Updated dependencies [268b592]
+- Updated dependencies [4d4167f]
+- Updated dependencies [465a257]
+- Updated dependencies [1a9556f]
+- Updated dependencies [6e815d6]
+- Updated dependencies [4b3412e]
+- Updated dependencies [ecdadcf]
+- Updated dependencies [f31e5c8]
+- Updated dependencies [c4d9b82]
+- Updated dependencies [47b7b75]
+  - screeps-client@0.20.0
+
+## 0.3.9
+
+### Patch Changes
+
+- Updated dependencies [6f45a4b]
+  - screeps-client@0.19.0
+
+## 0.3.8
+
+### Patch Changes
+
+- f218429: Embedded clients are now configured from the first frame with no `/api/version` round-trip: both the xxscreeps mod and the classic server mod prefetch the version payload and inline it into the page (`window.__SCREEPS_BOOTSTRAP__`), and the client seeds it into both the pre-login UI and the connection. `ScreepsClient` gains an `initialVersion` option and `ServerStore` a `seedVersion()` method to support this.
+- Updated dependencies [8e9f7ed]
+- Updated dependencies [202bb3d]
+- Updated dependencies [f218429]
+- Updated dependencies [ddc2277]
+- Updated dependencies [e678c10]
+- Updated dependencies [114e4b1]
+- Updated dependencies [3b2c531]
+- Updated dependencies [7cc40b4]
+  - screeps-client@0.18.0
+
 ## 0.3.7
 
 ### Patch Changes

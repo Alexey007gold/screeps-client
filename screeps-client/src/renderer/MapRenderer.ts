@@ -1,5 +1,6 @@
 import { Application, Container, Graphics, RenderTexture, Sprite, Text, Texture } from 'pixi.js'
-import type { RoomMap2Data, Badge, TerrainColors } from 'screeps-connectivity'
+import type { RoomMap2Data, Badge } from 'screeps-connectivity'
+import type { MapDecorationRender } from './mapDecorations.js'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { MapVisualLayer } from './MapVisualLayer.js'
 import { ContextRecovery } from './ContextRecovery.js'
@@ -36,14 +37,24 @@ const CLEAR_PADDING = 50
 const POOL_SIZE = 2600 // max visible rooms plus padding
 // Wait this long after the last viewport change before firing onVisibleRoomsChanged
 const VISIBLE_DEBOUNCE_MS = 5
+// Same, for onCenterChanged — longer, because it ends up in the address bar.
+const CENTER_DEBOUNCE_MS = 250
 
-const MIN_ZOOM = 0.2
+const MIN_ZOOM = 0.1
 const MAX_ZOOM = 5
 
 // Minimap dot/terrain palette + dot spec live in ~/renderer/minimap.js (shared
 // with the terrain worker and the Overview room-preview tiles).
 
 const MINERAL_WORLD_SIZES = [80, 104, 128, 160] // world-space px per density — scales naturally with zoom
+
+// Alliance overlay: a translucent room tint plus the abbreviation. Below this zoom
+// a room is too small for the label to be anything but clutter — the tint carries
+// the signal on its own.
+const ALLIANCE_LABEL_ZOOM_THRESHOLD = 0.3
+const ALLIANCE_FILL_ALPHA = 0.3
+// World-space gap between the label baseline and the room's bottom edge.
+const ALLIANCE_LABEL_MARGIN = 5
 
 interface RoomEntry {
   container: Container
@@ -58,9 +69,14 @@ interface RoomEntry {
   badgeSprite?: Sprite
   badgeLevel?: number
   nameLabel: Text
+  allianceOverlay?: Graphics
+  allianceLabel?: Text
+  /** `abbreviation:color` of what's currently drawn, '' for none — skips redundant redraws. */
+  allianceKey?: string
   mineralSprite?: Sprite
   mineralType?: string
   mineralDensity?: number
+  roadColor?: number
 }
 
 export interface MapRendererCallbacks {
@@ -68,6 +84,11 @@ export interface MapRendererCallbacks {
   onRoomClick: (room: string) => void
   onVisibleRoomsChanged: (rooms: string[]) => void
   onZoomChanged?: (zoom: number) => void
+  /**
+   * Viewport centre in room units (a whole number is a room corner, `.5` its
+   * centre), debounced so a drag reports once it settles rather than per frame.
+   */
+  onCenterChanged?: (center: { x: number; y: number }) => void
 }
 
 export class MapRenderer {
@@ -83,7 +104,7 @@ export class MapRenderer {
   private readonly terrainBaked = new Set<string>()
   private readonly terrainData  = new Map<string, Uint8Array>()  // raw bytes kept until texHi is baked
   private readonly statsApplied = new Set<string>()
-  private readonly roomDecorations = new Map<string, TerrainColors>()
+  private readonly roomDecorations = new Map<string, MapDecorationRender>()
   private showDecorations = true
   private worker: Worker
   private pendingBakes = new Map<number, { roomName: string, lod: number, resolve: (bmp: ImageBitmap) => void, reject: (err: unknown) => void }>()
@@ -123,6 +144,7 @@ export class MapRenderer {
   private pendingWheelPivotX = 0
   private pendingWheelPivotY = 0
   private wheelRafId: number | null = null
+  private centerDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private selectedRoom: string | null = null
   private currentUserId: string | null = null
   private readonly badgeCache = new BadgeTextureCache()
@@ -240,9 +262,25 @@ export class MapRenderer {
     this.redrawSafeMode()
   }
 
+  // Viewport centre in room units — the inverse of centerOnPoint, and what the
+  // /map URL carries so a bookmarked view comes back to the same place.
+  get center(): { x: number; y: number } {
+    const scale = this.world?.scale.x ?? 1
+    return {
+      x: (this.app.screen.width / 2 - (this.world?.x ?? 0)) / scale / MAP_ROOM_SIZE,
+      y: (this.app.screen.height / 2 - (this.world?.y ?? 0)) / scale / MAP_ROOM_SIZE,
+    }
+  }
+
   centerOn(rx: number, ry: number, animated = false): void {
-    const cx = rx * MAP_ROOM_SIZE + MAP_ROOM_SIZE / 2
-    const cy = ry * MAP_ROOM_SIZE + MAP_ROOM_SIZE / 2
+    this.centerOnPoint(rx + 0.5, ry + 0.5, animated)
+  }
+
+  // Centre on an arbitrary point in room units, so a position between rooms
+  // (as restored from the URL) survives a round trip unchanged.
+  centerOnPoint(x: number, y: number, animated = false): void {
+    const cx = x * MAP_ROOM_SIZE
+    const cy = y * MAP_ROOM_SIZE
     const scale = this.world.scale.x
     const destX = this.app.screen.width  / 2 - cx * scale
     const destY = this.app.screen.height / 2 - cy * scale
@@ -258,13 +296,13 @@ export class MapRenderer {
   }
 
 
-  private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array, colors?: TerrainColors): Promise<ImageBitmap | null> {
+  private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array, decoration?: MapDecorationRender): Promise<ImageBitmap | null> {
     const shard = this.currentShard
     try {
       // Only hit the bitmap cache when using default colors — decorated bakes
       // must not overwrite the cached default, and we want the default restored
       // from cache instantly when decorations are removed.
-      if (!colors) {
+      if (!decoration) {
         const cachedBlob = await getTerrainCacheBlob(shard, roomName, lod)
         if (cachedBlob) {
           return await blobToImageBitmap(cachedBlob)
@@ -275,7 +313,7 @@ export class MapRenderer {
       const promise = new Promise<ImageBitmap>((resolve, reject) => {
         this.pendingBakes.set(id, { roomName, lod, resolve, reject })
       })
-      this.worker.postMessage({ id, roomName, lod, raw, shard, colors })
+      this.worker.postMessage({ id, roomName, lod, raw, shard, decoration })
 
       return await promise
     } catch (e) {
@@ -367,8 +405,8 @@ export class MapRenderer {
     }
     const raw = this.terrainData.get(roomName)
     if (!raw) return
-    const colors = this.showDecorations ? this.roomDecorations.get(roomName) : undefined
-    return this.getTerrainBitmap(roomName, hi ? 1 : 0, raw, colors).then((bitmap) => {
+    const decoration = this.showDecorations ? this.roomDecorations.get(roomName) : undefined
+    return this.getTerrainBitmap(roomName, hi ? 1 : 0, raw, decoration).then((bitmap) => {
       if (!bitmap) return
       if (!this.activeRooms.has(roomName)) { bitmap.close(); return }
       const tex = Texture.from(bitmap, true)
@@ -408,7 +446,7 @@ export class MapRenderer {
     for (const [x, y] of roads) {
       g.rect(x * MT, y * MT, MT, MT)
     }
-    if (roads.length) g.fill(MINIMAP_ROAD)
+    if (roads.length) g.fill(this.showDecorations ? entry.roadColor ?? MINIMAP_ROAD : MINIMAP_ROAD)
 
     // Player-built walls / ramparts — color depends on room ownership
     const walls = data.w ?? []
@@ -471,15 +509,25 @@ export class MapRenderer {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
       g.fill({ color: 0x000066, alpha: 0.35 })
     }
-    g.visible = state === 'prohibited' || this.showUnclaimableOverlay
+    g.visible = this.ownerOverlayVisible(entry)
     this.revealIfReady(roomName, entry)
+  }
+
+  /**
+   * The unclaimable wash is suppressed in alliance mode — a red tint over every
+   * foreign room would drown out the alliance colours. Out-of-borders stays
+   * shaded regardless: it marks territory that doesn't exist.
+   */
+  private ownerOverlayVisible(entry: RoomEntry): boolean {
+    if (entry.ownerState === 'prohibited') return true
+    return this.showUnclaimableOverlay && this.overlayMode !== 'alliance'
   }
 
   setUnclaimableOverlayVisible(show: boolean): void {
     if (this.showUnclaimableOverlay === show) return
     this.showUnclaimableOverlay = show
     for (const entry of this.activeRooms.values()) {
-      entry.ownerOverlay.visible = entry.ownerState === 'prohibited' || show
+      entry.ownerOverlay.visible = this.ownerOverlayVisible(entry)
     }
   }
 
@@ -489,14 +537,14 @@ export class MapRenderer {
     }
   }
 
-  setRoomDecoration(roomName: string, colors: TerrainColors | undefined): void {
+  setRoomDecoration(roomName: string, decoration: MapDecorationRender | undefined): void {
     const current = this.roomDecorations.get(roomName)
     // Only re-bake when something actually changed.
-    const newKey = colors ? JSON.stringify(colors) : ''
+    const newKey = decoration ? JSON.stringify(decoration) : ''
     const oldKey = current ? JSON.stringify(current) : ''
     if (newKey === oldKey) return
 
-    if (colors) this.roomDecorations.set(roomName, colors)
+    if (decoration) this.roomDecorations.set(roomName, decoration)
     else this.roomDecorations.delete(roomName)
 
     this.rebakeRoom(roomName)
@@ -514,6 +562,12 @@ export class MapRenderer {
   private rebakeRoom(roomName: string): void {
     const entry = this.activeRooms.get(roomName)
     if (!entry) return
+
+    // Roads live in the map2 overlay, not the baked terrain, so their colour is
+    // re-applied separately.
+    const road = this.roomDecorations.get(roomName)?.colors.road
+    entry.roadColor = road != null ? parseInt(road.replace('#', ''), 16) : undefined
+    if (entry.lastMap2Data) this.drawMap2(entry, entry.lastMap2Data, entry.lastMap2Source ?? 'live')
 
     // Destroy both LOD textures so ensureCurrentLod re-bakes from scratch.
     // Colors are looked up internally from roomDecorations.
@@ -562,9 +616,7 @@ export class MapRenderer {
         sprite.anchor.set(0.5)
         sprite.x = MAP_ROOM_SIZE / 2
         sprite.y = MAP_ROOM_SIZE / 2
-        // Insert before nameLabel so the label stays on top
-        const nameIndex = entry.container.getChildIndex(entry.nameLabel)
-        entry.container.addChildAt(sprite, nameIndex)
+        entry.container.addChildAt(sprite, this.decorInsertIndex(entry))
         entry.badgeSprite = sprite
       }
 
@@ -620,8 +672,7 @@ export class MapRenderer {
       sprite.anchor.set(0.5)
       sprite.x = MAP_ROOM_SIZE / 2
       sprite.y = MAP_ROOM_SIZE / 2
-      const nameIndex = entry.container.getChildIndex(entry.nameLabel)
-      entry.container.addChildAt(sprite, nameIndex)
+      entry.container.addChildAt(sprite, this.decorInsertIndex(entry))
       entry.mineralSprite = sprite
       entry.mineralType = mineral
 
@@ -639,13 +690,111 @@ export class MapRenderer {
     this.applyOverlayMode(entry)
   }
 
+  /**
+   * Tint a room in its owner's alliance colour. `null` clears it — which is also
+   * what an unowned room, an unaligned owner, or a roster that hasn't loaded gets.
+   */
+  setRoomAlliance(roomName: string, alliance: { abbreviation: string; color: number } | null): void {
+    const entry = this.activeRooms.get(roomName)
+    if (!entry) return
+
+    const key = alliance ? `${alliance.abbreviation}:${alliance.color}` : ''
+    if (entry.allianceKey === key) return
+
+    if (!alliance) {
+      this.releaseAllianceVisuals(entry)
+      return
+    }
+    entry.allianceKey = key
+
+    // The tint goes straight above the unclaimable wash so the owner badge, the
+    // mineral icon and the labels all stay readable on top of it.
+    if (!entry.allianceOverlay) {
+      const g = new Graphics()
+      entry.container.addChildAt(g, entry.container.getChildIndex(entry.ownerOverlay) + 1)
+      entry.allianceOverlay = g
+    }
+    const g = entry.allianceOverlay
+    g.clear()
+    g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
+    g.fill({ color: alliance.color, alpha: ALLIANCE_FILL_ALPHA })
+    g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
+    // alignment: 1 = inner stroke, so neighbouring alliance rooms read as one block.
+    g.stroke({ color: alliance.color, width: 4, alignment: 1, alpha: 0.85 })
+
+    if (!entry.allianceLabel) {
+      const t = new Text({
+        text: '',
+        style: {
+          fontSize: 36,
+          fill: 0xffffff,
+          fontFamily: 'ui-monospace, monospace',
+          fontWeight: 'bold',
+          stroke: { color: 0x000000, width: 5 },
+        },
+      })
+      // Bottom edge, centred — the badge owns the middle of the room.
+      t.anchor.set(0.5, 1)
+      t.x = MAP_ROOM_SIZE / 2
+      t.y = MAP_ROOM_SIZE - ALLIANCE_LABEL_MARGIN
+      entry.container.addChildAt(t, entry.container.getChildIndex(entry.nameLabel))
+      entry.allianceLabel = t
+    }
+    entry.allianceLabel.text = alliance.abbreviation
+    entry.allianceLabel.style.fill = alliance.color
+
+    this.applyAllianceLabel(entry, this.zoom)
+    this.applyOverlayMode(entry)
+  }
+
+  private releaseAllianceVisuals(entry: RoomEntry): void {
+    if (entry.allianceOverlay) {
+      entry.container.removeChild(entry.allianceOverlay)
+      entry.allianceOverlay.destroy()
+      entry.allianceOverlay = undefined
+    }
+    if (entry.allianceLabel) {
+      entry.container.removeChild(entry.allianceLabel)
+      entry.allianceLabel.destroy()
+      entry.allianceLabel = undefined
+    }
+    entry.allianceKey = ''
+  }
+
+  private applyAllianceLabel(entry: RoomEntry, zoom: number): void {
+    const label = entry.allianceLabel
+    if (!label) return
+    // Same shape as the room-name scale: √zoom growth with a screen-pixel floor.
+    const MIN_PX = 13
+    label.scale.set(Math.max(0.42 / Math.sqrt(zoom), MIN_PX / (36 * zoom)))
+    label.visible = this.overlayMode === 'alliance' && zoom >= ALLIANCE_LABEL_ZOOM_THRESHOLD
+  }
+
+  /**
+   * Where badges and mineral icons go in the child list: below the alliance label
+   * (so the abbreviation is never covered), above everything else. Arrival order of
+   * badge vs. alliance data varies per room, so the index is derived, not assumed.
+   */
+  private decorInsertIndex(entry: RoomEntry): number {
+    return entry.container.getChildIndex(entry.allianceLabel ?? entry.nameLabel)
+  }
+
   private applyOverlayMode(entry: RoomEntry): void {
     if (entry.badgeSprite) {
-      entry.badgeSprite.visible = this.overlayMode === 'owner'
+      // Badges stay up in alliance mode — the tint says which alliance, the badge
+      // still says which player.
+      entry.badgeSprite.visible = this.overlayMode === 'owner' || this.overlayMode === 'alliance'
     }
     if (entry.mineralSprite) {
       entry.mineralSprite.visible = this.overlayMode === 'mineral'
     }
+    if (entry.allianceOverlay) {
+      entry.allianceOverlay.visible = this.overlayMode === 'alliance'
+    }
+    if (entry.allianceLabel) {
+      entry.allianceLabel.visible = this.overlayMode === 'alliance' && this.zoom >= ALLIANCE_LABEL_ZOOM_THRESHOLD
+    }
+    entry.ownerOverlay.visible = this.ownerOverlayVisible(entry)
   }
 
   private applyMineralSize(entry: RoomEntry, zoom: number): void {
@@ -674,6 +823,7 @@ export class MapRenderer {
       this.applyBadgeSize(entry, zoom)
       this.updateNameLabelScale(entry, zoom)
       this.applyMineralSize(entry, zoom)
+      this.applyAllianceLabel(entry, zoom)
     }
   }
 
@@ -798,6 +948,7 @@ export class MapRenderer {
     }
     entry.mineralType = undefined
     entry.mineralDensity = undefined
+    this.releaseAllianceVisuals(entry)
     entry.container.visible = false
     this.safeModeRooms.delete(roomName)
 
@@ -856,6 +1007,10 @@ export class MapRenderer {
     if (this.wheelRafId !== null) {
       cancelAnimationFrame(this.wheelRafId)
       this.wheelRafId = null
+    }
+    if (this.centerDebounceTimer !== null) {
+      clearTimeout(this.centerDebounceTimer)
+      this.centerDebounceTimer = null
     }
     for (const [, entry] of this.activeRooms) {
       if (entry.texLo && !entry.texLo.destroyed) entry.texLo.destroy(true)
@@ -949,6 +1104,9 @@ export class MapRenderer {
     }
     entry.mineralType = undefined
     entry.mineralDensity = undefined
+
+    // Reset pooled alliance tint/label so a previous room's alliance doesn't leak through
+    this.releaseAllianceVisuals(entry)
 
     // Keep overlays on top
     if (this.safeModeGraphics) {
@@ -1209,6 +1367,16 @@ export class MapRenderer {
     this.lastCheckX = worldX
     this.lastCheckY = worldY
     this.lastCheckScale = scale
+
+    // Report the centre only once the view settles — this drives a URL rewrite,
+    // and browsers rate-limit history updates well below one per frame.
+    if (this.callbacks.onCenterChanged) {
+      if (this.centerDebounceTimer !== null) clearTimeout(this.centerDebounceTimer)
+      this.centerDebounceTimer = setTimeout(() => {
+        this.centerDebounceTimer = null
+        this.callbacks.onCenterChanged?.(this.center)
+      }, CENTER_DEBOUNCE_MS)
+    }
 
     const left   = (-worldX) / scale
     const top    = (-worldY) / scale

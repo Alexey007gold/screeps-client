@@ -1,2535 +1,110 @@
-import { Container, Graphics, GraphicsContext, Text, Ticker, Sprite, Texture, BlurFilter, FillGradient } from 'pixi.js'
+import { Container, Graphics, Sprite, BlurFilter, Ticker } from 'pixi.js'
 import type { RoomObject, RoomObjectMap, RoomObjectDiff, Badge } from 'screeps-connectivity'
 import { RoomTerrain, TerrainType } from 'screeps-connectivity'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
-import type { ControllerSpec, FlagSpec } from './themes/Theme.js'
-import { sharedAtlasCache } from './AtlasCache.js'
-import { defaultSpriteTheme } from './themes/default.js'
 import type { LightingLayer } from './LightingLayer.js'
+import { TILE_SIZE } from './RoomRenderer.js'
+import { DecorationAnimator } from './decorationAnimation.js'
+import { destroyTree } from './destroyTree.js'
+import { applyObjectDecorations, clearObjectDecorations } from './objectDecorations.js'
+import type { CreepDecoration, ObjectDecoration } from './roomDecorations.js'
+import { CONTROLLER_DOWNGRADE } from '~/utils/gameConstants.js'
+import { OBJ_ROAD, ST_DARK, ST_OUTLINE, ST_ENERGY, ST_RAMPART, ST_RAMPART_STROKE, ST_RAMPART_ENEMY, ST_RAMPART_ENEMY_STROKE, TERRAIN_WALL_BORDER, CS_OWN } from './colors.js'
+import {
+  calcCenterFillFraction,
+  computeZIndex,
+  cooldownEnd,
+  destroyVisual,
+  lerpColor,
+  onCooldown,
+  resourceColor,
+} from './objects/common.js'
+import { CS_FILL_R, CS_GLOW_R, CS_PULSE_MS, drawCSProgress, drawCSRing } from './objects/constructionSite.js'
+import { calcContainerFillHeight, updateContainerFill } from './objects/container.js'
+import {
+  CTRL_SEG_IN,
+  CTRL_SEG_OUT,
+  drawControllerSegments,
+  updateControllerSegSprites,
+} from './objects/controller.js'
+import { createObjectVisual } from './objects/createObjectVisual.js'
+import {
+  DISABLED_PEAK_ALPHA,
+  computeDisabledIds,
+  disabledPulseAlpha,
+  drawDisabledTiles,
+} from './objects/disabled.js'
+import {
+  CREEP_INNER_R,
+  LABEL_CREEP_TOP,
+  LABEL_FONT_SCALE,
+  LABEL_GAP_PX,
+  SAY_GAP_PX,
+  buildSayBubble,
+  calcCreepFillRadius,
+  getCreepStore,
+  isForeignCreep,
+  npcCreepName,
+  setCreepFacing,
+  updateCreepFill,
+} from './objects/creep.js'
+import { calcExtensionFillRadius, getExtensionEnergy, updateExtensionFill } from './objects/extension.js'
+import { EXTRACTOR_RING_SPEED } from './objects/extractor.js'
+import {
+  FACT_GLOW,
+  calcFactoryFillHeight,
+  drawFactoryGear,
+  drawFactoryRing,
+  updateFactoryFill,
+} from './objects/factory.js'
+import { KL_PULSE_ALPHA, KL_PULSE_MAX_R, KL_PULSE_MIN_R, KL_PULSE_MS } from './objects/keeperLair.js'
+import { getLabContents, updateLabFill } from './objects/lab.js'
+import { calcLinkFillFraction, updateLinkFill } from './objects/link.js'
+import { getNukerContents, updateNukerFill } from './objects/nuker.js'
+import { animatePortal } from './objects/portal.js'
+import { calcPowerBankRadius, drawPowerBankEllipse, getPowerBankPower } from './objects/powerBank.js'
+import { getPowerSpawnPower, updatePowerSpawnPower } from './objects/powerSpawn.js'
+import {
+  SRC_MAX_SIZE,
+  calcSourceSize,
+  drawSourceVisual,
+  getSourceEnergy,
+  updateSourceVisual,
+} from './objects/source.js'
+import { calcSpawnFillRadius, drawSpawnRing, spawnRatio, spawnSig, spawnTiming } from './objects/spawn.js'
+import { calcStorageFillHeight, updateStorageFill } from './objects/storage.js'
+import { bandsEqual, getStoreBands } from './objects/store.js'
+import { TERMINAL_ARROW_CD_ALPHA, updateTerminalFill } from './objects/terminal.js'
+import {
+  TOWER_AIM_LERP,
+  TOWER_BARREL_FORWARD,
+  TOWER_IDLE_SPEED,
+  approachAngle,
+  calcTowerFillHeight,
+  updateTowerFill,
+} from './objects/tower.js'
+import { type ContainerWithTarget, type FillAnimation, type EdgeExitTile } from './objects/types.js'
+
+export type { EdgeExitTile } from './objects/types.js'
 import { createLogger } from '~/utils/log.js'
 
 const { error: logError } = createLogger('ObjectLayer')
 const sharedBadgeCache = new BadgeTextureCache()
-import { TILE_SIZE } from './RoomRenderer.js'
-import { CONTROLLER_DOWNGRADE } from '~/utils/gameConstants.js'
-import {
-  BODY_PART_COLORS,
-  OBJECT_COLORS,
-  BG_DEEP, BG_DARK,
-  OBJ_DEFAULT, OBJ_ROAD, OBJ_FOREIGN, OBJ_CYAN, OBJ_GREY,
-  ENERGY_FILL,
-  CREEP_RING_DARK, CREEP_NOTCH,
-  INVADER_BORDER, INVADER_FILL_TOP, INVADER_FILL_BOT,
-  ST_DARK, ST_GRAY, ST_LIGHT, ST_OUTLINE, ST_ENERGY, ST_POWER, ST_RAMPART,
-  ST_RAMPART_STROKE, ST_RAMPART_ENEMY, ST_RAMPART_ENEMY_STROKE,
-  ST_RESOURCE_OTHER, RESOURCE_COLORS, DEPOSIT_COLORS,
-  TERRAIN_WALL_BORDER,
-  FLAG_COLORS,
-  CS_OWN, CS_FOREIGN, CS_OWN_DARK, CS_OWN_LIGHT, CS_FOREIGN_DARK, CS_FOREIGN_LIGHT,
-} from './colors.js'
 
-const CREEP_OUTER_R = TILE_SIZE * 0.44
-const CREEP_INNER_R = TILE_SIZE * 0.28
-const CREEP_MAX_BODY = 50
-
-const LABEL_FONT_SIZE  = 32
-const LABEL_FONT_SCALE = 12 / LABEL_FONT_SIZE  // base scale: ~12px height at world-scale=1
-// Label bottom sits GAP_PX screen-pixels above the creep outer edge; constant across zoom levels.
-const LABEL_CREEP_TOP = TILE_SIZE / 2 - TILE_SIZE * 0.44  // CREEP_OUTER_R in container space
-const LABEL_GAP_PX    = 2
-
-// Speech bubble (creep.say) — designed in "world units" with SAY_FONT_SCALE baked into the
-// text scale. The whole bubble container then gets (1 / worldScale) applied so its on-screen
-// size stays constant across zoom levels (same trick as __nameLabel).
-const SAY_FONT_SCALE = (12 * 1.2) / LABEL_FONT_SIZE  // ~14.4px tall at world-scale=1 (20% bigger than name labels)
-const SAY_PAD_X      = 5
-const SAY_PAD_Y      = 2.5
-const SAY_TAIL_W     = 2.0
-const SAY_TAIL_H     = 2.6
-const SAY_GAP_PX     = 2     // screen-pixel gap between creep edge and tail tip
-const SAY_MAX_CHARS  = 12    // server already caps say() at 10 chars; defensive trim
-const SAY_BG_COLOR   = 0xf0f0f0
-const SAY_TX_COLOR   = 0x1a1a1a
-
-const EXT_OUTER_R = TILE_SIZE * 0.42
-const EXT_INNER_R = TILE_SIZE * 0.30
-const EXT_STROKE_W = Math.max(1, TILE_SIZE * 0.08)
-
-// ── Mineral helpers ────────────────────────────────────────────────────────
-// Mineral disc fill colours come from the shared RESOURCE_COLORS palette (colors.ts),
-// so a mineral reads the same as a deposit disc and as a structure store-fill band.
-// Letter color: dark for very light discs (H, O), white otherwise.
-const MINERAL_TEXT_COLORS: Record<string, number> = {
-  H: 0x222222,
-  O: 0x222222,
-}
-// Fill layer is kept mostly transparent so the rock shape reads through it.
-const DEPOSIT_FILL_ALPHA = 0.2
-const MINERAL_R = TILE_SIZE * 0.42
-const MINERAL_GLYPH_FONT = 32
-const MINERAL_GLYPH_SCALE = 9 / MINERAL_GLYPH_FONT  // glyph ~9px tall in tile space
-
-// Source: a fixed dark base ("rock") with a golden energy core that shrinks as the
-// source is mined, revealing a dark ring. When exhausted the gold is gone (black
-// center) and only the outer ring breathes to signal regeneration.
-const SRC_MAX_SIZE = TILE_SIZE - 4
-// Golden core pulse: ST_ENERGY → near-white at peak, sine over SRC_PULSE_MS
-const SRC_PULSE_MS = 1600
-const SRC_PULSE_PEAK = 0xFFFCEC
-// Exhausted outer ring breathes ST_DARK → SRC_DARK_PEAK (subtle dark-gray)
-const SRC_DARK_PEAK = 0x444444
-const SRC_RING_W = Math.max(1, TILE_SIZE * 0.15)
-
-// Golden core size: 0 when empty (black center) up to the full base size at capacity.
-function calcSourceSize(energy: number, capacity: number): number {
-  if (capacity <= 0) return SRC_MAX_SIZE
-  const ratio = Math.max(0, Math.min(1, energy / capacity))
-  return SRC_MAX_SIZE * ratio
-}
-
-// 0..1..0 triangle via cosine; shared by the golden core and the exhausted base pulse.
-function sourcePulseT(now: number): number {
-  const phase = (now % SRC_PULSE_MS) / SRC_PULSE_MS
-  return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2)
-}
-
-function currentSourceColor(now: number): number {
-  return lerpColor(ST_ENERGY, SRC_PULSE_PEAK, sourcePulseT(now))
-}
-
-function drawSourceVisual(g: Graphics, goldenSize: number, now: number): void {
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  g.clear()
-
-  const exhausted = goldenSize <= 0
-  // Fixed dark base — static black center, even when exhausted.
-  const baseHalf = SRC_MAX_SIZE / 2
-  const baseRadius = SRC_MAX_SIZE * 0.25
-  g.roundRect(cx - baseHalf, cy - baseHalf, SRC_MAX_SIZE, SRC_MAX_SIZE, baseRadius)
-  g.fill(ST_DARK)
-
-  if (exhausted) {
-    // Exhausted: only the outer ring breathes (regenerating); center stays black.
-    g.roundRect(cx - baseHalf, cy - baseHalf, SRC_MAX_SIZE, SRC_MAX_SIZE, baseRadius)
-    g.stroke({ width: SRC_RING_W, color: lerpColor(ST_DARK, SRC_DARK_PEAK, sourcePulseT(now)) })
-  } else {
-    // Golden core — shrinks toward center as mined; absent (black center) when empty.
-    const half = goldenSize / 2
-    g.roundRect(cx - half, cy - half, goldenSize, goldenSize, goldenSize * 0.25)
-    g.fill(currentSourceColor(now))
-  }
-}
-
-function updateSourceVisual(visual: ContainerWithTarget, size: number): void {
-  const g = visual.__sourceGraphics
-  if (!g) return
-  visual.__sourceSize = size
-  drawSourceVisual(g, size, performance.now())
-}
-
-function getSourceEnergy(obj: RoomObject): { energy: number; capacity: number } {
-  const energy = typeof obj.energy === 'number' ? obj.energy : 0
-  const capacity = typeof obj.energyCapacity === 'number' ? obj.energyCapacity : 3000
-  return { energy, capacity }
-}
-
-// ── Construction site helpers ──────────────────────────────────────────────
-// Ring sized to roughly match the small extension (outer R ≈ 0.294 * TILE),
-// stroke 50% thicker than the previous CS look.
-const CS_RADIUS    = TILE_SIZE * 0.30
-const CS_STROKE    = Math.max(1, TILE_SIZE * 0.12)
-const CS_FILL_R    = CS_RADIUS - CS_STROKE / 2
-const CS_GLOW_R    = TILE_SIZE * 0.42
-const CS_PULSE_MS  = 1500  // ring pulsation period
-
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff
-  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff
-  const r = Math.round(ar + (br - ar) * t)
-  const g = Math.round(ag + (bg - ag) * t)
-  const bl = Math.round(ab + (bb - ab) * t)
-  return (r << 16) | (g << 8) | bl
-}
-
-function drawCSRing(g: Graphics, color: number): void {
-  g.clear()
-  g.circle(TILE_SIZE / 2, TILE_SIZE / 2, CS_RADIUS)
-  g.stroke({ width: CS_STROKE, color, alpha: 0.95 })
-}
-
-// Mineral-extractor ring: three stroked arc segments with gaps, centered at (0,0)
-// so the Graphics rotates about its own center (spun by the ticker). Radius/width
-// match the previous ~2.6-tile atlas footprint.
-const EXTRACTOR_RING_R = TILE_SIZE * 0.975  // 0.75 × the original ~2.6-tile footprint
-const EXTRACTOR_RING_W = Math.max(1, TILE_SIZE * 0.18)
-const EXTRACTOR_GAP    = Math.PI / 3  // rad gap; equals the segment arc (3 segments + 3 gaps = 2π)
-const EXTRACTOR_Z_INDEX = 1    // ring spins above the mineral
-const TOMBSTONE_Z_INDEX = 4    // sits above roads and containers, below creeps
-
-function drawExtractorRing(g: Graphics, color: number): void {
-  g.clear()
-  for (let i = 0; i < 3; i++) {
-    const a0 = i * (2 * Math.PI / 3) + EXTRACTOR_GAP / 2
-    const a1 = a0 + (2 * Math.PI / 3) - EXTRACTOR_GAP
-    g.arc(0, 0, EXTRACTOR_RING_R, a0, a1)
-    g.stroke({ width: EXTRACTOR_RING_W, color, cap: 'round' })
-  }
-}
-
-function drawCSProgress(
-  g: Graphics,
-  cx: number, cy: number, r: number,
-  progress: number, total: number, color: number,
-): void {
-  g.clear()
-  if (total <= 0 || progress <= 0) return
-  const ratio = Math.min(1, progress / total)
-  if (ratio >= 1) {
-    g.circle(cx, cy, r)
-    g.fill({ color, alpha: 0.55 })
-    return
-  }
-  const start = -Math.PI / 2  // top
-  const end   = start + ratio * Math.PI * 2
-  g.moveTo(cx, cy)
-  g.lineTo(cx + r * Math.cos(start), cy + r * Math.sin(start))
-  g.arc(cx, cy, r, start, end)
-  g.closePath()
-  g.fill({ color, alpha: 0.55 })
-}
-
-// ── Spawn progress ring ─────────────────────────────────────────────────────
-// Ring in the dark moat between the energy core (R≈0.4) and the outer gray ring
-// (inner edge≈0.6); fills clockwise from the top as a creep spawns. Driven by
-// obj.spawning (needTime + remainingTime, falling back to spawnTime vs. game time).
-const SPAWN_RING_R = TILE_SIZE * 0.5
-const SPAWN_RING_W = Math.max(1, TILE_SIZE * 0.1)
-// Energy core radius — the inner yellow disc scales its radius with stored energy.
-const SPAWN_INNER_R = TILE_SIZE * 0.4
-
-// Resolve a spawn's progress to an absolute completion tick + duration, so the
-// ring can be driven by the local game clock between server updates (the server
-// does NOT reliably re-send remainingTime every tick — relying on it freezes).
-function spawnTiming(obj: RoomObject, gameTime: number): { needTime: number; endTime: number } | null {
-  const s = obj.spawning as { needTime?: unknown; remainingTime?: unknown; spawnTime?: unknown } | null | undefined
-  if (!s || typeof s !== 'object') return null
-  const needTime = typeof s.needTime === 'number' && s.needTime > 0 ? s.needTime : null
-  if (needTime === null) return null
-  if (typeof s.remainingTime === 'number') return { needTime, endTime: gameTime + s.remainingTime }
-  // spawnTime in the future is the completion tick; in the past it's the start tick.
-  if (typeof s.spawnTime === 'number') return { needTime, endTime: s.spawnTime > gameTime ? s.spawnTime : s.spawnTime + needTime }
-  return { needTime, endTime: gameTime + needTime }  // active but no timing — assume just started
-}
-
-// Signature of the spawning payload — when it changes we re-sync endTime; otherwise
-// the ring advances purely from the local clock so it never stalls.
-function spawnSig(obj: RoomObject): string | null {
-  const s = obj.spawning as { name?: unknown; needTime?: unknown; remainingTime?: unknown; spawnTime?: unknown } | null | undefined
-  if (!s || typeof s !== 'object') return null
-  return `${String(s.name)}:${String(s.needTime)}:${String(s.remainingTime)}:${String(s.spawnTime)}`
-}
-
-function spawnRatio(needTime: number, endTime: number, gameTime: number): number {
-  return Math.max(0, Math.min(1, 1 - (endTime - gameTime) / needTime))
-}
-
-function drawSpawnRing(g: Graphics, ratio: number | null): void {
-  g.clear()
-  if (ratio === null) return
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  // Faint full-circle track so an active spawn reads even at 0% progress
-  g.circle(cx, cy, SPAWN_RING_R)
-  g.stroke({ width: SPAWN_RING_W, color: 0xffffff, alpha: 0.12 })
-  if (ratio <= 0) return
-  const start = -Math.PI / 2  // top
-  const end = start + Math.min(1, ratio) * Math.PI * 2
-  g.moveTo(cx + SPAWN_RING_R * Math.cos(start), cy + SPAWN_RING_R * Math.sin(start))
-  g.arc(cx, cy, SPAWN_RING_R, start, end)
-  g.stroke({ width: SPAWN_RING_W, color: ST_ENERGY, alpha: 0.95, cap: 'round' })
-}
-
-// Converts screeps tile-relative coords (tile center = origin, 1 unit = TILE_SIZE px) to flat pixel array
-function spts(cx: number, cy: number, pts: ReadonlyArray<readonly [number, number]>): number[] {
-  return pts.flatMap(([rx, ry]) => [cx + rx * TILE_SIZE, cy + ry * TILE_SIZE])
-}
-
-function drawCreepArc(g: Graphics, startAngle: number, endAngle: number, color: number): void {
-  if (endAngle - startAngle < 0.001) return
-  g.moveTo(CREEP_OUTER_R * Math.cos(startAngle), CREEP_OUTER_R * Math.sin(startAngle))
-  g.arc(0, 0, CREEP_OUTER_R, startAngle, endAngle)
-  g.lineTo(CREEP_INNER_R * Math.cos(endAngle), CREEP_INNER_R * Math.sin(endAngle))
-  g.arc(0, 0, CREEP_INNER_R, endAngle, startAngle, true)
-  g.closePath()
-  g.fill(color)
-}
-
-// gem silhouette as fractions of TILE_SIZE: apex, shoulders (widest), flat base.
-const INVADER_PTS: ReadonlyArray<readonly [number, number]> = [
-  [0, -0.30], [0.22, 0.05], [0.15, 0.20], [-0.15, 0.20], [-0.22, 0.05],
-]
-const INVADER_BORDER_W = TILE_SIZE * 0.073
-
-// All invaders are identical, so build the gem geometry + gradient texture once in
-// a shared context and instance it per creep. An externally-passed context survives
-// the per-creep Graphics.destroy(), so the shared one is never torn down.
-let invaderContext: GraphicsContext | null = null
-function getInvaderContext(): GraphicsContext {
-  if (invaderContext) return invaderContext
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  const pts = spts(cx, cy, INVADER_PTS)
-  const fill = new FillGradient({
-    type: 'linear',
-    start: { x: 0.5, y: 0 },
-    end: { x: 0.5, y: 1 },
-    colorStops: [
-      { offset: 0, color: INVADER_FILL_TOP },
-      { offset: 1, color: INVADER_FILL_BOT },
-    ],
-  })
-  // Stroke the outline (uniform width) rather than insetting a scaled polygon,
-  // which would taper the border at the apex.
-  invaderContext = new GraphicsContext()
-    .poly(pts).fill(fill)
-    .poly(pts).stroke({ width: INVADER_BORDER_W, color: INVADER_BORDER, alignment: 0.5, join: 'miter', miterLimit: 6 })
-  return invaderContext
-}
-
-// __bodyContainer is left unset so tick() skips facing-rotation.
-function drawInvaderCreep(container: ContainerWithTarget): void {
-  container.addChild(new Graphics({ context: getInvaderContext() }))
-}
-
-function getCreepStore(obj: RoomObject): { used: number; capacity: number } {
-  let capacity = 0
-  if (typeof obj.storeCapacity === 'number') {
-    capacity = obj.storeCapacity
-  } else {
-    const body = obj.body as Array<{ type: string }> | undefined
-    if (body) capacity = body.filter(p => p.type === 'carry').length * 50
-  }
-  if (capacity === 0) return { used: 0, capacity: 0 }
-
-  let used = 0
-  if (obj.store && typeof obj.store === 'object') {
-    // Avoid Object.values allocation
-    const storeObj = obj.store as Record<string, unknown>
-    for (const k in storeObj) {
-      const v = storeObj[k]
-      if (typeof v === 'number') used += v
-    }
-  } else if (typeof obj.energy === 'number') {
-    used = obj.energy
-  }
-  return { used, capacity }
-}
-
-function calcCreepFillRadius(used: number, capacity: number): number {
-  if (capacity <= 0 || used <= 0) return 0
-  return CREEP_INNER_R * 0.8 * Math.min(1, used / capacity)
-}
-
-function updateCreepFill(visual: Container, radius: number): void {
-  const fill = (visual as Container & { __creepFillGraphics?: Graphics }).__creepFillGraphics
-  if (!fill) return
-  fill.clear()
-  if (radius > 0) {
-    fill.circle(0, 0, radius)
-    fill.fill(ENERGY_FILL)
-  }
-}
-
-function getObjectColor(type: string): number {
-  return OBJECT_COLORS[type] ?? OBJ_DEFAULT
-}
-
-function getExtensionEnergy(obj: RoomObject): { energy: number; capacity: number } {
-  let capacity = 50
-  if (typeof obj.energyCapacity === 'number') {
-    capacity = obj.energyCapacity
-  } else if (typeof obj.storeCapacity === 'number') {
-    capacity = obj.storeCapacity
-  } else if (obj.storeCapacityResource && typeof obj.storeCapacityResource === 'object') {
-    const cap = obj.storeCapacityResource as Record<string, number>
-    capacity = cap.energy ?? 50
-  }
-
-  let energy = 0
-  if (typeof obj.energy === 'number') {
-    energy = obj.energy
-  } else if (obj.store && typeof obj.store === 'object') {
-    const store = obj.store as Record<string, number>
-    energy = store.energy ?? 0
-  }
-
-  return { energy, capacity }
-}
-
-function extScale(capacity: number): number {
-  if (capacity >= 200) return 1.15
-  if (capacity >= 100) return 0.85
-  return 0.70
-}
-
-function calcExtensionFillRadius(energy: number, capacity: number): number {
-  if (capacity <= 0 || energy <= 0) return 0
-  return EXT_INNER_R * extScale(capacity) * Math.min(1, energy / capacity)
-}
-
-// Links show their energy as a diamond core that scales with stored energy,
-// matching the link's diamond outline. The fraction is the linear scale of the
-// inner diamond (half-extents below mirror the linkInner geometry in the draw).
-const LINK_FILL_DX = TILE_SIZE * 0.25
-const LINK_FILL_DY = TILE_SIZE * 0.30
-function calcLinkFillFraction(energy: number, capacity: number): number {
-  if (capacity <= 0 || energy <= 0) return 0
-  return Math.min(1, energy / capacity)
-}
-function updateLinkFill(visual: ContainerWithTarget, fraction: number): void {
-  const fill = visual.__linkFillGraphics
-  if (!fill) return
-  fill.clear()
-  if (fraction <= 0) return
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  const dx = LINK_FILL_DX * fraction
-  const dy = LINK_FILL_DY * fraction
-  fill.poly([cx, cy - dy, cx + dx, cy, cx, cy + dy, cx - dx, cy])
-  fill.fill(ST_ENERGY)
-}
-
-function drawExtensionVisual(container: Container, energy: number, capacity: number, outlineColor: number): void {
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  const scale = extScale(capacity)
-  const g = new Graphics()
-  g.circle(cx, cy, EXT_OUTER_R * scale)
-  g.fill(ST_DARK)
-  g.circle(cx, cy, EXT_OUTER_R * scale)
-  g.stroke({ width: EXT_STROKE_W * scale, color: outlineColor })
-  g.circle(cx, cy, EXT_INNER_R * scale)
-  g.fill(ST_LIGHT)
-  container.addChild(g)
-
-  const fill = new Graphics()
-  const radius = calcExtensionFillRadius(energy, capacity)
-  if (radius > 0) {
-    fill.circle(cx, cy, radius)
-    fill.fill(ST_ENERGY)
-  }
-  container.addChild(fill)
-  ;(container as Container & { __fillGraphics?: Graphics }).__fillGraphics = fill
-}
-
-function updateExtensionFill(visual: Container, radius: number): void {
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  const fill = (visual as Container & { __fillGraphics?: Graphics }).__fillGraphics
-  if (!fill) return
-  fill.clear()
-  if (radius > 0) {
-    fill.circle(cx, cy, radius)
-    fill.fill(ST_ENERGY)
-  }
-}
-
-const TOWER_BODY_X = -TILE_SIZE * 0.4
-const TOWER_BODY_Y = -TILE_SIZE * 0.3
-const TOWER_BODY_W = TILE_SIZE * 0.8
-const TOWER_BODY_H = TILE_SIZE * 0.6
-
-const TOWER_IDLE_SPEED = 0.4   // rad/s idle barrel sweep
-const TOWER_AIM_LERP   = 0.3   // per-frame fraction of remaining angle when turning to a target
-const EXTRACTOR_RING_SPEED = Math.PI / 2  // rad/s — one full turn every 4s (matches vanilla)
-// Barrel art points "up" (−y) at rotation 0, so a target at screen angle θ needs
-// rotation θ + π/2. Flip the sign / drop the offset if the body sprite faces elsewhere.
-const TOWER_BARREL_FORWARD = Math.PI / 2
-
-// Rotate `current` toward `target` by fraction `t`, taking the shortest path.
-function approachAngle(current: number, target: number, t: number): number {
-  let delta = (target - current) % (Math.PI * 2)
-  if (delta > Math.PI) delta -= Math.PI * 2
-  else if (delta < -Math.PI) delta += Math.PI * 2
-  return current + delta * t
-}
-
-const CONT_W = TILE_SIZE * 0.45
-const CONT_H = TILE_SIZE * 0.6
-const CONT_X = TILE_SIZE * 0.275  // cx - TILE_SIZE * 0.225
-const CONT_Y = TILE_SIZE * 0.2    // cy - TILE_SIZE * 0.3
-const CONT_MARGIN = Math.max(0.5, TILE_SIZE * 0.02)  // frames the grey interior and insets the fill bands
-
-// Returns the fill level as a fraction [0,1] so the same value drives both the
-// procedural-fallback rect and the atlas rounded-rect geometry.
-function calcTowerFillHeight(energy: number, capacity: number): number {
-  if (capacity <= 0 || energy <= 0) return 0
-  return Math.min(1, energy / capacity)
-}
-
-function updateTowerFill(visual: ContainerWithTarget, level: number): void {
-  const fill = visual.__towerFillGraphics
-  if (!fill) return
-  fill.clear()
-  if (level <= 0) return
-  // Atlas tower: rounded-rect fill rising from the bottom of the body, in the
-  // body's render-scaled coordinate space (geometry precomputed at load time).
-  const geom = visual.__towerFillRect
-  if (geom) {
-    const h = geom.heightMax * level
-    const y = geom.yMin + geom.heightMax - h
-    const r = Math.min(geom.rx, geom.width / 2, h / 2)
-    fill.roundRect(geom.x, y, geom.width, h, r)
-    fill.fill(ST_ENERGY)
-    return
-  }
-  // Procedural-fallback tower: plain rect inside the drawn body.
-  const margin = Math.max(0.5, TILE_SIZE * 0.02)
-  const h = TOWER_BODY_H * level
-  fill.rect(TOWER_BODY_X + margin, TOWER_BODY_Y + TOWER_BODY_H - h + margin, TOWER_BODY_W - margin * 2, h - margin * 2)
-  fill.fill(ST_ENERGY)
-}
-
-// ── Storage helpers ────────────────────────────────────────────────────────
-// Geometry follows the official client's storage art: a rounded "barrel" shell
-// (dark fill, owner-tinted outline) over a grey inner box, bands on top. Upstream
-// draws it at 200px on a 100px tile, so it overhangs by half a tile in each
-// direction (1.54 × 1.94 tiles). We keep that silhouette but scale it down to just
-// over a tile — the one knob for the structure's overall size.
-const STORAGE_SCALE = 0.65
-
-// The shell and inner box come from storage-border.svg / storage.svg, authored in a
-// 177.15 viewBox rendered at 200px — one SVG unit is 0.0112897 tiles before scaling.
-const STORAGE_SVG_U = TILE_SIZE * 0.0112897 * STORAGE_SCALE
-
-// Upstream's metadata sizes the fill bars in tile pixels rather than SVG units.
-const STORAGE_PX_U = TILE_SIZE * 0.01 * STORAGE_SCALE
-
-// Shell arc endpoints span a 120×140 box around the tile centre; the caps (r=120)
-// bulge outward top/bottom, the sides (r=300) bulge left/right.
-const STORAGE_SHELL_HW = 60 * STORAGE_SVG_U
-const STORAGE_SHELL_HH = 70 * STORAGE_SVG_U
-const STORAGE_SHELL_CAP_R = 120 * STORAGE_SVG_U
-const STORAGE_SHELL_SIDE_R = 300 * STORAGE_SVG_U
-const STORAGE_SHELL_STROKE = 7 * STORAGE_SVG_U
-
-// Grey inner box: 100×120, centred on the tile.
-const STORAGE_INNER_W = 100 * STORAGE_SVG_U
-const STORAGE_INNER_H = 120 * STORAGE_SVG_U
-
-// Fill-band rect in container coords (cx = cy = TILE_SIZE/2). Upstream's bars are
-// 110 wide, 140 tall at a full store, with the floor 70 below the centre. At a full
-// store they therefore overhang the grey box slightly top and bottom — the shell's
-// outline absorbs it, as upstream.
-const STORAGE_BOX_W = 110 * STORAGE_PX_U
-const STORAGE_BOX_H = 140 * STORAGE_PX_U
-const STORAGE_BOX_X = TILE_SIZE * 0.5 - STORAGE_BOX_W / 2
-const STORAGE_BOX_Y = TILE_SIZE * 0.5 + 70 * STORAGE_PX_U - STORAGE_BOX_H
-
-interface StoreBand { color: number; amount: number }
-
-// Resources pinned to the bottom of the stack, in this order; others follow alphabetically.
-const BAND_ORDER = ['energy', 'power']
-
-// Break a store into stacked, colored bands ordered bottom-up. `used` is the sum of
-// the band amounts, so callers size the fill from a single total exactly as before;
-// `dominant` is the highest-amount resource (null when empty), for single-tint structures.
-function getStoreBands(obj: RoomObject): { bands: StoreBand[]; used: number; capacity: number; dominant: string | null } {
-  const capacity = typeof obj.storeCapacity === 'number' ? obj.storeCapacity : 0
-  if (capacity === 0 || !obj.store || typeof obj.store !== 'object') {
-    return { bands: [], used: 0, capacity: 0, dominant: null }
-  }
-  const store = obj.store as Record<string, unknown>
-  const entries: Array<[string, number]> = []
-  let dominant: string | null = null
-  let dominantAmt = 0
-  for (const k in store) {
-    const v = store[k]
-    if (typeof v === 'number' && v > 0) {
-      entries.push([k, v])
-      if (v > dominantAmt) { dominantAmt = v; dominant = k }
-    }
-  }
-  entries.sort(([a], [b]) => {
-    const ra = BAND_ORDER.indexOf(a), rb = BAND_ORDER.indexOf(b)
-    return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb) || (a < b ? -1 : a > b ? 1 : 0)
-  })
-  let used = 0
-  const bands = entries.map(([res, amount]): StoreBand => {
-    used += amount
-    return { color: RESOURCE_COLORS[res] ?? ST_RESOURCE_OTHER, amount }
-  })
-  return { bands, used, capacity, dominant }
-}
-
-// Stack resource bands bottom-up inside a box. `yBottom` is the box floor; `height` is the
-// (animated) total fill height; bands sum to `used`. `margin` insets the whole envelope on
-// all sides — bands stay contiguous within it. Falls back to a solid energy fill if bands
-// are missing, matching the previous single-color behavior.
-function drawStoreBands(
-  fill: Graphics,
-  x: number, yBottom: number, width: number,
-  height: number, bands: StoreBand[] | undefined, used: number,
-  margin = 0,
-): void {
-  if (height <= 0 || used <= 0) return
-  const innerX = x + margin
-  const innerW = width - margin * 2
-  const totalH = height - margin * 2
-  const baseY = yBottom - margin
-  if (totalH <= 0) return
-  if (!bands || bands.length === 0) {
-    fill.rect(innerX, baseY - totalH, innerW, totalH)
-    fill.fill(ST_ENERGY)
-    return
-  }
-  let y = baseY
-  for (const band of bands) {
-    const h = totalH * (band.amount / used)
-    if (h > 0) {
-      fill.rect(innerX, y - h, innerW, h)
-      fill.fill(band.color)
-    }
-    y -= h
-  }
-}
-
-// Bands differ if their colours/amounts differ — used to refresh a fill whose total is
-// unchanged but whose composition (and so its colours) changed this tick.
-function bandsEqual(a: StoreBand[] | undefined, b: StoreBand[]): boolean {
-  if (!a || a.length !== b.length) return false
-  for (let i = 0; i < b.length; i++) {
-    if (a[i]!.color !== b[i]!.color || a[i]!.amount !== b[i]!.amount) return false
-  }
-  return true
-}
-
-function calcContainerFillHeight(used: number, capacity: number): number {
-  if (capacity <= 0 || used <= 0) return 0
-  return CONT_H * Math.min(1, used / capacity)
-}
-
-function updateContainerFill(visual: ContainerWithTarget, height: number): void {
-  const fill = visual.__containerFillG
-  if (!fill) return
-  fill.clear()
-  drawStoreBands(fill, CONT_X, CONT_Y + CONT_H, CONT_W, height, visual.__containerBands, visual.__containerUsed ?? 0, CONT_MARGIN)
-}
-
-// Transcribed from storage-border.svg's single path: start top-left, cap across the
-// top, down the right side, cap back across the bottom, up the left side. Issued once
-// per fill and once per stroke, since either consumes the current path.
-function storageShellPath(g: Graphics, cx: number, cy: number): void {
-  const left = cx - STORAGE_SHELL_HW, right = cx + STORAGE_SHELL_HW
-  const top = cy - STORAGE_SHELL_HH, bottom = cy + STORAGE_SHELL_HH
-  const cap = STORAGE_SHELL_CAP_R, side = STORAGE_SHELL_SIDE_R
-  g.moveTo(left, top)
-  g.arcToSvg(cap, cap, 0, 0, 1, right, top)
-  g.arcToSvg(side, side, 0, 0, 1, right, bottom)
-  g.arcToSvg(cap, cap, 0, 0, 1, left, bottom)
-  g.arcToSvg(side, side, 0, 0, 1, left, top)
-  g.closePath()
-}
-
-function calcStorageFillHeight(used: number, capacity: number): number {
-  if (capacity <= 0 || used <= 0) return 0
-  return STORAGE_BOX_H * Math.min(1, used / capacity)
-}
-
-function updateStorageFill(visual: ContainerWithTarget, height: number): void {
-  const fill = visual.__storageFillG
-  if (!fill) return
-  fill.clear()
-  drawStoreBands(fill, STORAGE_BOX_X, STORAGE_BOX_Y + STORAGE_BOX_H, STORAGE_BOX_W, height, visual.__storageBands, visual.__storageUsed ?? 0)
-}
-
-// ── Terminal / lab / nuker / factory fills ──────────────────────────────────
-// These structures tint their fill by resource type (shared band palette), rather
-// than showing only how full they are.
-function resourceColor(res: string): number {
-  return RESOURCE_COLORS[res] ?? ST_RESOURCE_OTHER
-}
-
-function calcCenterFillFraction(used: number, capacity: number): number {
-  if (capacity <= 0 || used <= 0) return 0
-  return Math.min(1, used / capacity)
-}
-
-// Spawn energy core: a yellow disc whose radius tracks the stored-energy fraction
-// (percentage full). Painted via updateExtensionFill — same center-circle fill.
-function calcSpawnFillRadius(energy: number, capacity: number): number {
-  return SPAWN_INNER_R * calcCenterFillFraction(energy, capacity)
-}
-
-// ── Terminal ───────────────────────────────────────────────────────────────
-// Geometry follows the official client's terminal art (terminal-border.svg,
-// terminal.svg, terminal-arrows.svg, terminal-highlight.svg): an owner-outlined
-// octagon over four arrows around a dark plate with a grey face. Those are authored
-// in a 200 viewBox rendered at 200px on a 100px tile, so one unit is 0.01 tiles and
-// upstream's terminal spans 1.7 tiles. Scaled to just over a tile, as storage is.
-const TERMINAL_SCALE = 0.75
-const TERMINAL_U = TILE_SIZE * 0.01 * TERMINAL_SCALE
-
-// Converts terminal reference-art coords (tile centre = origin, 1 unit = TERMINAL_U px)
-function tpts(cx: number, cy: number, pts: ReadonlyArray<readonly [number, number]>): number[] {
-  return pts.flatMap(([rx, ry]) => [cx + rx * TERMINAL_U, cy + ry * TERMINAL_U])
-}
-
-// Octagon: corners at ±85 on the axes, ±55 diagonally.
-const TERMINAL_OCTAGON: ReadonlyArray<readonly [number, number]> = [
-  [85, 0], [55, -55], [0, -85], [-55, -55], [-85, 0], [-55, 55], [0, 85], [55, 55],
-]
-const TERMINAL_STROKE = 7 * TERMINAL_U
-const TERMINAL_PLATE = 90 * TERMINAL_U  // dark plate; the grey face insets 7 inside it
-const TERMINAL_FACE = 76 * TERMINAL_U
-
-// Four arrows pointing out from behind the plate: tips at ±67, bases at ±48 (just
-// clear of the plate's ±45 edge) and 70 wide.
-const TERMINAL_ARROWS: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
-  [[0, -67], [-35, -48], [35, -48]],  // up
-  [[67, 0], [48, -35], [48, 35]],     // right
-  [[0, 67], [35, 48], [-35, 48]],     // down
-  [[-67, 0], [-48, 35], [-48, -35]],  // left
-]
-const TERMINAL_ARROW_COLOR = 0xCCCCCC
-const TERMINAL_ARROW_CD_ALPHA = 0.1  // arrows dim while on send cooldown
-
-// Terminal: a square that grows from the plate centre, tinted by the dominant resource.
-// Upstream sizes its (nested, per-resource) squares off the same 76 face.
-const TERMINAL_FILL_HALF = TERMINAL_FACE / 2
-function updateTerminalFill(visual: ContainerWithTarget, fraction: number): void {
-  const fill = visual.__terminalFillG
-  if (!fill) return
-  fill.clear()
-  if (fraction > 0) {
-    const c = TILE_SIZE / 2
-    const half = TERMINAL_FILL_HALF * fraction
-    fill.rect(c - half, c - half, half * 2, half * 2)
-    fill.fill(visual.__terminalFillColor ?? ST_ENERGY)
-  }
-}
-
-// Terminal cooldown pulse: vanilla breathes a white highlight over the ring between the
-// octagon and the plate — the band the arrows sit in — once per tick while on send
-// cooldown, and dims the arrows underneath it. The plate is cut out so the grey face and
-// the resource fill don't flash with it. Drawn once at peak and alpha-pulsed by the ticker
-// (0 → peak → 0), matching the lab idiom.
-const TERMINAL_GLOW_COLOR = 0xFFFFFF
-const TERMINAL_GLOW_ALPHA = 0.55   // peak; the ticker scales it by the per-tick pulse
-function drawTerminalCooldownGlow(g: Graphics, cx: number, cy: number): void {
-  g.poly(tpts(cx, cy, TERMINAL_OCTAGON))
-  g.fill({ color: TERMINAL_GLOW_COLOR, alpha: TERMINAL_GLOW_ALPHA })
-  g.rect(cx - TERMINAL_PLATE / 2, cy - TERMINAL_PLATE / 2, TERMINAL_PLATE, TERMINAL_PLATE)
-  g.cut()
-}
-
-// Lab: energy fills the base bar (left→right); the single stored mineral fills the bowl
-// as a disc from the centre, drawn behind the bar and tinted by mineral type.
-const LAB_BOWL_DY     = TILE_SIZE * 0.025
-const LAB_FILL_MAX_R  = TILE_SIZE * 0.36
-const LAB_BAR_X       = TILE_SIZE * 0.05
-const LAB_BAR_Y       = TILE_SIZE * 0.8
-const LAB_BAR_W       = TILE_SIZE * 0.9
-const LAB_BAR_H       = TILE_SIZE * 0.25
-const LAB_ENERGY_CAP  = 2000   // fallback when the server omits per-resource caps
-const LAB_MINERAL_CAP = 3000
-
-// Lab cooldown pulse: a soft white glow on the bowl's RIM (not a centre fill, which would
-// wash the mineral disc) that breathes while the lab is on reaction cooldown, matching
-// vanilla's pulsing lab highlight. Drawn once at peak opacity as a wide faint halo stroke
-// under a brighter core stroke, both on the bowl-rim radius; the ticker scales its alpha by
-// the per-tick pulse (0 → peak → 0).
-const LAB_GLOW_COLOR  = 0xFFFFFF
-const LAB_GLOW_RING_R = TILE_SIZE * 0.55   // bowl rim radius (matches the bowl's outer stroke)
-const LAB_GLOW_HALO_W = TILE_SIZE * 0.16   // wide, faint outer halo
-const LAB_GLOW_CORE_W = TILE_SIZE * 0.07   // brighter rim core
-const LAB_GLOW_HALO_A = 0.22
-const LAB_GLOW_CORE_A = 0.5
-function drawLabCooldownGlow(g: Graphics, cx: number, cy: number): void {
-  g.circle(cx, cy, LAB_GLOW_RING_R)
-  g.stroke({ width: LAB_GLOW_HALO_W, color: LAB_GLOW_COLOR, alpha: LAB_GLOW_HALO_A })
-  g.circle(cx, cy, LAB_GLOW_RING_R)
-  g.stroke({ width: LAB_GLOW_CORE_W, color: LAB_GLOW_COLOR, alpha: LAB_GLOW_CORE_A })
-}
-
-// Keeper lair: a near-black disc with a small red pupil ring, over which a red pulse expands from
-// the centre to almost fill the disc and fades. The pulse is one pre-baked radial-glow sprite
-// animated by scale + alpha in the ticker, so nothing is re-drawn or allocated per frame.
-const KL_BODY_R      = TILE_SIZE * 0.45   // black-disc radius (leaves a thin tile margin)
-const KL_BODY_COLOR  = 0x0E0708           // near-black with a faint warm tint
-const KL_RIM_COLOR   = 0x2A1618           // dark rim, lifts the disc off the terrain
-const KL_RIM_W       = TILE_SIZE * 0.06
-const KL_RED         = 0xE24A46           // pupil + pulse red
-const KL_PUPIL_R     = TILE_SIZE * 0.17   // red pupil-ring outer radius
-const KL_PUPIL_HOLE  = TILE_SIZE * 0.085  // dark centre punched through the pupil ring
-const KL_PULSE_MS    = 2600               // one ping every 2.6s
-const KL_PULSE_MIN_R = TILE_SIZE * 0.10   // pulse starts near the centre
-const KL_PULSE_MAX_R = TILE_SIZE * 0.42   // …and swells to almost fill the black disc
-const KL_PULSE_ALPHA = 0.6                // peak opacity mid-ping
-
-// Soft, tintable radial glow (opaque centre → transparent edge) baked once and shared by every
-// lair's pulse sprite; lazily built so it only touches the DOM/GPU when a lair first renders.
-// Shared, so it must outlive per-lair teardown: destroyVisual uses container.destroy({ children: true }),
-// whose object form leaves options.texture undefined, so the child sprite's destroy never frees this
-// texture. A refactor to destroy(true) (boolean) WOULD free it and blank every other lair — don't.
-let klGlowTexture: Texture | null = null
-function keeperGlowTexture(): Texture {
-  if (klGlowTexture) return klGlowTexture
-  const SIZE = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = SIZE
-  const ctx = canvas.getContext('2d')!
-  const r = SIZE / 2
-  const grad = ctx.createRadialGradient(r, r, 0, r, r, r)
-  grad.addColorStop(0, 'rgba(255,255,255,1)')
-  grad.addColorStop(0.45, 'rgba(255,255,255,0.72)')
-  grad.addColorStop(0.75, 'rgba(255,255,255,0.22)')
-  grad.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, SIZE, SIZE)
-  klGlowTexture = Texture.from(canvas)
-  return klGlowTexture
-}
-
-// Absolute tick a structure's cooldown ends (vanilla emits an absolute `cooldownTime`);
-// 0 when idle. Stored on the visual so the ticker can compare it against the live clock each
-// frame — `cooldownTime` is sent once and never re-sent, so a cached boolean would never clear.
-function cooldownEnd(obj: RoomObject): number {
-  return typeof obj.cooldownTime === 'number' ? obj.cooldownTime : 0
-}
-
-// Tombstones fade out over their lifetime, as vanilla does: full alpha at deathTime,
-// gone at decayTime. Both are absolute ticks, so the ticker compares them against the
-// live game clock rather than caching a fraction. Neither field is declared on
-// RoomObject (the server's payload is untyped) and servers may omit them entirely —
-// without a sane pair the tombstone just stays fully opaque.
-function tombstoneDecay(obj: RoomObject): { death: number; decay: number } | undefined {
-  const death = typeof obj.deathTime === 'number' ? obj.deathTime : undefined
-  const decay = typeof obj.decayTime === 'number' ? obj.decayTime : undefined
-  if (death === undefined || decay === undefined || decay <= death) return undefined
-  return { death, decay }
-}
-
-function getLabContents(obj: RoomObject): {
-  energy: number; energyCap: number; mineralType: string | null; mineral: number; mineralCap: number
-} {
-  const store = (obj.store && typeof obj.store === 'object') ? obj.store as Record<string, number> : {}
-  const caps = (obj.storeCapacityResource && typeof obj.storeCapacityResource === 'object')
-    ? obj.storeCapacityResource as Record<string, number> : {}
-  const energy = typeof store.energy === 'number' ? store.energy : 0
-  const energyCap = typeof caps.energy === 'number' ? caps.energy : LAB_ENERGY_CAP
-  let mineralType: string | null = null
-  let mineral = 0
-  for (const k in store) {
-    if (k === 'energy') continue
-    const v = store[k]
-    if (typeof v === 'number' && v > mineral) { mineral = v; mineralType = k }
-  }
-  const mineralCap = (mineralType && typeof caps[mineralType] === 'number') ? caps[mineralType]! : LAB_MINERAL_CAP
-  return { energy, energyCap, mineralType, mineral, mineralCap }
-}
-
-function updateLabFill(visual: ContainerWithTarget, energyFraction: number, mineralFraction: number): void {
-  const disc = visual.__labMineralG
-  if (disc) {
-    disc.clear()
-    if (mineralFraction > 0) {
-      const c = TILE_SIZE / 2
-      disc.circle(c, c - LAB_BOWL_DY, LAB_FILL_MAX_R * mineralFraction)
-      disc.fill(visual.__labMineralColor ?? ST_RESOURCE_OTHER)
-    }
-  }
-  const bar = visual.__labEnergyG
-  if (bar) {
-    bar.clear()
-    if (energyFraction > 0) {
-      const m = Math.max(0.5, TILE_SIZE * 0.04)
-      bar.rect(LAB_BAR_X + m, LAB_BAR_Y + m, (LAB_BAR_W - m * 2) * energyFraction, LAB_BAR_H - m * 2)
-      bar.fill(ST_ENERGY)
-    }
-  }
-}
-
-// Nuker: energy fills the inner triangle bottom→top; ghodium fills a bar across the base.
-const NUKER_ENERGY_CAP_FALLBACK = 300000
-const NUKER_GHODIUM_CAP = 5000
-const NUKER_TRI_APEX_Y = -0.8
-const NUKER_TRI_BASE_Y = 0.2
-const NUKER_TRI_HALF   = 0.4
-const NUKER_BAR_X0 = -0.34, NUKER_BAR_X1 = 0.34, NUKER_BAR_Y0 = 0.27, NUKER_BAR_Y1 = 0.45
-
-function getNukerContents(obj: RoomObject): {
-  energy: number; energyCap: number; ghodium: number; ghodiumCap: number
-} {
-  const store = (obj.store && typeof obj.store === 'object') ? obj.store as Record<string, number> : {}
-  const caps = (obj.storeCapacityResource && typeof obj.storeCapacityResource === 'object')
-    ? obj.storeCapacityResource as Record<string, number> : {}
-  const energy = typeof store.energy === 'number' ? store.energy : 0
-  const energyCap = typeof caps.energy === 'number' ? caps.energy
-    : typeof obj.storeCapacity === 'number' ? obj.storeCapacity : NUKER_ENERGY_CAP_FALLBACK
-  const ghodium = typeof store.G === 'number' ? store.G : 0
-  const ghodiumCap = typeof caps.G === 'number' ? caps.G : NUKER_GHODIUM_CAP
-  return { energy, energyCap, ghodium, ghodiumCap }
-}
-
-function updateNukerFill(visual: ContainerWithTarget, energyFraction: number, ghodiumFraction: number): void {
-  const c = TILE_SIZE / 2
-  const tri = visual.__nukerEnergyG
-  if (tri) {
-    tri.clear()
-    if (energyFraction > 0) {
-      const span = NUKER_TRI_BASE_Y - NUKER_TRI_APEX_Y
-      const topY = NUKER_TRI_BASE_Y - span * energyFraction
-      const halfAt = NUKER_TRI_HALF * (topY - NUKER_TRI_APEX_Y) / span
-      tri.poly([
-        c + halfAt * TILE_SIZE, c + topY * TILE_SIZE,
-        c + NUKER_TRI_HALF * TILE_SIZE, c + NUKER_TRI_BASE_Y * TILE_SIZE,
-        c - NUKER_TRI_HALF * TILE_SIZE, c + NUKER_TRI_BASE_Y * TILE_SIZE,
-        c - halfAt * TILE_SIZE, c + topY * TILE_SIZE,
-      ])
-      tri.fill(ST_ENERGY)
-    }
-  }
-  const bar = visual.__nukerGhodiumG
-  if (bar) {
-    bar.clear()
-    if (ghodiumFraction > 0) {
-      const x = c + NUKER_BAR_X0 * TILE_SIZE
-      const y = c + NUKER_BAR_Y0 * TILE_SIZE
-      const w = (NUKER_BAR_X1 - NUKER_BAR_X0) * TILE_SIZE
-      const h = (NUKER_BAR_Y1 - NUKER_BAR_Y0) * TILE_SIZE
-      bar.rect(x, y, w * ghodiumFraction, h)
-      bar.fill(resourceColor('G'))
-    }
-  }
-}
-
-// Power spawn: a red arc that sweeps clockwise from the top as stored power grows, mirroring
-// the vanilla power meter. It rides the dark moat between the energy core (r 0.4) and the red
-// structure ring (r 0.65). Energy stays the static yellow core drawn on the body.
-const POWER_SPAWN_POWER_CAP = 100   // POWER_SPAWN_POWER_CAPACITY fallback when caps are omitted
-const PS_POWER_ARC_R = TILE_SIZE * 0.51
-const PS_POWER_ARC_W = TILE_SIZE * 0.12
-
-function getPowerSpawnPower(obj: RoomObject): { power: number; powerCap: number } {
-  const store = (obj.store && typeof obj.store === 'object') ? obj.store as Record<string, number> : {}
-  const caps = (obj.storeCapacityResource && typeof obj.storeCapacityResource === 'object')
-    ? obj.storeCapacityResource as Record<string, number> : {}
-  const power = typeof store.power === 'number' ? store.power : 0
-  const powerCap = typeof caps.power === 'number' ? caps.power : POWER_SPAWN_POWER_CAP
-  return { power, powerCap }
-}
-
-function drawPowerSpawnPower(g: Graphics, fraction: number): void {
-  g.clear()
-  if (fraction <= 0) return
-  const c = TILE_SIZE / 2
-  if (fraction >= 1) {
-    g.circle(c, c, PS_POWER_ARC_R)
-  } else {
-    const start = -Math.PI / 2  // top
-    const end = start + fraction * Math.PI * 2  // sweep clockwise (y-down)
-    g.moveTo(c + PS_POWER_ARC_R * Math.cos(start), c + PS_POWER_ARC_R * Math.sin(start))
-    g.arc(c, c, PS_POWER_ARC_R, start, end)
-  }
-  g.stroke({ width: PS_POWER_ARC_W, color: ST_POWER })
-}
-
-function updatePowerSpawnPower(visual: ContainerWithTarget, fraction: number): void {
-  if (visual.__powerSpawnPowerG) drawPowerSpawnPower(visual.__powerSpawnPowerG, fraction)
-}
-
-// ── Power bank helpers ─────────────────────────────────────────────────────
-// Dark octagonal shell with a red power ellipse that scales with stored power.
-// Color pulses through #f41f33 → #d31022 → #8d000d → #f41f33 over 2s.
-// Ellipse scales 1→0.6→1 over the same period.
-// Geometry is derived from the original SVG: viewBox 300×300, g scale(1.5), so
-// 1 tile = 100 SVG units after scale; the octagon's outer half-extent is 75 units.
-const POWER_BANK_CAPACITY_MAX = 5000
-const PB_S = TILE_SIZE / 100                         // svg-unit → tile-pixel
-const PB_STROKE_W = Math.max(1, TILE_SIZE * 0.1)
-const PB_SHELL_FILL = 0x331111
-const PB_SHELL_STROKE = 0x666666
-const PB_ANIM_MS = 2000
-const PB_COLOR_0 = 0xf41f33
-const PB_COLOR_1 = 0xd31022
-const PB_COLOR_2 = 0x8d000d
-
-// Octagon vertices derived from SVG path M0 -50 H30 L50 -30 V30 L30 50 H-30 L-50 30 V-30 L-30 -50 Z
-// scaled by 1.5. These are the tile-relative offsets (multiply by PB_S).
-const PB_OCTO_OFFSETS = [
-  -45, -75,  45, -75,  75, -45,  75, 45,  45, 75,  -45, 75,  -75, 45,  -75, -45,
-]
-
-function getPowerBankPower(obj: RoomObject): number {
-  // Old-format servers send power as a direct field; new-format sends it via store.
-  if (typeof obj.power === 'number') return obj.power
-  const store = (obj.store && typeof obj.store === 'object') ? obj.store as Record<string, number> : {}
-  return typeof store.power === 'number' ? store.power : 0
-}
-
-function calcPowerBankRadius(power: number): number {
-  // svgR is in pre-scale coords; the g transform scale(1.5) applies before tile conversion
-  const svgR = Math.sqrt(Math.max(0, power) / POWER_BANK_CAPACITY_MAX * 3000 / Math.PI)
-  return svgR * 1.5 * PB_S
-}
-
-function powerBankFillColor(now: number): number {
-  const t = (now % PB_ANIM_MS) / PB_ANIM_MS
-  if (t < 1 / 3) return lerpColor(PB_COLOR_0, PB_COLOR_1, t * 3)
-  if (t < 2 / 3) return lerpColor(PB_COLOR_1, PB_COLOR_2, (t - 1 / 3) * 3)
-  return lerpColor(PB_COLOR_2, PB_COLOR_0, (t - 2 / 3) * 3)
-}
-
-function drawPowerBankEllipse(g: Graphics, radius: number, now: number): void {
-  g.clear()
-  if (radius <= 0) return
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-  const pulse = 0.8 + 0.2 * Math.cos((now % PB_ANIM_MS) / PB_ANIM_MS * 2 * Math.PI)
-  const r = radius * pulse
-  g.circle(cx, cy, r)
-  g.fill(powerBankFillColor(now))
-  g.circle(cx, cy, r)
-  g.stroke({ width: PB_STROKE_W, color: PB_COLOR_2 })
-}
-
-// Factory: a compact cog — short stubby teeth forming the gear silhouette, a level ring
-// around the centre, and a storage-style band fill in the centre box. The green outline
-// pulses while producing (it does not recolour the teeth themselves).
-const FACT_TEETH      = 8
-const FACT_BODY_R     = TILE_SIZE * 0.4       // body disc / tooth valley radius
-const FACT_TOOTH_OUT  = TILE_SIZE * 0.5       // tooth tips reach the tile edge
-const FACT_TOOTH_HALF = 0.22                  // radians, half angular width of a tooth
-const FACT_RING_IN    = TILE_SIZE * 0.25
-const FACT_RING_OUT   = TILE_SIZE * 0.32
-const FACT_BOX_W      = TILE_SIZE * 0.24
-const FACT_BOX_H      = TILE_SIZE * 0.28
-const FACT_BOX_X      = TILE_SIZE * 0.38      // centred: 0.5 - 0.12
-const FACT_BOX_Y      = TILE_SIZE * 0.36      // centred: 0.5 - 0.14
-const FACT_LEVELS     = 5
-const FACT_GLOW       = 0xFFFFFF              // pulse brightens the outline toward white
-
-// One closed polygon tracing the whole cog perimeter: body-radius arcs in the valleys,
-// outer-radius arcs across the tooth tips, with the radial rises/falls between them as
-// the straight segments the poly draws automatically. Filled it is a solid gear.
-function factoryGearPoints(): number[] {
-  const c = TILE_SIZE / 2
-  const step = (2 * Math.PI) / FACT_TEETH
-  const SEG = 3
-  const pts: number[] = []
-  for (let i = 0; i < FACT_TEETH; i++) {
-    const ac = -Math.PI / 2 + i * step
-    const ts = ac - FACT_TOOTH_HALF
-    const te = ac + FACT_TOOTH_HALF
-    const prevTe = ac - step + FACT_TOOTH_HALF
-    for (let s = 0; s <= SEG; s++) {          // valley arc at body radius
-      const a = prevTe + (ts - prevTe) * (s / SEG)
-      pts.push(c + FACT_BODY_R * Math.cos(a), c + FACT_BODY_R * Math.sin(a))
-    }
-    for (let s = 0; s <= SEG; s++) {          // tooth tip arc at outer radius
-      const a = ts + (te - ts) * (s / SEG)
-      pts.push(c + FACT_TOOTH_OUT * Math.cos(a), c + FACT_TOOTH_OUT * Math.sin(a))
-    }
-  }
-  return pts
-}
-const FACT_GEAR_PTS = factoryGearPoints()
-
-// True while a structure is on cooldown — factory producing, extractor recharging.
-function onCooldown(obj: RoomObject): boolean {
-  return typeof obj.cooldown === 'number' && obj.cooldown > 0
-}
-function drawFactoryGear(g: Graphics, strokeColor: number): void {
-  g.clear()
-  g.poly(FACT_GEAR_PTS)
-  g.fill(ST_DARK)
-  g.poly(FACT_GEAR_PTS)
-  g.stroke({ width: TILE_SIZE * 0.06, color: strokeColor })
-}
-
-function drawFactoryRing(g: Graphics, level: number): void {
-  g.clear()
-  const c = TILE_SIZE / 2
-  const gap = 0.14
-  const seg = (2 * Math.PI / FACT_LEVELS) - gap
-  for (let i = 0; i < FACT_LEVELS; i++) {
-    const a0 = -Math.PI / 2 + i * (2 * Math.PI / FACT_LEVELS) + gap / 2
-    const a1 = a0 + seg
-    g.moveTo(c + FACT_RING_IN * Math.cos(a0), c + FACT_RING_IN * Math.sin(a0))
-    g.arc(c, c, FACT_RING_OUT, a0, a1)
-    g.arc(c, c, FACT_RING_IN, a1, a0, true)
-    g.closePath()
-    g.fill(i < level ? ST_LIGHT : ST_GRAY)
-  }
-}
-
-function calcFactoryFillHeight(used: number, capacity: number): number {
-  if (capacity <= 0 || used <= 0) return 0
-  return FACT_BOX_H * Math.min(1, used / capacity)
-}
-
-function updateFactoryFill(visual: ContainerWithTarget, height: number): void {
-  const fill = visual.__factoryFillG
-  if (!fill) return
-  fill.clear()
-  const margin = Math.max(0.5, TILE_SIZE * 0.03)
-  drawStoreBands(fill, FACT_BOX_X, FACT_BOX_Y + FACT_BOX_H, FACT_BOX_W, height, visual.__factoryBands, visual.__factoryUsed ?? 0, margin)
-}
-
-// ── Controller helpers ─────────────────────────────────────────────────────
-
-const CTRL_OCTO_R  = TILE_SIZE * 0.65
-const CTRL_SEG_OUT = CTRL_OCTO_R
-const CTRL_SEG_IN  = TILE_SIZE * 0.42
-
-function drawControllerSegments(
-  g: Graphics,
-  cx: number, cy: number,
-  outerR: number, innerR: number,
-  level: number, progress: number, progressTotal: number,
-): void {
-  g.clear()
-  const SEG_COUNT  = 8
-  const gapAngle   = 0.10
-  const segArc     = (2 * Math.PI / SEG_COUNT) - gapAngle
-
-  for (let i = 0; i < SEG_COUNT; i++) {
-    const a0 = -Math.PI / 2 + i * (2 * Math.PI / SEG_COUNT) + gapAngle / 2
-    const a1 = a0 + segArc
-    const sx = cx + innerR * Math.cos(a0)
-    const sy = cy + innerR * Math.sin(a0)
-
-    if (i < level) {
-      g.moveTo(sx, sy)
-      g.arc(cx, cy, outerR, a0, a1)
-      g.arc(cx, cy, innerR, a1, a0, true)
-      g.closePath()
-      g.fill({ color: 0xdddddd, alpha: 0.9 })
-    } else if (i === level && progressTotal > 0) {
-      g.moveTo(sx, sy)
-      g.arc(cx, cy, outerR, a0, a1)
-      g.arc(cx, cy, innerR, a1, a0, true)
-      g.closePath()
-      g.fill({ color: 0x1e1e1e, alpha: 0.85 })
-      if (progress > 0) {
-        const ratio = Math.min(1, progress / progressTotal)
-        const pe = a0 + segArc * ratio
-        g.moveTo(sx, sy)
-        g.arc(cx, cy, outerR, a0, pe)
-        g.arc(cx, cy, innerR, pe, a0, true)
-        g.closePath()
-        g.fill({ color: 0xdddddd, alpha: 0.9 })
-      }
-    } else {
-      g.moveTo(sx, sy)
-      g.arc(cx, cy, outerR, a0, a1)
-      g.arc(cx, cy, innerR, a1, a0, true)
-      g.closePath()
-      g.fill({ color: 0x1e1e1e, alpha: 0.6 })
-    }
-  }
-}
-
-function updateControllerSegSprites(container: ContainerWithTarget, level: number, progress: number, progressTotal: number): void {
-  const segs = container.__ctrlSegSprites
-  if (!segs) return
-  for (let i = 0; i < segs.length; i++) {
-    if (i < level) {
-      segs[i]!.alpha = 1.0
-    } else if (i === level && progressTotal > 0) {
-      segs[i]!.alpha = Math.max(0.15, progress / progressTotal)
-    } else {
-      segs[i]!.alpha = 0.15
-    }
-  }
-}
-
-function isForeignCreep(obj: RoomObject, currentUserId?: string): boolean {
-  const creepUser = obj.user
-  if (typeof creepUser !== 'string') return false
-  if (!currentUserId) return false
-  return creepUser !== currentUserId
-}
-
-// NPC users are never sent in the client `users` map, so detect by the engine's
-// stable NPC user ids rather than username (which would never resolve). Invaders
-// and Source Keepers both render as the red gem; only the label differs. Returns
-// the display name for an NPC creep, or null if the creep isn't an NPC.
-const USER_INVADER = '2'
-const USER_SOURCE_KEEPER = '3'
-function npcCreepName(obj: RoomObject, users?: Record<string, { username: string }>): string | null {
-  const u = typeof obj.user === 'string' ? obj.user : undefined
-  if (!u) return null
-  if (u === USER_INVADER || users?.[u]?.username === 'Invader') return 'Invader'
-  if (u === USER_SOURCE_KEEPER || users?.[u]?.username === 'Source Keeper') return 'Source Keeper'
-  return null
-}
-
-// Tier-based zIndex: structures=0, creeps=100, flags=200; each spec adds an offset
-// within its tier. A spawning creep sits on its spawn's tile, so it drops below
-// structures (the spawn body + progress ring then render over it) instead of popping
-// on top. Other creeps stay above structures. Re-applied on update so the born
-// transition (spawning → false) restores the normal creep tier.
-function computeZIndex(obj: RoomObject): number {
-  const baseZ = obj.type === 'creep' ? (obj.spawning ? -1 : 100) : obj.type === 'flag' ? 200 : 0
-  const specZ = obj.type === 'flag' ? (defaultSpriteTheme.flag?.zIndex ?? 0)
-    : obj.type === 'controller' ? (defaultSpriteTheme.controller?.zIndex ?? 0)
-    : obj.type === 'tombstone' ? TOMBSTONE_Z_INDEX
-    : obj.type === 'mineral' ? (defaultSpriteTheme.mineral?.zIndex ?? 0)
-    : obj.type === 'extractor' ? EXTRACTOR_Z_INDEX
-    : 0
-  return baseZ + specZ
-}
-
-function createObjectVisual(
-  obj: RoomObject,
-  showLabel = true,
-  currentUserId?: string,
-  _badge?: Badge,
-  badgeCache?: BadgeTextureCache,
-  users?: Record<string, { _id: string; username: string; badge?: Badge }>,
-): Container {
-  const container = new Container()
-  const g = new Graphics()
-  const color = getObjectColor(obj.type)
-  const cx = TILE_SIZE / 2
-  const cy = TILE_SIZE / 2
-
-  // Foreign-owned structures swap their outline (normally ST_OUTLINE green) for OBJ_FOREIGN red.
-  const ownedByUser = typeof obj.user === 'string' ? obj.user : undefined
-  const isForeignOwned = ownedByUser !== undefined && currentUserId !== undefined && ownedByUser !== currentUserId
-  const outlineColor = isForeignOwned ? OBJ_FOREIGN : ST_OUTLINE
-
-  switch (obj.type) {
-    case 'creep': {
-      // Invaders and Source Keepers both render as the red gem.
-      if (npcCreepName(obj, users)) {
-        drawInvaderCreep(container as ContainerWithTarget)
-        break
-      }
-
-      const FULL = 2 * Math.PI
-
-      const bodyContainer = new Container()
-      bodyContainer.position.set(cx, cy)
-      bodyContainer.rotation = -Math.PI / 2
-
-      const isForeign = isForeignCreep(obj, currentUserId)
-      if (isForeign) {
-        const borderG = new Graphics()
-        borderG.circle(0, 0, CREEP_OUTER_R + 0.75)
-        borderG.stroke({ width: 1.5, color: OBJ_FOREIGN })
-        bodyContainer.addChild(borderG)
-      }
-
-      const bgG = new Graphics()
-      bgG.circle(0, 0, CREEP_OUTER_R)
-      bgG.fill(BG_DEEP)
-      bodyContainer.addChild(bgG)
-
-      // Count body parts by zone
-      const bodyParts = (obj.body as Array<{ type: string }> | undefined) ?? []
-      let workCount = 0
-      let moveCount = 0
-      let otherTotal = 0
-      const otherOrder: string[] = []
-      const otherCounts: Record<string, number> = {}
-      for (const part of bodyParts) {
-        if (part.type === 'work') {
-          workCount++
-        } else if (part.type === 'move') {
-          moveCount++
-        } else {
-          if (otherCounts[part.type] === undefined) {
-            otherOrder.push(part.type)
-            otherCounts[part.type] = 0
-          }
-          otherCounts[part.type]!++
-          otherTotal++
-        }
-      }
-
-      // Proportional angle allocations (relative to MAX_BODY=50)
-      const workAngle  = (workCount  / CREEP_MAX_BODY) * FULL
-      const moveAngle  = (moveCount  / CREEP_MAX_BODY) * FULL
-      const otherAngle = (otherTotal / CREEP_MAX_BODY) * FULL
-
-      // Zone boundaries (local space: 0 = top after -π/2 rotation, clockwise)
-      // WORK: centered at local 0 (top)
-      // MOVE: centered at local π (bottom)
-      // OTHER: split left/right, adjacent to WORK, filling toward MOVE
-      // DARK: remaining space between OTHER and MOVE
-      const workEnd        = workAngle / 2
-      const rightOtherEnd  = workEnd + otherAngle / 2
-      const moveStart      = Math.PI - moveAngle / 2
-      const moveEnd        = Math.PI + moveAngle / 2
-      const leftOtherStart = FULL - workAngle / 2 - otherAngle / 2
-      const leftOtherEnd   = FULL - workAngle / 2
-
-      const arcsG = new Graphics()
-
-      // 1. WORK — top, centered
-      if (workAngle > 0) {
-        drawCreepArc(arcsG, -workAngle / 2, workEnd, BODY_PART_COLORS['work'] ?? 0xffe56d)
-      }
-
-      // 2. RIGHT OTHER — clockwise from WORK, filling toward MOVE
-      let rightCur = workEnd
-      for (const type of otherOrder) {
-        const angle = ((otherCounts[type] ?? 0) / CREEP_MAX_BODY) * FULL / 2
-        drawCreepArc(arcsG, rightCur, rightCur + angle, BODY_PART_COLORS[type] ?? 0x777777)
-        rightCur += angle
-      }
-
-      // 3. RIGHT DARK
-      drawCreepArc(arcsG, rightOtherEnd, moveStart, CREEP_RING_DARK)
-
-      // 4. MOVE — bottom, centered
-      if (moveAngle > 0) {
-        drawCreepArc(arcsG, moveStart, moveEnd, BODY_PART_COLORS['move'] ?? 0xa9b7c6)
-      }
-
-      // 5. LEFT DARK
-      drawCreepArc(arcsG, moveEnd, leftOtherStart, CREEP_RING_DARK)
-
-      // 6. LEFT OTHER — filling from WORK downward (counter-clockwise = reverse order, drawn as clockwise arcs)
-      let leftCur = leftOtherEnd
-      for (const type of otherOrder) {
-        const angle = ((otherCounts[type] ?? 0) / CREEP_MAX_BODY) * FULL / 2
-        drawCreepArc(arcsG, leftCur - angle, leftCur, BODY_PART_COLORS[type] ?? 0x777777)
-        leftCur -= angle
-      }
-
-      bodyContainer.addChild(arcsG)
-
-      // Inner dark circle
-      const innerG = new Graphics()
-      innerG.circle(0, 0, CREEP_INNER_R)
-      innerG.fill(BG_DARK)
-      bodyContainer.addChild(innerG)
-
-      // Center indicator: owner's badge if available, red fill for foreign/NPC without badge
-      const creepUserId = typeof obj.user === 'string' ? obj.user : undefined
-      const creepBadge = creepUserId ? users?.[creepUserId]?.badge : undefined
-      if (creepBadge && badgeCache) {
-        const badgeSprite = new Sprite()
-        badgeSprite.anchor.set(0.5, 0.5)
-        const size = CREEP_INNER_R * 2
-        badgeSprite.width = size
-        badgeSprite.height = size
-        badgeSprite.rotation = Math.PI / 2
-        bodyContainer.addChild(badgeSprite)
-        ;(container as ContainerWithTarget).__creepBadgeSprite = badgeSprite
-        badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
-          if (!badgeSprite.destroyed) {
-            badgeSprite.texture = texture
-          }
-        }).catch(err => logError('atlas/badge texture load failed', err))
-      } else if (isForeign) {
-        const markG = new Graphics()
-        markG.circle(0, 0, CREEP_INNER_R * 0.82)
-        markG.fill({ color: OBJ_FOREIGN, alpha: 0.9 })
-        bodyContainer.addChild(markG)
-        ;(container as ContainerWithTarget).__creepForeignMark = markG
-      }
-
-      // Store fill (animated, updated on store changes)
-      const { used, capacity } = getCreepStore(obj)
-      const fillRadius = calcCreepFillRadius(used, capacity)
-      const fillG = new Graphics()
-      if (fillRadius > 0) {
-        fillG.circle(0, 0, fillRadius)
-        fillG.fill(ENERGY_FILL)
-      }
-      bodyContainer.addChild(fillG)
-      ;(container as ContainerWithTarget).__creepFillGraphics = fillG
-      ;(container as ContainerWithTarget).__creepUsed = used
-      ;(container as ContainerWithTarget).__creepCapacity = capacity
-
-      // Direction indicator (notch pointing right = local angle 0)
-      const midR   = (CREEP_OUTER_R + CREEP_INNER_R) / 2
-      const halfH  = (CREEP_OUTER_R - CREEP_INNER_R) * 0.45
-      const notchG = new Graphics()
-      notchG.moveTo(CREEP_OUTER_R, 0)
-      notchG.lineTo(midR, -halfH)
-      notchG.lineTo(midR,  halfH)
-      notchG.closePath()
-      notchG.fill(CREEP_NOTCH)
-      bodyContainer.addChild(notchG)
-
-      container.addChild(bodyContainer)
-      ;(container as ContainerWithTarget).__bodyContainer = bodyContainer
-      break
-    }
-    case 'extension': {
-      const { energy, capacity } = getExtensionEnergy(obj)
-      drawExtensionVisual(container, energy, capacity, outlineColor)
-      ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extEnergy = energy
-      ;(container as Container & { __extEnergy?: number; __extCapacity?: number }).__extCapacity = capacity
-      break
-    }
-    case 'spawn': {
-      // Layered by zIndex (sorted below; body `g` is added after the switch at 0):
-      // dark backdrop `g` (0) → owner badge (1) → energy core (2) → rim outline (3)
-      // → progress ring (4). The backdrop only shows through until the badge texture
-      // resolves, or stays for NPC/unowned spawns.
-      const R = TILE_SIZE * 0.65
-      g.circle(cx, cy, R)
-      g.fill(ST_DARK)
-      container.sortableChildren = true
-      const cwt = container as ContainerWithTarget
-
-      // Owner's badge fills the body disc — the structure background (was flat black).
-      const spawnUserId = typeof obj.user === 'string' ? obj.user : undefined
-      const spawnBadge = spawnUserId ? users?.[spawnUserId]?.badge : undefined
-      if (spawnBadge && badgeCache) {
-        const bs = new Sprite()
-        bs.anchor.set(0.5, 0.5)
-        bs.width = R * 2
-        bs.height = R * 2
-        bs.position.set(cx, cy)
-        bs.zIndex = 1
-        const bsMask = new Graphics()
-        bsMask.circle(cx, cy, R)
-        bsMask.fill(0xffffff)
-        bs.mask = bsMask
-        container.addChild(bs)
-        container.addChild(bsMask)
-        cwt.__spawnBadgeSprite = bs
-        badgeCache.getOrCreate(spawnBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(err => logError('atlas/badge texture load failed', err))
-      }
-
-      // Inner yellow disc, scaled to reflect stored energy (percentage full).
-      const { energy, capacity } = getExtensionEnergy(obj)
-      const fill = new Graphics()
-      fill.zIndex = 2
-      container.addChild(fill)
-      cwt.__fillGraphics = fill
-      updateExtensionFill(cwt, calcSpawnFillRadius(energy, capacity))
-      cwt.__spawnEnergy = energy
-      cwt.__spawnCapacity = capacity
-
-      // Moat rim outline — above the badge so the edge stays crisp.
-      const rim = new Graphics()
-      rim.circle(cx, cy, R)
-      rim.stroke({ width: TILE_SIZE * 0.1, color: 0xcccccc })
-      rim.zIndex = 3
-      container.addChild(rim)
-
-      const spawnRing = new Graphics()
-      spawnRing.zIndex = 4
-      const t = spawnTiming(obj, 0)
-      const ratio = t ? spawnRatio(t.needTime, t.endTime, 0) : null
-      drawSpawnRing(spawnRing, ratio)
-      container.addChild(spawnRing)
-      cwt.__spawnRing = spawnRing
-      cwt.__spawnRatio = ratio
-      if (t) { cwt.__spawnNeedTime = t.needTime; cwt.__spawnEndTime = t.endTime }
-      cwt.__spawnSig = spawnSig(obj)
-      break
-    }
-    case 'powerSpawn': {
-      g.circle(cx, cy, TILE_SIZE * 0.65)
-      g.fill(ST_DARK)
-      g.circle(cx, cy, TILE_SIZE * 0.65)
-      g.stroke({ width: TILE_SIZE * 0.1, color: ST_POWER })
-      g.circle(cx, cy, TILE_SIZE * 0.4)
-      g.fill(ST_ENERGY)
-      // Power meter rides above the body `g` (added after the switch); sort children so the
-      // arc renders over the dark moat. ObjectLayer.update() drives the sweep per-tick.
-      container.sortableChildren = true
-      const powerG = new Graphics()
-      powerG.zIndex = 1
-      const { power, powerCap } = getPowerSpawnPower(obj)
-      drawPowerSpawnPower(powerG, calcCenterFillFraction(power, powerCap))
-      container.addChild(powerG)
-      const cwt = container as ContainerWithTarget
-      cwt.__powerSpawnPowerG = powerG
-      cwt.__powerSpawnPower = power
-      cwt.__powerSpawnPowerCap = powerCap
-      break
-    }
-    case 'source': {
-      const { energy, capacity } = getSourceEnergy(obj)
-      const size = calcSourceSize(energy, capacity)
-      const srcG = new Graphics()
-      drawSourceVisual(srcG, size, performance.now())
-      container.addChild(srcG)
-      ;(container as ContainerWithTarget).__sourceGraphics = srcG
-      ;(container as ContainerWithTarget).__sourceEnergy = energy
-      ;(container as ContainerWithTarget).__sourceCapacity = capacity
-      ;(container as ContainerWithTarget).__sourceSize = size
-      break
-    }
-    case 'constructionSite': {
-      const csUser = typeof obj.user === 'string' ? obj.user : undefined
-      const isMine = csUser !== undefined && csUser === currentUserId
-      const csColor = isMine ? CS_OWN : CS_FOREIGN
-      const csDark  = isMine ? CS_OWN_DARK  : CS_FOREIGN_DARK
-      const csLight = isMine ? CS_OWN_LIGHT : CS_FOREIGN_LIGHT
-      const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
-      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
-
-      // Build glow (under the ring, animated by tick)
-      const glowG = new Graphics()
-      container.addChild(glowG)
-      ;(container as ContainerWithTarget).__csBuildGlow = glowG
-
-      // Progress pie fill (static color)
-      const fillG = new Graphics()
-      drawCSProgress(fillG, cx, cy, CS_FILL_R, progress, progressTotal, csColor)
-      container.addChild(fillG)
-      ;(container as ContainerWithTarget).__csFillGraphics = fillG
-
-      // Ring outline — color is redrawn each tick for the pulsation
-      const ringG = new Graphics()
-      drawCSRing(ringG, csColor)
-      container.addChild(ringG)
-      ;(container as ContainerWithTarget).__csRingGraphics = ringG
-
-      ;(container as ContainerWithTarget).__csProgress      = progress
-      ;(container as ContainerWithTarget).__csProgressTotal = progressTotal
-      ;(container as ContainerWithTarget).__csUser          = csUser
-      ;(container as ContainerWithTarget).__csColor         = csColor
-      ;(container as ContainerWithTarget).__csColorDark     = csDark
-      ;(container as ContainerWithTarget).__csColorLight    = csLight
-      break
-    }
-    case 'mineral': {
-      const mtype = typeof obj.mineralType === 'string' ? obj.mineralType : '?'
-      const mineralSpec = defaultSpriteTheme.mineral
-      if (mineralSpec) {
-        const frame = `mineral/${mtype}`
-        const targetSize = TILE_SIZE * mineralSpec.tileScale
-        const applyTexture = (sprite: Sprite, tex: Texture) => {
-          sprite.texture = tex
-          sprite.width = targetSize
-          sprite.height = targetSize
-        }
-        const sprite = new Sprite()
-        sprite.anchor.set(0.5, 0.5)
-        sprite.x = cx
-        sprite.y = cy
-        container.addChild(sprite)
-        const tex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, frame)
-        if (tex) {
-          applyTexture(sprite, tex)
-        } else {
-          sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
-            if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-      } else {
-        // Fallback: colored disc + letter glyph
-        const mcolor = RESOURCE_COLORS[mtype] ?? OBJ_CYAN
-        const textColor = MINERAL_TEXT_COLORS[mtype] ?? 0xFFFFFF
-        const discG = new Graphics()
-        discG.circle(cx, cy, MINERAL_R)
-        discG.fill(mcolor)
-        container.addChild(discG)
-        const glyph = new Text({
-          text: mtype,
-          style: { fontSize: MINERAL_GLYPH_FONT, fill: textColor, fontWeight: 'bold' },
-        })
-        glyph.anchor.set(0.5, 0.5)
-        glyph.scale.set(MINERAL_GLYPH_SCALE)
-        glyph.position.set(cx, cy)
-        container.addChild(glyph)
-      }
-      break
-    }
-    case 'deposit': {
-      const depType = typeof obj.depositType === 'string' ? obj.depositType : undefined
-      const depSpec = defaultSpriteTheme.deposit
-      if (depType && depSpec) {
-        const targetSize = TILE_SIZE * depSpec.tileScale
-        const applyTexture = (sprite: Sprite, tex: Texture) => {
-          sprite.texture = tex
-          sprite.width = targetSize
-          sprite.height = targetSize
-        }
-        // Two stacked layers: the rock shape, then the commodity fill on top —
-        // both tinted by type; the fill is kept mostly transparent.
-        const tintColor = DEPOSIT_COLORS[depType]
-        for (const frame of [`deposit/${depType}/shape`, `deposit/${depType}/fill`]) {
-          const isFill = frame.endsWith('/fill')
-          const sprite = new Sprite()
-          sprite.anchor.set(0.5, 0.5)
-          sprite.x = cx
-          sprite.y = cy
-          if (tintColor !== undefined) sprite.tint = tintColor
-          if (isFill) sprite.alpha = DEPOSIT_FILL_ALPHA
-          container.addChild(sprite)
-          const tex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, frame)
-          if (tex) {
-            applyTexture(sprite, tex)
-          } else {
-            sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
-              if (!sprite.destroyed) applyTexture(sprite, sheet.textures[frame] ?? Texture.EMPTY)
-            }).catch(err => logError('atlas/badge texture load failed', err))
-          }
-        }
-        break
-      }
-      // Fallback: colored rect (unknown deposit type)
-      g.rect(2, 2, TILE_SIZE - 4, TILE_SIZE - 4)
-      g.fill(color)
-      container.addChild(g)
-      break
-    }
-    case 'controller': {
-      const level        = typeof obj.level         === 'number' ? obj.level         : 0
-      const progress     = typeof obj.progress      === 'number' ? obj.progress      : 0
-      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
-
-      const resObj = obj.reservation as { user?: string } | undefined
-      const ctrlUserId = typeof obj.user === 'string' ? obj.user
-        : typeof resObj?.user === 'string' ? resObj.user
-        : undefined
-      const ctrlBadge = ctrlUserId ? users?.[ctrlUserId]?.badge : undefined
-
-      const ctrlSpec: ControllerSpec | undefined = defaultSpriteTheme.controller
-      if (ctrlSpec) {
-        const targetSize = TILE_SIZE * ctrlSpec.tileScale
-        const segScale = targetSize / 600
-
-        const bgSprite = new Sprite()
-        bgSprite.anchor.set(0.5, 0.5)
-        bgSprite.x = cx
-        bgSprite.y = cy
-        bgSprite.width = targetSize
-        bgSprite.height = targetSize
-        container.addChild(bgSprite)
-
-        const segSprites: Sprite[] = []
-        for (let i = 0; i < 8; i++) {
-          const seg = new Sprite()
-          seg.anchor.set(0.5, 0.5)
-          seg.x = cx
-          seg.y = cy
-          seg.scale.set(segScale)
-          seg.rotation = i * (Math.PI / 4)
-          container.addChild(seg)
-          segSprites.push(seg)
-        }
-        ;(container as ContainerWithTarget).__ctrlSegSprites = segSprites
-        updateControllerSegSprites(container as ContainerWithTarget, level, progress, progressTotal)
-
-        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl)
-        const bgTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, ctrlSpec.backgroundFrame)
-        if (bgTex) {
-          bgSprite.texture = bgTex
-        } else {
-          loadAtlas().then(sheet => {
-            if (!bgSprite.destroyed) bgSprite.texture = sheet.textures[ctrlSpec.backgroundFrame] ?? Texture.EMPTY
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-        const existingSegTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, ctrlSpec.segmentFrame)
-        if (existingSegTex) {
-          for (const seg of segSprites) seg.texture = existingSegTex
-        } else {
-          loadAtlas().then(sheet => {
-            const tex = sheet.textures[ctrlSpec.segmentFrame] ?? Texture.EMPTY
-            for (const seg of segSprites) { if (!seg.destroyed) seg.texture = tex }
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-      } else {
-        // Graphics fallback: octagon + arc segments
-        const octoG = new Graphics()
-        const octopts: number[] = []
-        for (let i = 0; i < 8; i++) {
-          const angle = -Math.PI / 2 + i * Math.PI / 4
-          octopts.push(cx + CTRL_OCTO_R * Math.cos(angle), cy + CTRL_OCTO_R * Math.sin(angle))
-        }
-        octoG.poly(octopts)
-        octoG.fill(0x222831)
-        octoG.poly(octopts)
-        octoG.stroke({ width: TILE_SIZE * 0.07, color: 0x7A7E85 })
-        container.addChild(octoG)
-
-        const segG = new Graphics()
-        drawControllerSegments(segG, cx, cy, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
-        container.addChild(segG)
-        ;(container as ContainerWithTarget).__ctrlSegGraphics = segG
-      }
-
-      ;(container as ContainerWithTarget).__ctrlLevel         = level
-      ;(container as ContainerWithTarget).__ctrlProgress      = progress
-      ;(container as ContainerWithTarget).__ctrlProgressTotal = progressTotal
-      ;(container as ContainerWithTarget).__ctrlDowngradeTime = typeof obj.downgradeTime === 'number' ? obj.downgradeTime : undefined
-      ;(container as ContainerWithTarget).__ctrlUserId        = ctrlUserId
-
-      // Inner circle — backdrop behind badge (owned) or neutral disc + center dot (unowned)
-      const innerCircleG = new Graphics()
-      if (ctrlBadge) {
-        innerCircleG.circle(cx, cy, CTRL_SEG_IN)
-        innerCircleG.fill(ST_DARK)
-      } else {
-        innerCircleG.circle(cx, cy, CTRL_SEG_IN)
-        innerCircleG.fill(0x2E343F)
-        innerCircleG.circle(cx, cy, CTRL_SEG_IN)
-        innerCircleG.stroke({ width: TILE_SIZE * 0.04, color: 0x7A7E85 })
-        innerCircleG.circle(cx, cy, TILE_SIZE * 0.16)
-        innerCircleG.fill(0x9AA0A8)
-      }
-      container.addChild(innerCircleG)
-
-      if (ctrlBadge && badgeCache) {
-        const bs = new Sprite()
-        bs.anchor.set(0.5, 0.5)
-        bs.width  = CTRL_SEG_IN * 2
-        bs.height = CTRL_SEG_IN * 2
-        bs.position.set(cx, cy)
-        const bsMask = new Graphics()
-        bsMask.circle(cx, cy, CTRL_SEG_IN)
-        bsMask.fill(0xffffff)
-        container.addChild(bs)
-        bs.mask = bsMask
-        container.addChild(bsMask)
-        badgeCache.getOrCreate(ctrlBadge as Badge).then((tex) => { if (!bs.destroyed) bs.texture = tex }).catch(err => logError('atlas/badge texture load failed', err))
-      }
-
-      break
-    }
-    case 'energy': {
-      g.circle(cx, cy, TILE_SIZE * 0.2)
-      g.fill(ST_ENERGY)
-      break
-    }
-    case 'road': {
-      // Intentionally left empty: rendering is batched in ObjectLayer's roadGraphics
-      // but we still need the empty container for selection tracking
-      break
-    }
-    case 'constructedWall': {
-      // Intentionally left empty: rendering is batched in ObjectLayer's wallGraphics
-      // but we still need the empty container for selection tracking
-      break
-    }
-    case 'rampart': {
-      // Intentionally left empty: rendering is batched in ObjectLayer's rampartGraphics
-      // but we still need the empty container for selection tracking
-      break
-    }
-    case 'tower': {
-      const { energy: towerEnergy, capacity: towerCap } = getExtensionEnergy(obj)
-
-      const towerSpec = defaultSpriteTheme.tower
-      if (towerSpec) {
-        const targetSize = TILE_SIZE * towerSpec.tileScale
-
-        // Static ring (footprint, tinted by ownership)
-        const ring = new Sprite()
-        ring.anchor.set(0.5, 0.5)
-        ring.position.set(cx, cy)
-        ring.tint = outlineColor
-        container.addChild(ring)
-
-        // Rotating turret: body cannon + energy fill, pivot at tile center
-        const turret = new Container()
-        turret.position.set(cx, cy)
-        container.addChild(turret)
-
-        const body = new Sprite()
-        body.anchor.set(0.5, 0.5)
-        turret.addChild(body)
-
-        const towerFill = new Graphics()
-        turret.addChild(towerFill)
-
-        ;(container as ContainerWithTarget).__barrelContainer = turret
-        ;(container as ContainerWithTarget).__towerFillGraphics = towerFill
-        ;(container as ContainerWithTarget).__towerEnergy = towerEnergy
-        ;(container as ContainerWithTarget).__towerCapacity = towerCap
-
-        // Scale both layers by the body's authored size so they stay aligned, and
-        // map the fill geometry (atlas px) into the same render-scaled space.
-        const applyScale = (tex: Texture) => {
-          const ref = tex.orig?.width || tex.width
-          const s = ref > 0 ? targetSize / ref : 1
-          ring.scale.set(s)
-          body.scale.set(s)
-          ;(container as ContainerWithTarget).__towerFillRect = {
-            x: towerSpec.fill.x * s,
-            yMin: towerSpec.fill.yMin * s,
-            width: towerSpec.fill.width * s,
-            heightMax: towerSpec.fill.heightMax * s,
-            rx: towerSpec.fill.rx * s,
-            ry: towerSpec.fill.ry * s,
-          }
-          updateTowerFill(container as ContainerWithTarget, calcTowerFillHeight(towerEnergy, towerCap))
-        }
-
-        const ringTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, towerSpec.ringFrame)
-        const bodyTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, towerSpec.bodyFrame)
-        if (ringTex && bodyTex) {
-          ring.texture = ringTex
-          body.texture = bodyTex
-          applyScale(bodyTex)
-        } else {
-          sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl).then(sheet => {
-            if (!ring.destroyed) ring.texture = sheet.textures[towerSpec.ringFrame] ?? Texture.EMPTY
-            if (!body.destroyed) {
-              const t = sheet.textures[towerSpec.bodyFrame] ?? Texture.EMPTY
-              body.texture = t
-              if (!container.destroyed) applyScale(t)
-            }
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-        break
-      }
-
-      // Static outer circle
-      const towerBase = new Graphics()
-      towerBase.circle(cx, cy, TILE_SIZE * 0.6)
-      towerBase.fill(ST_DARK)
-      towerBase.circle(cx, cy, TILE_SIZE * 0.6)
-      towerBase.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      container.addChild(towerBase)
-
-      // Rotating turret: body rect + energy fill + barrel — pivot at tile center
-      const turret = new Container()
-      turret.position.set(cx, cy)
-
-      const towerBody = new Graphics()
-      towerBody.rect(TOWER_BODY_X, TOWER_BODY_Y, TOWER_BODY_W, TOWER_BODY_H)
-      towerBody.fill(ST_DARK)
-      turret.addChild(towerBody)
-
-      const towerFill = new Graphics()
-      turret.addChild(towerFill)
-      ;(container as ContainerWithTarget).__towerFillGraphics = towerFill as unknown as Graphics
-      ;(container as ContainerWithTarget).__towerEnergy = towerEnergy
-      ;(container as ContainerWithTarget).__towerCapacity = towerCap
-      updateTowerFill(container as ContainerWithTarget, calcTowerFillHeight(towerEnergy, towerCap))
-
-      const towerBorder = new Graphics()
-      towerBorder.rect(TOWER_BODY_X, TOWER_BODY_Y, TOWER_BODY_W, TOWER_BODY_H)
-      towerBorder.stroke({ width: 1, color: ST_GRAY })
-      turret.addChild(towerBorder)
-
-      const barrelG = new Graphics()
-      barrelG.rect(-TILE_SIZE * 0.2, -TILE_SIZE * 0.9, TILE_SIZE * 0.4, TILE_SIZE * 0.5)
-      barrelG.fill(ST_LIGHT)
-      barrelG.rect(-TILE_SIZE * 0.2, -TILE_SIZE * 0.9, TILE_SIZE * 0.4, TILE_SIZE * 0.5)
-      barrelG.stroke({ width: TILE_SIZE * 0.07, color: ST_DARK })
-      turret.addChild(barrelG)
-
-      container.addChild(turret)
-      ;(container as ContainerWithTarget).__barrelContainer = turret
-      break
-    }
-    case 'storage': {
-      const { bands: storageBands, used: storageUsed, capacity: storageCap } = getStoreBands(obj)
-      storageShellPath(g, cx, cy)
-      g.fill(ST_DARK)
-      storageShellPath(g, cx, cy)
-      g.stroke({ width: STORAGE_SHELL_STROKE, color: outlineColor })
-      g.rect(cx - STORAGE_INNER_W / 2, cy - STORAGE_INNER_H / 2, STORAGE_INNER_W, STORAGE_INNER_H)
-      g.fill(ST_GRAY)
-      container.addChild(g)
-
-      const storageFillG = new Graphics()
-      container.addChild(storageFillG)
-      ;(container as ContainerWithTarget).__storageFillG = storageFillG
-      ;(container as ContainerWithTarget).__storageBands = storageBands
-      ;(container as ContainerWithTarget).__storageUsed = storageUsed
-      ;(container as ContainerWithTarget).__storageCapacity = storageCap
-      updateStorageFill(container as ContainerWithTarget, calcStorageFillHeight(storageUsed, storageCap))
-      break
-    }
-    case 'terminal': {
-      const termOctagon = tpts(cx, cy, TERMINAL_OCTAGON)
-      g.poly(termOctagon)
-      g.fill(ST_DARK)
-      g.poly(termOctagon)
-      g.stroke({ width: TERMINAL_STROKE, color: outlineColor })
-      container.addChild(g)
-
-      // Arrows sit between the octagon and the plate, and dim on send cooldown — so they
-      // need their own Graphics for the ticker to alpha (see __terminalArrowsG).
-      const termArrowsG = new Graphics()
-      for (const arrow of TERMINAL_ARROWS) {
-        termArrowsG.poly(tpts(cx, cy, arrow))
-        termArrowsG.fill(TERMINAL_ARROW_COLOR)
-      }
-      container.addChild(termArrowsG)
-
-      const termPlateG = new Graphics()
-      termPlateG.rect(cx - TERMINAL_PLATE / 2, cy - TERMINAL_PLATE / 2, TERMINAL_PLATE, TERMINAL_PLATE)
-      termPlateG.fill(ST_DARK)
-      termPlateG.rect(cx - TERMINAL_FACE / 2, cy - TERMINAL_FACE / 2, TERMINAL_FACE, TERMINAL_FACE)
-      termPlateG.fill(ST_GRAY)
-      container.addChild(termPlateG)
-
-      // Store fill: a square that grows from the centre, tinted by the dominant resource,
-      // animated each tick via the shared fill-tween loop (see startTerminalFillAnimation).
-      const { used: termUsed, capacity: termCap, dominant: termDominant } = getStoreBands(obj)
-      const termFillG = new Graphics()
-      container.addChild(termFillG)
-      const termVisual = container as ContainerWithTarget
-      termVisual.__terminalFillG = termFillG
-      termVisual.__terminalDominant = termDominant ?? undefined
-      termVisual.__terminalFillColor = termDominant ? resourceColor(termDominant) : ST_ENERGY
-      termVisual.__terminalUsed = termUsed
-      termVisual.__terminalCapacity = termCap
-      updateTerminalFill(termVisual, calcCenterFillFraction(termUsed, termCap))
-
-      // Cooldown pulse: a white highlight over the arrow ring, alpha-pulsed by the ticker
-      // while on send cooldown, with the arrows dimmed under it. cooldownTime is absolute,
-      // so store it and compare against the live game clock each frame (see cooldownEnd)
-      // instead of caching a boolean.
-      const termCooldownG = new Graphics()
-      drawTerminalCooldownGlow(termCooldownG, cx, cy)
-      termCooldownG.alpha = 0
-      container.addChild(termCooldownG)
-      termVisual.__terminalArrowsG = termArrowsG
-      termVisual.__terminalCooldownG = termCooldownG
-      termVisual.__terminalCooldownTime = cooldownEnd(obj)
-      break
-    }
-    case 'link': {
-      const linkOuter = spts(cx, cy, [[0, -0.5], [0.4, 0], [0, 0.5], [-0.4, 0], [0, -0.5]])
-      const linkInner = spts(cx, cy, [[0, -0.3], [0.25, 0], [0, 0.3], [-0.25, 0], [0, -0.3]])
-      g.poly(linkOuter)
-      g.fill(ST_DARK)
-      g.poly(linkOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.poly(linkInner)
-      g.fill(ST_GRAY)
-      container.addChild(g)
-
-      // Energy core: a diamond that scales with stored energy, animated each tick
-      // via the shared fill-tween loop (see startLinkAnimation / updateLinkFill).
-      const { energy: linkEnergy, capacity: linkCapacity } = getExtensionEnergy(obj)
-      const linkFill = new Graphics()
-      container.addChild(linkFill)
-      const linkVisual = container as ContainerWithTarget
-      linkVisual.__linkFillGraphics = linkFill
-      linkVisual.__linkEnergy = linkEnergy
-      linkVisual.__linkCapacity = linkCapacity
-      updateLinkFill(linkVisual, calcLinkFillFraction(linkEnergy, linkCapacity))
-      break
-    }
-    case 'lab': {
-      const labCy = cy - TILE_SIZE * 0.025
-      // Bowl: ring + inner basin (on the shared graphics g, at the back).
-      g.circle(cx, labCy, TILE_SIZE * 0.55)
-      g.fill(ST_DARK)
-      g.circle(cx, labCy, TILE_SIZE * 0.55)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.circle(cx, labCy, TILE_SIZE * 0.4)
-      g.fill(ST_GRAY)
-      container.addChild(g)
-
-      const { energy: labEnergy, energyCap, mineralType, mineral, mineralCap } = getLabContents(obj)
-
-      // Mineral fill: a disc growing from the bowl centre, drawn behind the base bar.
-      const labMineralG = new Graphics()
-      container.addChild(labMineralG)
-
-      // Base bar: dark background + outline, over the disc so it caps the bowl.
-      const labBarG = new Graphics()
-      labBarG.rect(cx - TILE_SIZE * 0.45, cy + TILE_SIZE * 0.3, TILE_SIZE * 0.9, TILE_SIZE * 0.25)
-      labBarG.fill(ST_DARK)
-      labBarG.poly(spts(cx, cy, [[-0.45, 0.3], [-0.45, 0.55], [0.45, 0.55], [0.45, 0.3]]))
-      labBarG.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      container.addChild(labBarG)
-
-      // Energy fill: fills the base bar left→right.
-      const labEnergyG = new Graphics()
-      container.addChild(labEnergyG)
-
-      const labVisual = container as ContainerWithTarget
-      labVisual.__labMineralG = labMineralG
-      labVisual.__labEnergyG = labEnergyG
-      labVisual.__labMineralType = mineralType ?? undefined
-      labVisual.__labMineralColor = mineralType ? resourceColor(mineralType) : undefined
-      labVisual.__labEnergy = labEnergy
-      labVisual.__labEnergyCap = energyCap
-      labVisual.__labMineral = mineral
-      labVisual.__labMineralCap = mineralCap
-      updateLabFill(labVisual, calcCenterFillFraction(labEnergy, energyCap), calcCenterFillFraction(mineral, mineralCap))
-
-      // Cooldown pulse: a white halo over the bowl, alpha-pulsed by the ticker while the lab
-      // is on reaction cooldown. cooldownTime is absolute, so store it and compare against the
-      // live game clock each frame (see cooldownEnd) instead of caching a boolean.
-      const labCooldownG = new Graphics()
-      drawLabCooldownGlow(labCooldownG, cx, labCy)
-      labCooldownG.alpha = 0
-      container.addChild(labCooldownG)
-      labVisual.__labCooldownG = labCooldownG
-      labVisual.__labCooldownTime = cooldownEnd(obj)
-      break
-    }
-    case 'container': {
-      const { bands: contBands, used: contUsed, capacity: contCap } = getStoreBands(obj)
-      g.rect(CONT_X, CONT_Y, CONT_W, CONT_H)
-      g.fill(ST_DARK)
-      // Grey interior backdrop (like storage) — shows above the fill; the dark box frames it.
-      g.rect(CONT_X + CONT_MARGIN, CONT_Y + CONT_MARGIN, CONT_W - CONT_MARGIN * 2, CONT_H - CONT_MARGIN * 2)
-      g.fill(ST_GRAY)
-      container.addChild(g)
-
-      const contFillG = new Graphics()
-      container.addChild(contFillG)
-      ;(container as ContainerWithTarget).__containerFillG = contFillG
-      ;(container as ContainerWithTarget).__containerBands = contBands
-      ;(container as ContainerWithTarget).__containerUsed = contUsed
-      ;(container as ContainerWithTarget).__containerCapacity = contCap
-      updateContainerFill(container as ContainerWithTarget, calcContainerFillHeight(contUsed, contCap))
-
-      const contBorderG = new Graphics()
-      contBorderG.rect(CONT_X, CONT_Y, CONT_W, CONT_H)
-      contBorderG.stroke({ width: TILE_SIZE * 0.1, color: ST_DARK })
-      container.addChild(contBorderG)
-      break
-    }
-    case 'observer': {
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.fill(ST_DARK)
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.circle(cx + TILE_SIZE * 0.225, cy, TILE_SIZE * 0.2)
-      g.fill(outlineColor)
-      break
-    }
-    case 'nuker': {
-      const nukerOuter = spts(cx, cy, [
-        [0, -1], [-0.47, 0.2], [-0.5, 0.5], [0.5, 0.5], [0.47, 0.2], [0, -1],
-      ])
-      const nukerInner = spts(cx, cy, [
-        [0, -0.8], [-0.4, 0.2], [0.4, 0.2], [0, -0.8],
-      ])
-      g.poly(nukerOuter)
-      g.fill(ST_DARK)
-      g.poly(nukerOuter)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.poly(nukerInner)
-      g.fill(ST_GRAY)
-      g.poly(nukerInner)
-      g.stroke({ width: TILE_SIZE * 0.01, color: outlineColor })
-      container.addChild(g)
-
-      // Energy fills the inner triangle bottom→top; ghodium fills the base bar.
-      const { energy: nukeEnergy, energyCap: nukeECap, ghodium, ghodiumCap } = getNukerContents(obj)
-      const nukerEnergyG = new Graphics()
-      container.addChild(nukerEnergyG)
-      const nukerGhodiumG = new Graphics()
-      container.addChild(nukerGhodiumG)
-      const nukerVisual = container as ContainerWithTarget
-      nukerVisual.__nukerEnergyG = nukerEnergyG
-      nukerVisual.__nukerGhodiumG = nukerGhodiumG
-      nukerVisual.__nukerEnergy = nukeEnergy
-      nukerVisual.__nukerEnergyCap = nukeECap
-      nukerVisual.__nukerGhodium = ghodium
-      nukerVisual.__nukerGhodiumCap = ghodiumCap
-      updateNukerFill(nukerVisual, calcCenterFillFraction(nukeEnergy, nukeECap), calcCenterFillFraction(ghodium, ghodiumCap))
-      break
-    }
-    case 'factory': {
-      const factLevel = typeof obj.level === 'number' ? obj.level : 0
-      const { bands: factBands, used: factUsed, capacity: factCap } = getStoreBands(obj)
-
-      // Gear silhouette (body + teeth in one shape); its outline pulses while producing.
-      const factGearG = new Graphics()
-      drawFactoryGear(factGearG, outlineColor)
-      container.addChild(factGearG)
-
-      // Centre box background, over the gear's dark fill.
-      g.rect(FACT_BOX_X, FACT_BOX_Y, FACT_BOX_W, FACT_BOX_H)
-      g.fill(ST_GRAY)
-      container.addChild(g)
-
-      // Level ring around the centre box.
-      const factRingG = new Graphics()
-      drawFactoryRing(factRingG, factLevel)
-      container.addChild(factRingG)
-
-      // Storage-style band fill inside the centre box.
-      const factFillG = new Graphics()
-      container.addChild(factFillG)
-
-      const factVisual = container as ContainerWithTarget
-      factVisual.__factoryGearG = factGearG
-      factVisual.__factoryRingG = factRingG
-      factVisual.__factoryFillG = factFillG
-      factVisual.__factoryBands = factBands
-      factVisual.__factoryUsed = factUsed
-      factVisual.__factoryCapacity = factCap
-      factVisual.__factoryLevel = factLevel
-      factVisual.__factoryCooldownEnd = cooldownEnd(obj)
-      factVisual.__factoryGlowColor = outlineColor
-      updateFactoryFill(factVisual, calcFactoryFillHeight(factUsed, factCap))
-      break
-    }
-    case 'extractor': {
-      // Ring rendered above the mineral — three gapped arc segments drawn procedurally
-      // (one extractor per room, so no atlas needed). It rotates only while the extractor
-      // is on cooldown (the ticks after a harvest), matching vanilla. Tinted tri-state by
-      // room ownership: owner green when ours, hostile red when foreign-owned, neutral
-      // grey when the room is unowned (extractor has no owner).
-      const ring = new Graphics()
-      ring.position.set(cx, cy)
-      drawExtractorRing(ring, ownedByUser === undefined ? OBJ_GREY : outlineColor)
-      container.addChild(ring)
-      const extVisual = container as ContainerWithTarget
-      extVisual.__extractorRing = ring
-      extVisual.__extractorActive = onCooldown(obj)
-      break
-    }
-    case 'invaderCore': {
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.fill(ST_DARK)
-      g.circle(cx, cy, TILE_SIZE * 0.45)
-      g.stroke({ width: TILE_SIZE * 0.05, color: outlineColor })
-      g.circle(cx, cy, TILE_SIZE * 0.35)
-      g.fill(ST_GRAY)
-      break
-    }
-    case 'flag': {
-      const colorIdx = typeof obj.color === 'number' ? obj.color : 0
-      const secColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
-      const flagColor = FLAG_COLORS[colorIdx] ?? FLAG_COLORS[0]
-      const secColor = FLAG_COLORS[secColorIdx] ?? FLAG_COLORS[0]
-
-      const flagSpec: FlagSpec | undefined = defaultSpriteTheme.flag
-      if (flagSpec) {
-        const targetSize = TILE_SIZE * flagSpec.tileScale
-        const loadAtlas = (): Promise<import('pixi.js').Spritesheet> => sharedAtlasCache.getOrLoad(defaultSpriteTheme.atlasUrl)
-        const applyTex = (sprite: Sprite, tex: Texture) => {
-          sprite.texture = tex
-          sprite.width = targetSize
-          sprite.height = targetSize
-        }
-
-        const mainSprite = new Sprite()
-        mainSprite.anchor.set(0.5, 0.5)
-        mainSprite.x = cx
-        mainSprite.y = cy
-        mainSprite.tint = flagColor
-        container.addChild(mainSprite)
-
-        const mainTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, flagSpec.mainFrame)
-        if (mainTex) {
-          applyTex(mainSprite, mainTex)
-        } else {
-          loadAtlas().then(sheet => {
-            if (!mainSprite.destroyed) applyTex(mainSprite, sheet.textures[flagSpec.mainFrame] ?? Texture.EMPTY)
-          }).catch(err => logError('atlas/badge texture load failed', err))
-        }
-
-        if (secColorIdx !== colorIdx) {
-          const secondSprite = new Sprite()
-          secondSprite.anchor.set(0.5, 0.5)
-          secondSprite.x = cx
-          secondSprite.y = cy
-          secondSprite.tint = secColor
-          container.addChild(secondSprite)
-
-          const secondTex = sharedAtlasCache.getTexture(defaultSpriteTheme.atlasUrl, flagSpec.secondFrame)
-          if (secondTex) {
-            applyTex(secondSprite, secondTex)
-          } else {
-            loadAtlas().then(sheet => {
-              if (!secondSprite.destroyed) applyTex(secondSprite, sheet.textures[flagSpec.secondFrame] ?? Texture.EMPTY)
-            }).catch(err => logError('atlas/badge texture load failed', err))
-          }
-        }
-      } else {
-        // Graphics fallback
-        const S = 1.5
-        const poleW = TILE_SIZE * 0.08 * S
-        const poleH = TILE_SIZE * 0.7 * S
-        const poleX = cx - poleW / 2
-        const poleY = cy - TILE_SIZE * 0.25 * S
-        g.rect(poleX, poleY, poleW, poleH)
-        g.fill(0x888888)
-
-        const attachX = poleX + poleW
-        const attachY = poleY
-        const tipX = attachX + TILE_SIZE * 0.45 * S
-        const topY = attachY
-        const bottomY = attachY + TILE_SIZE * 0.44 * S
-        const tipY = (topY + bottomY) / 2
-        const splitY = tipY
-
-        g.moveTo(attachX, topY)
-        g.lineTo(tipX, tipY)
-        g.lineTo(attachX, splitY)
-        g.closePath()
-        g.fill(flagColor)
-
-        g.moveTo(attachX, splitY)
-        g.lineTo(tipX, tipY)
-        g.lineTo(attachX, bottomY)
-        g.closePath()
-        g.fill(secColor)
-
-        container.addChild(g)
-      }
-
-      ;(container as ContainerWithTarget).__flagColor = colorIdx
-      ;(container as ContainerWithTarget).__flagSecondaryColor = secColorIdx
-
-      // Label with flag name
-      if (typeof obj.name === 'string') {
-        const label = new Text({
-          text: obj.name as string,
-          style: { fontSize: LABEL_FONT_SIZE, fill: 0xffffff },
-        })
-        label.scale.set(LABEL_FONT_SCALE)
-        label.anchor.set(0.5, 0)
-        label.x = cx
-        label.y = cy + TILE_SIZE * 0.55
-        label.visible = showLabel
-        ;(container as ContainerWithTarget).__nameLabel = label
-        container.addChild(label)
-      }
-      break
-    }
-    case 'ruin': {
-      const rUser = typeof obj.user === 'string' ? obj.user : undefined
-      const isMine = rUser !== undefined && rUser === currentUserId
-      const rColor = isMine ? CS_OWN : OBJ_FOREIGN
-
-      // Broken outer ring — short arc segments with gaps suggest a destroyed structure
-      const ringR = TILE_SIZE * 0.42
-      const segCount = 6
-      const arcLen = Math.PI / 5
-      const ringG = new Graphics()
-      for (let i = 0; i < segCount; i++) {
-        const center = (i * Math.PI * 2) / segCount
-        const start = center - arcLen / 2
-        const end = center + arcLen / 2
-        const sx = cx + ringR * Math.cos(start)
-        const sy = cy + ringR * Math.sin(start)
-        ringG.moveTo(sx, sy)
-        ringG.arc(cx, cy, ringR, start, end)
-        ringG.stroke({ width: TILE_SIZE * 0.09, color: rColor, alpha: 0.75, cap: 'round' })
-      }
-      container.addChild(ringG)
-
-      // Central X — same color
-      const xR = TILE_SIZE * 0.18
-      const xMark = new Graphics()
-      xMark.moveTo(cx - xR, cy - xR)
-      xMark.lineTo(cx + xR, cy + xR)
-      xMark.moveTo(cx + xR, cy - xR)
-      xMark.lineTo(cx - xR, cy + xR)
-      xMark.stroke({ width: TILE_SIZE * 0.11, color: rColor, cap: 'round' })
-      container.addChild(xMark)
-      break
-    }
-    case 'tombstone': {
-      const tsUser = typeof obj.user === 'string' ? obj.user : undefined
-      const isMine = tsUser !== undefined && tsUser === currentUserId
-      const tsColor = isMine ? CS_OWN : OBJ_FOREIGN
-
-      const w = TILE_SIZE * 0.62
-      const h = TILE_SIZE * 0.82
-      const x0 = cx - w / 2
-      const y0 = cy - h / 2
-      const r = w / 2
-
-      // Outline only — the terrain shows through the headstone, as vanilla's does.
-      const tg = new Graphics()
-      tg.moveTo(x0, y0 + r)
-      tg.arc(cx, y0 + r, r, Math.PI, 0, false)
-      tg.lineTo(x0 + w, y0 + h)
-      tg.lineTo(x0, y0 + h)
-      tg.closePath()
-      tg.stroke({ width: TILE_SIZE * 0.07, color: tsColor, alpha: 0.9 })
-      container.addChild(tg)
-
-      const xR = TILE_SIZE * 0.18
-      const xMark = new Graphics()
-      xMark.moveTo(cx - xR, cy - xR * 0.6)
-      xMark.lineTo(cx + xR, cy + xR * 0.6)
-      xMark.moveTo(cx + xR, cy - xR * 0.6)
-      xMark.lineTo(cx - xR, cy + xR * 0.6)
-      xMark.stroke({ width: TILE_SIZE * 0.09, color: tsColor, cap: 'round' })
-      container.addChild(xMark)
-
-      const tsDecay = tombstoneDecay(obj)
-      if (tsDecay) {
-        const tsVisual = container as ContainerWithTarget
-        tsVisual.__tombstoneDeath = tsDecay.death
-        tsVisual.__tombstoneDecayTime = tsDecay.decay
-      }
-      break
-    }
-    case 'powerBank': {
-      const cx = TILE_SIZE / 2
-      const cy = TILE_SIZE / 2
-      // Octagonal shell
-      const octoG = new Graphics()
-      const octoPts: number[] = []
-      for (let i = 0; i < PB_OCTO_OFFSETS.length; i += 2) {
-        octoPts.push(cx + PB_OCTO_OFFSETS[i]! * PB_S, cy + PB_OCTO_OFFSETS[i + 1]! * PB_S)
-      }
-      octoG.poly(octoPts)
-      octoG.fill(PB_SHELL_FILL)
-      octoG.poly(octoPts)
-      octoG.stroke({ width: PB_STROKE_W, color: PB_SHELL_STROKE })
-      container.addChild(octoG)
-      // Animated power ellipse
-      const power = getPowerBankPower(obj)
-      const pbRadius = calcPowerBankRadius(power)
-      const ellipseG = new Graphics()
-      drawPowerBankEllipse(ellipseG, pbRadius, performance.now())
-      container.addChild(ellipseG)
-      const cwt = container as ContainerWithTarget
-      cwt.__powerBankEllipseG = ellipseG
-      cwt.__powerBankPower = power
-      cwt.__powerBankRadius = pbRadius
-      break
-    }
-    case 'keeperLair': {
-      // Black disc with a dark rim.
-      g.circle(cx, cy, KL_BODY_R)
-      g.fill(KL_BODY_COLOR)
-      g.circle(cx, cy, KL_BODY_R)
-      g.stroke({ width: KL_RIM_W, color: KL_RIM_COLOR })
-      container.addChild(g)
-
-      // Pulse glow (welling up from the centre) — sits above the disc, below the pupil.
-      // Sized/faded each frame in tick(); starts at the minimum radius, invisible.
-      const glow = new Sprite(keeperGlowTexture())
-      glow.anchor.set(0.5)
-      glow.position.set(cx, cy)
-      glow.tint = KL_RED
-      glow.alpha = 0
-      glow.width = glow.height = KL_PULSE_MIN_R * 2
-      container.addChild(glow)
-
-      // Red pupil ring: a small red disc with a dark centre punched through to the body.
-      const pupil = new Graphics()
-      pupil.circle(cx, cy, KL_PUPIL_R)
-      pupil.fill(KL_RED)
-      pupil.circle(cx, cy, KL_PUPIL_HOLE)
-      pupil.fill(KL_BODY_COLOR)
-      container.addChild(pupil)
-
-      const kl = container as ContainerWithTarget
-      kl.__keeperGlow = glow
-      // Stable per-lair phase from its fixed position so neighbours don't ping in lockstep.
-      kl.__keeperPhase = ((obj.x * 31 + obj.y * 17) % 97) / 97
-      break
-    }
-    default: {
-      // Structures (fallback)
-      const size = TILE_SIZE - 2
-      g.rect(1, 1, size, size)
-      g.fill(color)
-    }
-  }
-
-  if (obj.type !== 'extension' && obj.type !== 'road' && obj.type !== 'creep' && obj.type !== 'tower' && obj.type !== 'controller' && obj.type !== 'flag' && obj.type !== 'source' && obj.type !== 'constructionSite' && obj.type !== 'mineral' && obj.type !== 'tombstone' && obj.type !== 'ruin' && obj.type !== 'storage' && obj.type !== 'constructedWall' && obj.type !== 'rampart' && obj.type !== 'container' && obj.type !== 'deposit' && obj.type !== 'link' && obj.type !== 'terminal' && obj.type !== 'lab' && obj.type !== 'nuker' && obj.type !== 'factory' && obj.type !== 'powerBank' && obj.type !== 'keeperLair') {
-    container.addChild(g)
-  }
-
-  // Label for creeps — rendered at high font size, scaled down so it stays crisp when zoomed.
-  // Base scale gives ~8px height at world-scale=1; ObjectLayer.tick() divides by world-scale
-  // so the label stays constant in screen pixels and shrinks relative to the creep when zoomed in.
-  if (obj.type === 'creep' && typeof obj.name === 'string') {
-    const isForeign = isForeignCreep(obj, currentUserId)
-    let labelText: string
-    if (isForeign) {
-      const userId = typeof obj.user === 'string' ? obj.user : undefined
-      labelText = npcCreepName(obj, users) ?? (userId ? (users?.[userId]?.username ?? userId) : 'Hostile')
-    } else {
-      labelText = obj.name as string
-    }
-    const labelColor = isForeign ? OBJ_FOREIGN : 0xffffff
-    const label = new Text({
-      text: labelText,
-      style: { fontSize: LABEL_FONT_SIZE, fill: labelColor },
-    })
-    label.scale.set(LABEL_FONT_SCALE)
-    label.anchor.set(0.5, 1)
-    label.x = cx
-    label.y = LABEL_CREEP_TOP - LABEL_GAP_PX  // correct at world-scale=1; ticker adjusts on zoom
-    label.visible = showLabel
-    ;(container as ContainerWithTarget).__nameLabel = label
-    container.addChild(label)
-  }
-
-  container.zIndex = computeZIndex(obj)
-
-  container.position.set(obj.x * TILE_SIZE, obj.y * TILE_SIZE)
-  return container
-}
-
-type ContainerWithTarget = Container & {
-  __targetX?: number
-  __targetY?: number
-  __moveStartX?: number
-  __moveStartY?: number
-  __moveStartT?: number
-  __moveDur?: number
-  __tileX?: number
-  __tileY?: number
-  __angle?: number
-  __bodyContainer?: Container
-  __sayBubble?: Container
-  __sayMessage?: string
-  __creepFillGraphics?: Graphics
-  __creepUsed?: number
-  __creepCapacity?: number
-  __nameLabel?: Text
-  __creepBorderG?: Graphics
-  __creepBadgeSprite?: Sprite
-  __creepForeignMark?: Graphics
-  __towerFillGraphics?: Graphics
-  __towerEnergy?: number
-  __towerCapacity?: number
-  __towerFillRect?: { x: number; yMin: number; width: number; heightMax: number; rx: number; ry: number }
-  __linkFillGraphics?: Graphics
-  __linkEnergy?: number
-  __linkCapacity?: number
-  __storageFillG?: Graphics
-  __storageBands?: StoreBand[]
-  __storageUsed?: number
-  __storageCapacity?: number
-  __containerFillG?: Graphics
-  __containerBands?: StoreBand[]
-  __containerUsed?: number
-  __containerCapacity?: number
-  __terminalFillG?: Graphics
-  __terminalFillColor?: number
-  __terminalDominant?: string
-  __terminalUsed?: number
-  __terminalCapacity?: number
-  __tombstoneDeath?: number
-  __tombstoneDecayTime?: number        // absolute tick the tombstone vanishes; alpha ramps down from __tombstoneDeath
-  __terminalArrowsG?: Graphics
-  __terminalCooldownG?: Graphics
-  __terminalCooldownTime?: number      // absolute tick the send cooldown ends; pulse runs while > gameTime
-  __labMineralG?: Graphics
-  __labEnergyG?: Graphics
-  __labMineralColor?: number
-  __labMineralType?: string
-  __labEnergy?: number
-  __labEnergyCap?: number
-  __labMineral?: number
-  __labMineralCap?: number
-  __labCooldownG?: Graphics
-  __labCooldownTime?: number   // absolute tick the reaction cooldown ends; pulse runs while > gameTime
-  __nukerEnergyG?: Graphics
-  __nukerGhodiumG?: Graphics
-  __nukerEnergy?: number
-  __nukerEnergyCap?: number
-  __nukerGhodium?: number
-  __nukerGhodiumCap?: number
-  __powerSpawnPowerG?: Graphics
-  __powerSpawnPower?: number
-  __powerSpawnPowerCap?: number
-  __factoryGearG?: Graphics
-  __factoryRingG?: Graphics
-  __factoryFillG?: Graphics
-  __factoryBands?: StoreBand[]
-  __factoryUsed?: number
-  __factoryCapacity?: number
-  __factoryLevel?: number
-  __factoryCooldownEnd?: number   // absolute tick the factory cooldown ends; glow pulses while > gameTime
-  __factoryWasOnCd?: boolean      // factory cooldown state last frame, to reset the outline on the falling edge
-  __factoryGlowColor?: number
-  __barrelContainer?: Container
-  __towerAimAngle?: number   // target rotation while an action is active
-  __towerAimUntil?: number   // performance.now() timestamp when the aim hold ends
-  __towerIdlePhase?: number  // phase offset so idle sweep resumes seamlessly after aiming
-  __extractorRing?: Container     // mineral-extractor ring; spins only while on cooldown
-  __extractorActive?: boolean     // extractor on cooldown — ring should be spinning
-  __extractorWasActive?: boolean  // active state last frame, to detect the resume edge
-  __extractorPhase?: number       // rotation offset so the spin resumes without snapping
-  __ctrlSegGraphics?: Graphics
-  __ctrlSegSprites?: Sprite[]
-  __ctrlLevel?: number
-  __ctrlProgress?: number
-  __ctrlProgressTotal?: number
-  __ctrlDowngradeTime?: number
-  __ctrlUserId?: string
-  __flagColor?: number
-  __flagSecondaryColor?: number
-  __sourceGraphics?: Graphics
-  __sourceEnergy?: number
-  __sourceCapacity?: number
-  __sourceSize?: number
-  __csBuildGlow?: Graphics
-  __csFillGraphics?: Graphics
-  __csRingGraphics?: Graphics
-  __csProgress?: number
-  __csProgressTotal?: number
-  __csUser?: string
-  __csColor?: number
-  __csColorDark?: number
-  __csColorLight?: number
-  __spawnRing?: Graphics
-  __spawnRatio?: number | null
-  __spawnNeedTime?: number
-  __spawnEndTime?: number
-  __spawnSig?: string | null
-  __spawnEnergy?: number
-  __spawnCapacity?: number
-  __spawnBadgeSprite?: Sprite
-  __fillGraphics?: Graphics
-  __powerBankEllipseG?: Graphics
-  __powerBankPower?: number
-  __powerBankRadius?: number
-  __keeperGlow?: Sprite   // keeper-lair pulse glow; scale + alpha driven each frame
-  __keeperPhase?: number  // per-lair ping phase offset in [0,1)
-  __markedForDestruction?: boolean  // once the synthesized exit hop finishes, start a fade-out
-  __destroyAfterFade?: boolean  // once the current fade finishes, destroy the visual
-  __fadeStartT?: number  // wall-clock time the fade should start (may be in the future — scheduled)
-  __fadeDur?: number
-  __fadeFrom?: number
-  __fadeTo?: number
-  __pendingEdgeExit?: PendingEdgeExit  // waiting briefly on a cross-room lookup before committing to a target
-}
-
-function destroyVisual(visual: ContainerWithTarget): void {
-  visual.destroy({ children: true })
+export interface ObjectEntry {
+  id: string
+  obj: RoomObject
+  visual: ContainerWithTarget
 }
 
-// A creep crossing a room boundary is removed from the origin room's object
-// list without ever being reported at the true edge tile (0 or ROOM_MAX) — the
-// last position the server sends for it is one tile short. Continuing one
-// more step in its last known travel direction (which may be diagonal) lands
-// exactly on the missing tile; with no direction available (e.g. a creep
-// seen for the first time), fall back to snapping whichever axis is one tile
-// from an edge, independent of direction.
 const ROOM_MAX = 49
-// The multi-room grid view renders origin and destination rooms at once, so
-// the handoff is split across the tick instead of overlapping a full hop: the
-// origin slides onto the edge tile in the first half, then quickly fades out;
-// the destination stays hidden until the second half, then quickly fades in
-// and holds still. FADE_MS is the quick fade on either side of that midpoint.
 const FADE_MS = 150
-// Brief window to wait for the destination room's arrival data (multi-room
-// grid only) before falling back to the wall-avoidance heuristic — origin and
-// destination rooms subscribe independently, so there's no ordering guarantee
-// between the two room:update events for the same game tick.
 const NEIGHBOR_LOOKUP_GRACE_MS = 50
 
 function isEdgeTile(x: number, y: number): boolean {
   return x === 0 || x === ROOM_MAX || y === 0 || y === ROOM_MAX
 }
 
-export interface EdgeExitTile { x: number; y: number; dirX: number; dirY: number }
-
-// Which edge(s) a creep is one tile short of, independent of how it was
-// moving. Travel history isn't a reliable signal here: the server never
-// reports the actual final (crossing) step, so a creep can turn on that last
-// move — e.g. walking south for several ticks, then turning to step east
-// right as it leaves — and the last *observed* hop simply won't match the
-// true exit direction. dirX/dirY are only the sign of the extrapolation
-// itself (trivially unambiguous), used downstream for wall-avoidance and the
-// cross-room lookup — not a gate on whether to extrapolate at all. If both
-// axes qualify (a corner), both extrapolate — a diagonal exit falls out of
-// this naturally, with no direction history needed.
 function extrapolateEdgeExit(oldObj: RoomObject): EdgeExitTile | null {
   let tx = oldObj.x
   let ty = oldObj.y
@@ -2543,9 +118,6 @@ function extrapolateEdgeExit(oldObj: RoomObject): EdgeExitTile | null {
   return { x: tx, y: ty, dirX, dirY }
 }
 
-// If the extrapolated exit tile is a wall, the creep can't actually be
-// heading there — check the tiles immediately adjacent to it along the
-// border(s) it's crossing and use whichever isn't a wall.
 function avoidWallExit(tile: EdgeExitTile, terrain: RoomTerrain | null): { x: number; y: number } {
   if (!terrain || terrain.get(tile.x, tile.y) !== TerrainType.Wall) return tile
   const candidates: { x: number; y: number }[] = []
@@ -2562,19 +134,6 @@ function avoidWallExit(tile: EdgeExitTile, terrain: RoomTerrain | null): { x: nu
   return tile
 }
 
-interface PendingEdgeExit {
-  exitTile: EdgeExitTile
-  fallbackTile: { x: number; y: number }  // tile coords, wall-avoidance already applied
-  deadline: number
-}
-
-// A neighboring room's reported arrival position is in THAT room's own
-// coordinate frame — only the axis running along the shared border (the one
-// this room isn't crossing) is meaningful to borrow from it. The crossing
-// axis must stay this room's own true edge value (0 or ROOM_MAX): the
-// neighbor's value for that same axis reflects its OPPOSITE edge (e.g.
-// exiting this room's north edge lands at the neighbor's south edge, y=49),
-// and using it directly here would teleport the visual across this room.
 function resolveExitTargetPx(
   exitTile: EdgeExitTile, fallbackTile: { x: number; y: number }, neighborPos: { x: number; y: number },
 ): { x: number; y: number } {
@@ -2585,16 +144,11 @@ function resolveExitTargetPx(
 
 interface DeathTombstone { x: number; y: number; creepName: string }
 
-// A tombstone's `creep` field is a snapshot of the creep that died into it —
-// including its name, which is how we tell "died right at the edge" apart
-// from "actually left the room" for a creep that vanished near a boundary.
 function tombstoneCreepName(obj: RoomObject): string | null {
   const creep = obj.creep as { name?: unknown } | undefined
   return typeof creep?.name === 'string' ? creep.name : null
 }
 
-// True if a same-tick tombstone matches this creep by name and sits at or
-// adjacent to its last known tile — i.e. it died here rather than left.
 function diedNearby(oldObj: RoomObject, tombstones: readonly DeathTombstone[]): boolean {
   const name = typeof oldObj.name === 'string' ? oldObj.name : null
   if (!name) return false
@@ -2604,70 +158,15 @@ function diedNearby(oldObj: RoomObject, tombstones: readonly DeathTombstone[]): 
   return false
 }
 
-function buildSayBubble(message: string): Container {
-  const trimmed = message.length > SAY_MAX_CHARS ? message.slice(0, SAY_MAX_CHARS) : message
-
-  const text = new Text({
-    text: trimmed,
-    style: { fontSize: LABEL_FONT_SIZE, fill: SAY_TX_COLOR, fontWeight: '600' },
-  })
-  text.scale.set(SAY_FONT_SCALE)
-  text.anchor.set(0.5, 0.5)
-
-  // text.width / text.height are post-scale (i.e. in world units after LABEL_FONT_SCALE)
-  const tw = text.width
-  const th = text.height
-  const bw = tw + SAY_PAD_X * 2
-  const bh = th + SAY_PAD_Y * 2
-  const r  = bh / 2
-
-  const bg = new Graphics()
-  bg.roundRect(-bw / 2, -bh / 2, bw, bh, r)
-  bg.fill(SAY_BG_COLOR)
-  bg.roundRect(-bw / 2, -bh / 2, bw, bh, r)
-  bg.stroke({ width: 0.4, color: 0x111111, alpha: 0.55 })
-
-  // Tail pointing down — filled, then stroked along the two outer edges so the
-  // pill's lower border still reads cleanly across the join.
-  bg.moveTo(-SAY_TAIL_W, bh / 2 - 0.1)
-  bg.lineTo(0, bh / 2 + SAY_TAIL_H)
-  bg.lineTo(SAY_TAIL_W, bh / 2 - 0.1)
-  bg.closePath()
-  bg.fill(SAY_BG_COLOR)
-  bg.moveTo(-SAY_TAIL_W, bh / 2 - 0.1)
-  bg.lineTo(0, bh / 2 + SAY_TAIL_H)
-  bg.lineTo(SAY_TAIL_W, bh / 2 - 0.1)
-  bg.stroke({ width: 0.4, color: 0x111111, alpha: 0.55 })
-
-  const bubble = new Container()
-  bubble.addChild(bg)
-  bubble.addChild(text)
-  // Pivot at tail tip so positioning aligns the tail tip to the desired coordinate.
-  bubble.pivot.set(0, bh / 2 + SAY_TAIL_H)
-  return bubble
-}
-
-// One generic fill tween. Channel `a` (and optional `b`, for two-channel fills like lab
-// energy+mineral or nuker energy+ghodium) eases from→to over EXT_ANIM_DURATION, then `apply`
-// repaints the visual. Single-channel fills leave `b` at 0; their `apply` ignores it.
-interface FillAnimation {
-  visual: ContainerWithTarget
-  fromA: number
-  toA: number
-  fromB: number
-  toB: number
-  apply: (visual: ContainerWithTarget, a: number, b: number) => void
-  startTime: number
-}
-
-export interface ObjectEntry {
-  id: string
-  obj: RoomObject
-  visual: ContainerWithTarget
-}
-
 export class ObjectLayer {
   readonly container: Container
+  /**
+   * Ramparts, rendered separately from `container` so a caller can place them above the
+   * lighting layer's dark overlay (`Z.rampartGlow`) — the ambient multiply would otherwise
+   * dim the glow, unlike vanilla's rampart which lives past the light map in its own
+   * "effects" layer.
+   */
+  readonly rampartLayer: Container
   private objects = new Map<string, ContainerWithTarget>()
   private rawObjects = new Map<string, RoomObject>()
   private roadGraphics: Graphics
@@ -2675,6 +174,8 @@ export class ObjectLayer {
   private rampartGlowGraphics: Graphics
   private wallGraphics: Graphics
   private wallMarkGraphics: Graphics
+  private disabledGraphics: Graphics
+  private disabledSig = ''
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
   // One map for every fill tween (extension/creep/tower/storage/container/terminal/factory/
@@ -2724,6 +225,9 @@ export class ObjectLayer {
   private roadColor: number = OBJ_ROAD
   private wallColor: number = ST_DARK
   private lighting: LightingLayer | null = null
+  private creepDecorations: readonly CreepDecoration[] = []
+  private objectDecorations: readonly ObjectDecoration[] = []
+  private decorationAnimator: DecorationAnimator | null = null
 
   constructor(ticker?: Ticker, showLabels = true, currentUserId?: string, badge?: Badge, users?: Record<string, { _id: string; username: string; badge?: Badge }>) {
     this.showLabels = showLabels
@@ -2738,27 +242,79 @@ export class ObjectLayer {
     this.wallMarkGraphics = new Graphics()
     this.wallMarkGraphics.zIndex = -2
     this.container.addChild(this.wallMarkGraphics)
+    this.rampartLayer = new Container()
+    this.rampartLayer.sortableChildren = true
     this.rampartGraphics = new Graphics()
-    // Ramparts overlay everything in the tile as a translucent green wash (vanilla):
-    // above structures (zIndex 0) AND creeps (100) — a creep standing on a rampart
-    // shows under the green — but below flags (200).
+    // Additive, like the reference's rampart sprite (`BLEND_MODES.ADD` in its topmost
+    // "effects" layer): it *adds* a green cast rather than covering what's underneath, so
+    // a creep standing on a rampart still reads clearly instead of being tinted away — the
+    // fill only ever brightens, never darkens or obscures. Relative order within
+    // `rampartLayer`; the layer itself sits above every other room layer (see its doc).
     this.rampartGraphics.zIndex = 150
-    this.container.addChild(this.rampartGraphics)
+    this.rampartGraphics.blendMode = 'add'
+    this.rampartLayer.addChild(this.rampartGraphics)
     // Soft rim glow, blurred via the same BlurFilter pattern the swamp glow uses
     // (TerrainLayer.createSwampGlow). Sits just below the fill layer so its halo
     // reads past the blob edge and tints up through the translucent fill, while the
-    // crisp rim draws on top.
+    // crisp rim draws on top. Additive for the same reason as the fill above.
     this.rampartGlowGraphics = new Graphics()
     this.rampartGlowGraphics.zIndex = 149
+    this.rampartGlowGraphics.blendMode = 'add'
     this.rampartGlowGraphics.filters = [new BlurFilter({ strength: 3, quality: 3 })]
-    this.container.addChild(this.rampartGlowGraphics)
+    this.rampartLayer.addChild(this.rampartGlowGraphics)
     this.roadGraphics = new Graphics()
     this.container.addChild(this.roadGraphics)
+    // Disabled-structure wash: above structures and creeps, below flags — the same
+    // stacking vanilla gets from drawing it in its "effects" layer. Additive, so it
+    // reads as a red glow over the structure rather than a flat cover. Sits below
+    // `rampartLayer` now that ramparts render past the dark overlay (see its doc) — a
+    // ramparted disabled structure shows the glow tinted through the translucent rampart
+    // fill rather than on top of it, a minor trade-off for ramparts not reading muddy.
+    this.disabledGraphics = new Graphics()
+    this.disabledGraphics.zIndex = 160
+    this.disabledGraphics.blendMode = 'add'
+    this.disabledGraphics.alpha = 0
+    this.container.addChild(this.disabledGraphics)
     if (ticker) {
       this.ticker = ticker
       this.tickerCallback = () => this.tick()
       ticker.add(this.tickerCallback)
+      this.decorationAnimator = new DecorationAnimator(ticker)
     }
+  }
+
+  /**
+   * Set the creep and object decoration overlays. Re-applies them to every visual that
+   * already exists, so this can be called whenever the room's decorations change.
+   */
+  setDecorations(creeps: readonly CreepDecoration[], objects: readonly ObjectDecoration[]): void {
+    this.creepDecorations = creeps
+    this.objectDecorations = objects
+    for (const [id, visual] of this.objects) {
+      const obj = this.rawObjects.get(id)
+      if (obj) this.decorate(visual, obj)
+    }
+  }
+
+  /** Build an object's visual, register it and attach it to the scene. */
+  private createVisual(id: string, obj: RoomObject): ContainerWithTarget {
+    const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
+    visual.__tileX = obj.x
+    visual.__tileY = obj.y
+    this.applyLabelScale(visual)
+    this.decorate(visual, obj)
+    this.objects.set(id, visual)
+    this.container.addChild(visual)
+    return visual
+  }
+
+  private decorate(visual: ContainerWithTarget, obj: RoomObject): void {
+    if (!this.decorationAnimator) return
+    if (this.creepDecorations.length === 0 && this.objectDecorations.length === 0) {
+      clearObjectDecorations(visual)
+      return
+    }
+    applyObjectDecorations(visual, obj, this.creepDecorations, this.objectDecorations, this.decorationAnimator)
   }
 
   setRoadColor(color: number): void {
@@ -2973,6 +529,16 @@ export class ObjectLayer {
         visual.__keeperGlow.width = visual.__keeperGlow.height = radius * 2
         visual.__keeperGlow.alpha = KL_PULSE_ALPHA * Math.sin(Math.PI * p)   // smooth in/out, no pop at wrap
       }
+      // Portal: cyan ring wells up and is swallowed by the trailing dark disc, on the same
+      // free-running wall clock as the keeper pulse (see animatePortal for the wave shapes).
+      if (visual.__portalCyanWave) animatePortal(visual, now)
+      // Source pulse: repaint every frame so the golden core (or the dark ring, when
+      // exhausted) breathes. The size tween below writes __sourceSize and repaints again
+      // while it runs, so drawing before it never shows a stale size.
+      if (visual.__sourceGraphics) drawSourceVisual(visual.__sourceGraphics, visual.__sourceSize ?? SRC_MAX_SIZE, now)
+      // Power bank: fill colour and scale pulse run on the wall clock every frame.
+      if (visual.__powerBankEllipseG) drawPowerBankEllipse(visual.__powerBankEllipseG, visual.__powerBankRadius ?? 0, now)
+      if (visual.__ctrlLevel && visual.__ctrlSegSprites) this.applyControllerDowngradeTint(visual, now)
     }
 
     // Fill tweens (extension/creep/tower/storage/container/terminal/factory/lab/nuker/link/source)
@@ -2981,21 +547,6 @@ export class ObjectLayer {
       const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
       anim.apply(anim.visual, anim.fromA + (anim.toA - anim.fromA) * ease, anim.fromB + (anim.toB - anim.fromB) * ease)
       if (t >= 1) this.fillAnimations.delete(id)
-    }
-
-    // Source pulse: every tick repaint each source so the golden core (or the dark
-    // ring, when exhausted) breathes. Size animation wrote __sourceSize when active.
-    for (const visual of this.objects.values()) {
-      const g = visual.__sourceGraphics
-      if (!g) continue
-      drawSourceVisual(g, visual.__sourceSize ?? SRC_MAX_SIZE, now)
-    }
-
-    // Power bank: animate fill color and scale pulse every frame
-    for (const visual of this.objects.values()) {
-      const g = visual.__powerBankEllipseG
-      if (!g) continue
-      drawPowerBankEllipse(g, visual.__powerBankRadius ?? 0, now)
     }
 
     // Construction-site build glow: fade in during beam build phase, hold, fade out
@@ -3043,49 +594,57 @@ export class ObjectLayer {
       }
     }
 
-    // Controller downgrade warning: earned segments (0..level-1) tint pink→red as downgrade approaches
-    for (const visual of this.objects.values()) {
-      const level = visual.__ctrlLevel
-      const segs = visual.__ctrlSegSprites
-      if (!level || !segs) continue
-
-      const dt = visual.__ctrlDowngradeTime
-      if (!dt) {
-        for (let i = 0; i < level; i++) {
-          const seg = segs[i]
-          if (seg && !seg.destroyed) seg.tint = 0xffffff
-        }
-        continue
-      }
-
-      const maxTicks = CONTROLLER_DOWNGRADE[level] ?? 20000
-      const remaining = Math.max(0, dt - this.currentGameTime)
-      const urgency = 1 - remaining / maxTicks
-
-      if (urgency <= 0.2) {
-        for (let i = 0; i < level; i++) {
-          const seg = segs[i]
-          if (seg && !seg.destroyed) seg.tint = 0xffffff
-        }
-        continue
-      }
-
-      const danger = (urgency - 0.2) / 0.8
-      const pulseHz = 0.3 + danger * 1.5
-      const pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * pulseHz * now / 1000)
-      const peakColor = lerpColor(0xffdddd, 0xff2222, danger)
-      const tintColor = lerpColor(0xffffff, peakColor, danger * pulse)
-
-      for (let i = 0; i < level; i++) {
-        const seg = segs[i]
-        if (seg && !seg.destroyed) seg.tint = tintColor
-      }
+    // Disabled-structure wash: one shared pulse for every off tile. Frozen at peak in
+    // instant/history mode so the state still reads without animating.
+    if (this.disabledSig !== '') {
+      this.disabledGraphics.alpha = this.instantMode ? DISABLED_PEAK_ALPHA : disabledPulseAlpha(now)
     }
 
     // Composite the lightmap once per frame (no-op unless a light moved this
     // frame). Runs after interpolation so the texture is up to date before the
     // main frame is presented.
     this.lighting?.render()
+  }
+
+  // Controller downgrade warning: earned segments (0..level-1) tint pink→red, pulsing
+  // faster as the downgrade deadline approaches; plain white with no deadline or while
+  // the remaining time is still comfortable.
+  private applyControllerDowngradeTint(visual: ContainerWithTarget, now: number): void {
+    const level = visual.__ctrlLevel
+    const segs = visual.__ctrlSegSprites
+    if (!level || !segs) return
+
+    const dt = visual.__ctrlDowngradeTime
+    if (!dt) {
+      for (let i = 0; i < level; i++) {
+        const seg = segs[i]
+        if (seg && !seg.destroyed) seg.tint = 0xffffff
+      }
+      return
+    }
+
+    const maxTicks = CONTROLLER_DOWNGRADE[level] ?? 20000
+    const remaining = Math.max(0, dt - this.currentGameTime)
+    const urgency = 1 - remaining / maxTicks
+
+    if (urgency <= 0.2) {
+      for (let i = 0; i < level; i++) {
+        const seg = segs[i]
+        if (seg && !seg.destroyed) seg.tint = 0xffffff
+      }
+      return
+    }
+
+    const danger = (urgency - 0.2) / 0.8
+    const pulseHz = 0.3 + danger * 1.5
+    const pulse = 0.5 + 0.5 * Math.sin(2 * Math.PI * pulseHz * now / 1000)
+    const peakColor = lerpColor(0xffdddd, 0xff2222, danger)
+    const tintColor = lerpColor(0xffffff, peakColor, danger * pulse)
+
+    for (let i = 0; i < level; i++) {
+      const seg = segs[i]
+      if (seg && !seg.destroyed) seg.tint = tintColor
+    }
   }
 
   // Centralised fill-tween launcher. Instant-mode snaps straight to the target; an
@@ -3222,6 +781,285 @@ export class ObjectLayer {
     visual.__markedForDestruction = true
   }
 
+  /**
+   * Apply an updated object's state to its existing visual — position/movement, per-type
+   * fills and cooldowns, and the recreate-on-identity-change cases (flag colours,
+   * controller owner). Shared by the diff path and the full-map reconcile path
+   * (history playback, resubscribe) so every type stays live in both.
+   */
+  private updateExistingVisual(id: string, obj: RoomObject, existing: ContainerWithTarget, fullReconcile: boolean): void {
+    const tx = obj.x * TILE_SIZE
+    const ty = obj.y * TILE_SIZE
+    if (obj.type === 'creep') {
+      const dx = obj.x - (existing.__tileX ?? obj.x)
+      const dy = obj.y - (existing.__tileY ?? obj.y)
+      if (dx !== 0 || dy !== 0) {
+        existing.__angle = Math.atan2(dy, dx)
+        setCreepFacing(existing, existing.__angle)
+      }
+      existing.__tileX = obj.x
+      existing.__tileY = obj.y
+      if (this.instantMode) {
+        existing.position.set(tx, ty)
+        existing.__targetX = undefined
+        existing.__targetY = undefined
+        existing.__moveStartX = undefined
+        existing.__moveStartY = undefined
+        existing.__moveStartT = undefined
+        existing.__moveDur = undefined
+      } else if (existing.x !== tx || existing.y !== ty) {
+        existing.__targetX = tx
+        existing.__targetY = ty
+        existing.__moveStartX = existing.x
+        existing.__moveStartY = existing.y
+        existing.__moveStartT = performance.now()
+        existing.__moveDur = this.moveDuration
+      }
+      const { used, capacity } = getCreepStore(obj)
+      if (existing.__creepUsed !== used || existing.__creepCapacity !== capacity) {
+        this.startCreepFillAnimation(id, existing, existing.__creepUsed ?? 0, existing.__creepCapacity ?? capacity, used, capacity)
+        existing.__creepUsed = used
+        existing.__creepCapacity = capacity
+      }
+      // Re-tier on the spawning → born transition (and vice-versa).
+      const cz = computeZIndex(obj)
+      if (existing.zIndex !== cz) existing.zIndex = cz
+      // Creep decorations skip spawning creeps, so that transition changes what applies.
+      if (existing.__decoSpawning !== (obj.spawning === true)) this.decorate(existing, obj)
+    } else if (obj.type === 'flag') {
+      const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
+      const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
+      const colorChanged =
+        existing.__flagColor !== newColorIdx ||
+        existing.__flagSecondaryColor !== newSecColorIdx
+      if (colorChanged) {
+        this.container.removeChild(existing)
+        destroyVisual(existing)
+        this.objects.delete(id)
+        this.createVisual(id, obj)
+      } else {
+        existing.position.set(tx, ty)
+      }
+    } else {
+      existing.position.set(tx, ty)
+    }
+
+    if (obj.type === 'extension') {
+      const { energy, capacity } = getExtensionEnergy(obj)
+      const ext = existing as ContainerWithTarget & { __extEnergy?: number; __extCapacity?: number }
+      if (ext.__extEnergy !== energy || ext.__extCapacity !== capacity) {
+        this.startExtAnimation(
+          id,
+          existing,
+          ext.__extEnergy ?? 0,
+          ext.__extCapacity ?? capacity,
+          energy,
+          capacity,
+        )
+        ext.__extEnergy = energy
+        ext.__extCapacity = capacity
+      }
+    }
+    if (obj.type === 'link') {
+      const { energy, capacity } = getExtensionEnergy(obj)
+      if (existing.__linkEnergy !== energy || existing.__linkCapacity !== capacity) {
+        this.startLinkAnimation(id, existing, existing.__linkEnergy ?? 0, existing.__linkCapacity ?? capacity, energy, capacity)
+        existing.__linkEnergy = energy
+        existing.__linkCapacity = capacity
+      }
+    }
+    if (obj.type === 'tower') {
+      const { energy, capacity } = getExtensionEnergy(obj)
+      if (existing.__towerEnergy !== energy || existing.__towerCapacity !== capacity) {
+        this.startTowerFillAnimation(id, existing, existing.__towerEnergy ?? 0, existing.__towerCapacity ?? capacity, energy, capacity)
+        existing.__towerEnergy = energy
+        existing.__towerCapacity = capacity
+      }
+    }
+    if (obj.type === 'storage') {
+      const { bands, used, capacity } = getStoreBands(obj)
+      if (existing.__storageUsed !== used || existing.__storageCapacity !== capacity) {
+        const fromUsed = existing.__storageUsed ?? 0
+        const fromCap = existing.__storageCapacity ?? capacity
+        existing.__storageBands = bands
+        existing.__storageUsed = used
+        existing.__storageCapacity = capacity
+        this.startStorageFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
+      } else if (!bandsEqual(existing.__storageBands, bands)) {
+        existing.__storageBands = bands
+        updateStorageFill(existing, calcStorageFillHeight(used, capacity))
+      }
+    }
+    if (obj.type === 'container') {
+      const { bands, used, capacity } = getStoreBands(obj)
+      if (existing.__containerUsed !== used || existing.__containerCapacity !== capacity) {
+        const fromUsed = existing.__containerUsed ?? 0
+        const fromCap = existing.__containerCapacity ?? capacity
+        existing.__containerBands = bands
+        existing.__containerUsed = used
+        existing.__containerCapacity = capacity
+        this.startContainerFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
+      } else if (!bandsEqual(existing.__containerBands, bands)) {
+        existing.__containerBands = bands
+        updateContainerFill(existing, calcContainerFillHeight(used, capacity))
+      }
+    }
+    if (obj.type === 'terminal') {
+      const { used, capacity, dominant: dom } = getStoreBands(obj)
+      const dominant = dom ?? undefined
+      if (existing.__terminalDominant !== dominant) {
+        existing.__terminalDominant = dominant
+        existing.__terminalFillColor = dominant ? resourceColor(dominant) : ST_ENERGY
+        updateTerminalFill(existing, calcCenterFillFraction(used, capacity))
+      }
+      if (existing.__terminalUsed !== used || existing.__terminalCapacity !== capacity) {
+        const fromUsed = existing.__terminalUsed ?? 0
+        const fromCap = existing.__terminalCapacity ?? capacity
+        existing.__terminalUsed = used
+        existing.__terminalCapacity = capacity
+        this.startTerminalFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
+      }
+      existing.__terminalCooldownTime = cooldownEnd(obj)
+    }
+    if (obj.type === 'lab') {
+      const { energy, energyCap, mineralType, mineral, mineralCap } = getLabContents(obj)
+      const newType = mineralType ?? undefined
+      if (existing.__labMineralType !== newType) {
+        existing.__labMineralType = newType
+        existing.__labMineralColor = mineralType ? resourceColor(mineralType) : undefined
+        updateLabFill(existing, calcCenterFillFraction(energy, energyCap), calcCenterFillFraction(mineral, mineralCap))
+      }
+      if (existing.__labEnergy !== energy || existing.__labEnergyCap !== energyCap ||
+          existing.__labMineral !== mineral || existing.__labMineralCap !== mineralCap) {
+        const fromE = existing.__labEnergy ?? 0
+        const fromECap = existing.__labEnergyCap ?? energyCap
+        const fromM = existing.__labMineral ?? 0
+        const fromMCap = existing.__labMineralCap ?? mineralCap
+        existing.__labEnergy = energy
+        existing.__labEnergyCap = energyCap
+        existing.__labMineral = mineral
+        existing.__labMineralCap = mineralCap
+        this.startLabFillAnimation(id, existing, fromE, fromECap, fromM, fromMCap, energy, energyCap, mineral, mineralCap)
+      }
+      existing.__labCooldownTime = cooldownEnd(obj)
+    }
+    if (obj.type === 'nuker') {
+      const { energy, energyCap, ghodium, ghodiumCap } = getNukerContents(obj)
+      if (existing.__nukerEnergy !== energy || existing.__nukerEnergyCap !== energyCap ||
+          existing.__nukerGhodium !== ghodium || existing.__nukerGhodiumCap !== ghodiumCap) {
+        const fromE = existing.__nukerEnergy ?? 0
+        const fromECap = existing.__nukerEnergyCap ?? energyCap
+        const fromG = existing.__nukerGhodium ?? 0
+        const fromGCap = existing.__nukerGhodiumCap ?? ghodiumCap
+        existing.__nukerEnergy = energy
+        existing.__nukerEnergyCap = energyCap
+        existing.__nukerGhodium = ghodium
+        existing.__nukerGhodiumCap = ghodiumCap
+        this.startNukerFillAnimation(id, existing, fromE, fromECap, fromG, fromGCap, energy, energyCap, ghodium, ghodiumCap)
+      }
+    }
+    if (obj.type === 'powerSpawn') {
+      const { power, powerCap } = getPowerSpawnPower(obj)
+      if (existing.__powerSpawnPower !== power || existing.__powerSpawnPowerCap !== powerCap) {
+        const fromPower = existing.__powerSpawnPower ?? 0
+        const fromCap = existing.__powerSpawnPowerCap ?? powerCap
+        existing.__powerSpawnPower = power
+        existing.__powerSpawnPowerCap = powerCap
+        this.startPowerSpawnPowerAnimation(id, existing, fromPower, fromCap, power, powerCap)
+      }
+    }
+    if (obj.type === 'extractor') {
+      existing.__extractorActive = onCooldown(obj)
+    }
+    if (obj.type === 'factory') {
+      const { bands, used, capacity } = getStoreBands(obj)
+      const level = typeof obj.level === 'number' ? obj.level : 0
+      if (existing.__factoryLevel !== level && existing.__factoryRingG) {
+        existing.__factoryLevel = level
+        drawFactoryRing(existing.__factoryRingG, level)
+      }
+      // Absolute cooldownTime; the ticker evaluates it live and resets on expiry.
+      existing.__factoryCooldownEnd = cooldownEnd(obj)
+      if (existing.__factoryUsed !== used || existing.__factoryCapacity !== capacity) {
+        const fromUsed = existing.__factoryUsed ?? 0
+        const fromCap = existing.__factoryCapacity ?? capacity
+        existing.__factoryBands = bands
+        existing.__factoryUsed = used
+        existing.__factoryCapacity = capacity
+        this.startFactoryFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
+      } else if (!bandsEqual(existing.__factoryBands, bands)) {
+        existing.__factoryBands = bands
+        updateFactoryFill(existing, calcFactoryFillHeight(used, capacity))
+      }
+    }
+    if (obj.type === 'controller') {
+      const level         = typeof obj.level         === 'number' ? obj.level         : 0
+      const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
+      const newResObj     = obj.reservation as { user?: string } | undefined
+      const newUserId     = typeof obj.user === 'string' ? obj.user
+        : typeof newResObj?.user === 'string' ? newResObj.user
+        : undefined
+      if (existing.__ctrlUserId !== newUserId) {
+        this.container.removeChild(existing)
+        destroyVisual(existing)
+        this.objects.delete(id)
+        this.createVisual(id, obj)
+        return
+      }
+      if (existing.__ctrlLevel !== level || existing.__ctrlProgress !== progress || existing.__ctrlProgressTotal !== progressTotal) {
+        if (existing.__ctrlSegSprites) {
+          if (!this.instantMode) {
+            if (fullReconcile) {
+              // A full snapshot re-sends progress on nearly every tick (history playback,
+              // resubscribe), so only a level-up flashes there; a diff flashes the next
+              // segment whenever progress grows.
+              if (level > (existing.__ctrlLevel ?? 0) && level > 0) {
+                this.ctrlFlashAnimations.set(id, { segIndex: level - 1, startTime: performance.now(), duration: 500 })
+              }
+            } else if (level < 8 && progress > (existing.__ctrlProgress ?? 0)) {
+              this.ctrlFlashAnimations.set(id, { segIndex: level, startTime: performance.now(), duration: 400 })
+            }
+          }
+          updateControllerSegSprites(existing, level, progress, progressTotal)
+        } else if (existing.__ctrlSegGraphics) {
+          drawControllerSegments(existing.__ctrlSegGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
+        }
+        existing.__ctrlLevel         = level
+        existing.__ctrlProgress      = progress
+        existing.__ctrlProgressTotal = progressTotal
+      }
+      const newDt = typeof obj.downgradeTime === 'number' ? obj.downgradeTime : undefined
+      if (existing.__ctrlDowngradeTime !== newDt) existing.__ctrlDowngradeTime = newDt
+    }
+    if (obj.type === 'source') {
+      const { energy, capacity } = getSourceEnergy(obj)
+      if (existing.__sourceEnergy !== energy || existing.__sourceCapacity !== capacity) {
+        this.startSourceAnimation(id, existing, existing.__sourceEnergy ?? 0, existing.__sourceCapacity ?? capacity, energy, capacity)
+        existing.__sourceEnergy = energy
+        existing.__sourceCapacity = capacity
+      }
+    }
+    if (obj.type === 'constructionSite') {
+      const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
+      const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
+      if (existing.__csProgress !== progress || existing.__csProgressTotal !== progressTotal) {
+        if (existing.__csFillGraphics) {
+          drawCSProgress(existing.__csFillGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CS_FILL_R, progress, progressTotal, existing.__csColor ?? CS_OWN)
+        }
+        existing.__csProgress      = progress
+        existing.__csProgressTotal = progressTotal
+      }
+    }
+    if (obj.type === 'powerBank') {
+      const power = getPowerBankPower(obj)
+      if (existing.__powerBankPower !== power) {
+        existing.__powerBankPower = power
+        existing.__powerBankRadius = calcPowerBankRadius(power)
+      }
+    }
+  }
+
   update(objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string; badge?: Badge }>, gameTime?: number): void {
     if (users) {
       this.users = users
@@ -3323,9 +1161,7 @@ export class ObjectLayer {
           this.rawObjects.set(id, obj)
           const existing = this.objects.get(id)
           if (!existing) {
-            const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-            visual.__tileX = obj.x
-            visual.__tileY = obj.y
+            const visual = this.createVisual(id, obj)
             // A creep's first-ever appearance sitting exactly on an edge tile is
             // almost always one arriving from an adjacent room (see the matching
             // exit-hop in the removal branch above). In the grid view, hold it
@@ -3343,279 +1179,8 @@ export class ObjectLayer {
               this.freshEdgeArrivals.set(id, { x: obj.x, y: obj.y })
               this.freshEdgeArrivalActionLogs.set(id, (obj.actionLog as Record<string, unknown> | null | undefined) ?? null)
             }
-            this.applyLabelScale(visual)
-            this.objects.set(id, visual)
-            this.container.addChild(visual)
           } else {
-            const tx = obj.x * TILE_SIZE
-            const ty = obj.y * TILE_SIZE
-            if (obj.type === 'creep') {
-              const dx = obj.x - (existing.__tileX ?? obj.x)
-              const dy = obj.y - (existing.__tileY ?? obj.y)
-              if (dx !== 0 || dy !== 0) {
-                existing.__angle = Math.atan2(dy, dx)
-                if (existing.__bodyContainer) existing.__bodyContainer.rotation = existing.__angle
-              }
-              existing.__tileX = obj.x
-              existing.__tileY = obj.y
-              if (this.instantMode) {
-                existing.position.set(tx, ty)
-                existing.__targetX = undefined
-                existing.__targetY = undefined
-                existing.__moveStartX = undefined
-                existing.__moveStartY = undefined
-                existing.__moveStartT = undefined
-                existing.__moveDur = undefined
-              } else if (existing.x !== tx || existing.y !== ty) {
-                existing.__targetX = tx
-                existing.__targetY = ty
-                existing.__moveStartX = existing.x
-                existing.__moveStartY = existing.y
-                existing.__moveStartT = performance.now()
-                existing.__moveDur = this.moveDuration
-              }
-              const { used, capacity } = getCreepStore(obj)
-              if (existing.__creepUsed !== used || existing.__creepCapacity !== capacity) {
-                this.startCreepFillAnimation(id, existing, existing.__creepUsed ?? 0, existing.__creepCapacity ?? capacity, used, capacity)
-                existing.__creepUsed = used
-                existing.__creepCapacity = capacity
-              }
-              // Re-tier on the spawning → born transition (and vice-versa).
-              const cz = computeZIndex(obj)
-              if (existing.zIndex !== cz) existing.zIndex = cz
-            } else if (obj.type === 'flag') {
-              const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
-              const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
-              const colorChanged =
-                existing.__flagColor !== newColorIdx ||
-                existing.__flagSecondaryColor !== newSecColorIdx
-              if (colorChanged) {
-                this.container.removeChild(existing)
-                destroyVisual(existing)
-                this.objects.delete(id)
-                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-                visual.__tileX = obj.x
-                visual.__tileY = obj.y
-                this.applyLabelScale(visual)
-                this.objects.set(id, visual)
-                this.container.addChild(visual)
-              } else {
-                existing.position.set(tx, ty)
-              }
-            } else {
-              existing.position.set(tx, ty)
-            }
-
-            if (obj.type === 'extension') {
-              const { energy, capacity } = getExtensionEnergy(obj)
-              const ext = existing as ContainerWithTarget & { __extEnergy?: number; __extCapacity?: number }
-              if (ext.__extEnergy !== energy || ext.__extCapacity !== capacity) {
-                this.startExtAnimation(
-                  id,
-                  existing,
-                  ext.__extEnergy ?? 0,
-                  ext.__extCapacity ?? capacity,
-                  energy,
-                  capacity,
-                )
-                ext.__extEnergy = energy
-                ext.__extCapacity = capacity
-              }
-            }
-            if (obj.type === 'link') {
-              const { energy, capacity } = getExtensionEnergy(obj)
-              if (existing.__linkEnergy !== energy || existing.__linkCapacity !== capacity) {
-                this.startLinkAnimation(id, existing, existing.__linkEnergy ?? 0, existing.__linkCapacity ?? capacity, energy, capacity)
-                existing.__linkEnergy = energy
-                existing.__linkCapacity = capacity
-              }
-            }
-            if (obj.type === 'tower') {
-              const { energy, capacity } = getExtensionEnergy(obj)
-              if (existing.__towerEnergy !== energy || existing.__towerCapacity !== capacity) {
-                this.startTowerFillAnimation(id, existing, existing.__towerEnergy ?? 0, existing.__towerCapacity ?? capacity, energy, capacity)
-                existing.__towerEnergy = energy
-                existing.__towerCapacity = capacity
-              }
-            }
-            if (obj.type === 'storage') {
-              const { bands, used, capacity } = getStoreBands(obj)
-              if (existing.__storageUsed !== used || existing.__storageCapacity !== capacity) {
-                const fromUsed = existing.__storageUsed ?? 0
-                const fromCap = existing.__storageCapacity ?? capacity
-                existing.__storageBands = bands
-                existing.__storageUsed = used
-                existing.__storageCapacity = capacity
-                this.startStorageFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
-              } else if (!bandsEqual(existing.__storageBands, bands)) {
-                existing.__storageBands = bands
-                updateStorageFill(existing, calcStorageFillHeight(used, capacity))
-              }
-            }
-            if (obj.type === 'container') {
-              const { bands, used, capacity } = getStoreBands(obj)
-              if (existing.__containerUsed !== used || existing.__containerCapacity !== capacity) {
-                const fromUsed = existing.__containerUsed ?? 0
-                const fromCap = existing.__containerCapacity ?? capacity
-                existing.__containerBands = bands
-                existing.__containerUsed = used
-                existing.__containerCapacity = capacity
-                this.startContainerFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
-              } else if (!bandsEqual(existing.__containerBands, bands)) {
-                existing.__containerBands = bands
-                updateContainerFill(existing, calcContainerFillHeight(used, capacity))
-              }
-            }
-            if (obj.type === 'terminal') {
-              const { used, capacity, dominant: dom } = getStoreBands(obj)
-              const dominant = dom ?? undefined
-              if (existing.__terminalDominant !== dominant) {
-                existing.__terminalDominant = dominant
-                existing.__terminalFillColor = dominant ? resourceColor(dominant) : ST_ENERGY
-                updateTerminalFill(existing, calcCenterFillFraction(used, capacity))
-              }
-              if (existing.__terminalUsed !== used || existing.__terminalCapacity !== capacity) {
-                const fromUsed = existing.__terminalUsed ?? 0
-                const fromCap = existing.__terminalCapacity ?? capacity
-                existing.__terminalUsed = used
-                existing.__terminalCapacity = capacity
-                this.startTerminalFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
-              }
-              existing.__terminalCooldownTime = cooldownEnd(obj)
-            }
-            if (obj.type === 'lab') {
-              const { energy, energyCap, mineralType, mineral, mineralCap } = getLabContents(obj)
-              const newType = mineralType ?? undefined
-              if (existing.__labMineralType !== newType) {
-                existing.__labMineralType = newType
-                existing.__labMineralColor = mineralType ? resourceColor(mineralType) : undefined
-                updateLabFill(existing, calcCenterFillFraction(energy, energyCap), calcCenterFillFraction(mineral, mineralCap))
-              }
-              if (existing.__labEnergy !== energy || existing.__labEnergyCap !== energyCap ||
-                  existing.__labMineral !== mineral || existing.__labMineralCap !== mineralCap) {
-                const fromE = existing.__labEnergy ?? 0
-                const fromECap = existing.__labEnergyCap ?? energyCap
-                const fromM = existing.__labMineral ?? 0
-                const fromMCap = existing.__labMineralCap ?? mineralCap
-                existing.__labEnergy = energy
-                existing.__labEnergyCap = energyCap
-                existing.__labMineral = mineral
-                existing.__labMineralCap = mineralCap
-                this.startLabFillAnimation(id, existing, fromE, fromECap, fromM, fromMCap, energy, energyCap, mineral, mineralCap)
-              }
-              existing.__labCooldownTime = cooldownEnd(obj)
-            }
-            if (obj.type === 'nuker') {
-              const { energy, energyCap, ghodium, ghodiumCap } = getNukerContents(obj)
-              if (existing.__nukerEnergy !== energy || existing.__nukerEnergyCap !== energyCap ||
-                  existing.__nukerGhodium !== ghodium || existing.__nukerGhodiumCap !== ghodiumCap) {
-                const fromE = existing.__nukerEnergy ?? 0
-                const fromECap = existing.__nukerEnergyCap ?? energyCap
-                const fromG = existing.__nukerGhodium ?? 0
-                const fromGCap = existing.__nukerGhodiumCap ?? ghodiumCap
-                existing.__nukerEnergy = energy
-                existing.__nukerEnergyCap = energyCap
-                existing.__nukerGhodium = ghodium
-                existing.__nukerGhodiumCap = ghodiumCap
-                this.startNukerFillAnimation(id, existing, fromE, fromECap, fromG, fromGCap, energy, energyCap, ghodium, ghodiumCap)
-              }
-            }
-            if (obj.type === 'powerSpawn') {
-              const { power, powerCap } = getPowerSpawnPower(obj)
-              if (existing.__powerSpawnPower !== power || existing.__powerSpawnPowerCap !== powerCap) {
-                const fromPower = existing.__powerSpawnPower ?? 0
-                const fromCap = existing.__powerSpawnPowerCap ?? powerCap
-                existing.__powerSpawnPower = power
-                existing.__powerSpawnPowerCap = powerCap
-                this.startPowerSpawnPowerAnimation(id, existing, fromPower, fromCap, power, powerCap)
-              }
-            }
-            if (obj.type === 'extractor') {
-              existing.__extractorActive = onCooldown(obj)
-            }
-            if (obj.type === 'factory') {
-              const { bands, used, capacity } = getStoreBands(obj)
-              const level = typeof obj.level === 'number' ? obj.level : 0
-              if (existing.__factoryLevel !== level && existing.__factoryRingG) {
-                existing.__factoryLevel = level
-                drawFactoryRing(existing.__factoryRingG, level)
-              }
-              // Absolute cooldownTime; the ticker evaluates it live and resets on expiry.
-              existing.__factoryCooldownEnd = cooldownEnd(obj)
-              if (existing.__factoryUsed !== used || existing.__factoryCapacity !== capacity) {
-                const fromUsed = existing.__factoryUsed ?? 0
-                const fromCap = existing.__factoryCapacity ?? capacity
-                existing.__factoryBands = bands
-                existing.__factoryUsed = used
-                existing.__factoryCapacity = capacity
-                this.startFactoryFillAnimation(id, existing, fromUsed, fromCap, used, capacity)
-              } else if (!bandsEqual(existing.__factoryBands, bands)) {
-                existing.__factoryBands = bands
-                updateFactoryFill(existing, calcFactoryFillHeight(used, capacity))
-              }
-            }
-            if (obj.type === 'controller') {
-              const level         = typeof obj.level         === 'number' ? obj.level         : 0
-              const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
-              const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
-              const newResObj     = obj.reservation as { user?: string } | undefined
-              const newUserId     = typeof obj.user === 'string' ? obj.user
-                : typeof newResObj?.user === 'string' ? newResObj.user
-                : undefined
-              if (existing.__ctrlUserId !== newUserId) {
-                this.container.removeChild(existing)
-                destroyVisual(existing)
-                this.objects.delete(id)
-                const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-                visual.__tileX = obj.x
-                visual.__tileY = obj.y
-                this.applyLabelScale(visual)
-                this.objects.set(id, visual)
-                this.container.addChild(visual)
-                continue
-              }
-              if (existing.__ctrlLevel !== level || existing.__ctrlProgress !== progress || existing.__ctrlProgressTotal !== progressTotal) {
-                if (existing.__ctrlSegSprites) {
-                  if (!this.instantMode && level < 8 && progress > (existing.__ctrlProgress ?? 0)) {
-                    this.ctrlFlashAnimations.set(id, { segIndex: level, startTime: performance.now(), duration: 400 })
-                  }
-                  updateControllerSegSprites(existing, level, progress, progressTotal)
-                } else if (existing.__ctrlSegGraphics) {
-                  drawControllerSegments(existing.__ctrlSegGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
-                }
-                existing.__ctrlLevel         = level
-                existing.__ctrlProgress      = progress
-                existing.__ctrlProgressTotal = progressTotal
-              }
-              const newDt = typeof obj.downgradeTime === 'number' ? obj.downgradeTime : undefined
-              if (existing.__ctrlDowngradeTime !== newDt) existing.__ctrlDowngradeTime = newDt
-            }
-            if (obj.type === 'source') {
-              const { energy, capacity } = getSourceEnergy(obj)
-              if (existing.__sourceEnergy !== energy || existing.__sourceCapacity !== capacity) {
-                this.startSourceAnimation(id, existing, existing.__sourceEnergy ?? 0, existing.__sourceCapacity ?? capacity, energy, capacity)
-                existing.__sourceEnergy = energy
-                existing.__sourceCapacity = capacity
-              }
-            }
-            if (obj.type === 'constructionSite') {
-              const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
-              const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
-              if (existing.__csProgress !== progress || existing.__csProgressTotal !== progressTotal) {
-                if (existing.__csFillGraphics) {
-                  drawCSProgress(existing.__csFillGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CS_FILL_R, progress, progressTotal, existing.__csColor ?? CS_OWN)
-                }
-                existing.__csProgress      = progress
-                existing.__csProgressTotal = progressTotal
-              }
-            }
-            if (obj.type === 'powerBank') {
-              const power = getPowerBankPower(obj)
-              if (existing.__powerBankPower !== power) {
-                existing.__powerBankPower = power
-                existing.__powerBankRadius = calcPowerBankRadius(power)
-              }
-            }
+            this.updateExistingVisual(id, obj, existing, false)
           }
         }
       }
@@ -3631,166 +1196,9 @@ export class ObjectLayer {
         this.rawObjects.set(id, obj)
         const existing = this.objects.get(id)
         if (!existing) {
-          const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-          visual.__tileX = obj.x
-          visual.__tileY = obj.y
-          this.applyLabelScale(visual)
-          this.objects.set(id, visual)
-          this.container.addChild(visual)
+          this.createVisual(id, obj)
         } else {
-          const tx = obj.x * TILE_SIZE
-          const ty = obj.y * TILE_SIZE
-          if (obj.type === 'creep') {
-            const dx = obj.x - (existing.__tileX ?? obj.x)
-            const dy = obj.y - (existing.__tileY ?? obj.y)
-            if (dx !== 0 || dy !== 0) {
-              existing.__angle = Math.atan2(dy, dx)
-              if (existing.__bodyContainer) existing.__bodyContainer.rotation = existing.__angle
-            }
-            existing.__tileX = obj.x
-            existing.__tileY = obj.y
-            if (this.instantMode) {
-              existing.position.set(tx, ty)
-              existing.__targetX = undefined
-              existing.__targetY = undefined
-              existing.__moveStartX = undefined
-              existing.__moveStartY = undefined
-              existing.__moveStartT = undefined
-              existing.__moveDur = undefined
-            } else if (existing.x !== tx || existing.y !== ty) {
-              existing.__targetX = tx
-              existing.__targetY = ty
-              existing.__moveStartX = existing.x
-              existing.__moveStartY = existing.y
-              existing.__moveStartT = performance.now()
-              existing.__moveDur = this.moveDuration
-            }
-            const { used, capacity } = getCreepStore(obj)
-            if (existing.__creepUsed !== used || existing.__creepCapacity !== capacity) {
-              this.startCreepFillAnimation(id, existing, existing.__creepUsed ?? 0, existing.__creepCapacity ?? capacity, used, capacity)
-              existing.__creepUsed = used
-              existing.__creepCapacity = capacity
-            }
-            // Re-tier on the spawning → born transition (and vice-versa).
-            const cz = computeZIndex(obj)
-            if (existing.zIndex !== cz) existing.zIndex = cz
-          } else if (obj.type === 'flag') {
-            const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
-            const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
-            const colorChanged =
-              existing.__flagColor !== newColorIdx ||
-              existing.__flagSecondaryColor !== newSecColorIdx
-            if (colorChanged) {
-              this.container.removeChild(existing)
-              destroyVisual(existing)
-              this.objects.delete(id)
-              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-              visual.__tileX = obj.x
-              visual.__tileY = obj.y
-              this.applyLabelScale(visual)
-              this.objects.set(id, visual)
-              this.container.addChild(visual)
-            } else {
-              existing.position.set(tx, ty)
-            }
-          } else {
-            existing.position.set(tx, ty)
-          }
-
-          if (obj.type === 'extension') {
-            const { energy, capacity } = getExtensionEnergy(obj)
-            const ext = existing as ContainerWithTarget & { __extEnergy?: number; __extCapacity?: number }
-            if (ext.__extEnergy !== energy || ext.__extCapacity !== capacity) {
-              this.startExtAnimation(
-                id,
-                existing,
-                ext.__extEnergy ?? 0,
-                ext.__extCapacity ?? capacity,
-                energy,
-                capacity,
-              )
-              ext.__extEnergy = energy
-              ext.__extCapacity = capacity
-            }
-          }
-          if (obj.type === 'link') {
-            const { energy, capacity } = getExtensionEnergy(obj)
-            if (existing.__linkEnergy !== energy || existing.__linkCapacity !== capacity) {
-              this.startLinkAnimation(id, existing, existing.__linkEnergy ?? 0, existing.__linkCapacity ?? capacity, energy, capacity)
-              existing.__linkEnergy = energy
-              existing.__linkCapacity = capacity
-            }
-          }
-          if (obj.type === 'tower') {
-            const { energy, capacity } = getExtensionEnergy(obj)
-            if (existing.__towerEnergy !== energy || existing.__towerCapacity !== capacity) {
-              this.startTowerFillAnimation(id, existing, existing.__towerEnergy ?? 0, existing.__towerCapacity ?? capacity, energy, capacity)
-              existing.__towerEnergy = energy
-              existing.__towerCapacity = capacity
-            }
-          }
-          if (obj.type === 'controller') {
-            const level         = typeof obj.level         === 'number' ? obj.level         : 0
-            const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
-            const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 0
-            const newResObj     = obj.reservation as { user?: string } | undefined
-            const newUserId     = typeof obj.user === 'string' ? obj.user
-              : typeof newResObj?.user === 'string' ? newResObj.user
-              : undefined
-            if (existing.__ctrlUserId !== newUserId) {
-              this.container.removeChild(existing)
-              destroyVisual(existing)
-              this.objects.delete(id)
-              const visual: ContainerWithTarget = createObjectVisual(obj, this.showLabels, this.currentUserId, this.badge, this.badgeCache, this.users)
-              visual.__tileX = obj.x
-              visual.__tileY = obj.y
-              this.applyLabelScale(visual)
-              this.objects.set(id, visual)
-              this.container.addChild(visual)
-              continue
-            }
-            if (existing.__ctrlLevel !== level || existing.__ctrlProgress !== progress || existing.__ctrlProgressTotal !== progressTotal) {
-              if (existing.__ctrlSegSprites) {
-                if (!this.instantMode && level > (existing.__ctrlLevel ?? 0) && level > 0) {
-                  this.ctrlFlashAnimations.set(id, { segIndex: level - 1, startTime: performance.now(), duration: 500 })
-                }
-                updateControllerSegSprites(existing, level, progress, progressTotal)
-              } else if (existing.__ctrlSegGraphics) {
-                drawControllerSegments(existing.__ctrlSegGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CTRL_SEG_OUT, CTRL_SEG_IN, level, progress, progressTotal)
-              }
-              existing.__ctrlLevel         = level
-              existing.__ctrlProgress      = progress
-              existing.__ctrlProgressTotal = progressTotal
-            }
-            const newDt = typeof obj.downgradeTime === 'number' ? obj.downgradeTime : undefined
-            if (existing.__ctrlDowngradeTime !== newDt) existing.__ctrlDowngradeTime = newDt
-          }
-          if (obj.type === 'source') {
-            const { energy, capacity } = getSourceEnergy(obj)
-            if (existing.__sourceEnergy !== energy || existing.__sourceCapacity !== capacity) {
-              this.startSourceAnimation(id, existing, existing.__sourceEnergy ?? 0, existing.__sourceCapacity ?? capacity, energy, capacity)
-              existing.__sourceEnergy = energy
-              existing.__sourceCapacity = capacity
-            }
-          }
-          if (obj.type === 'constructionSite') {
-            const progress      = typeof obj.progress      === 'number' ? obj.progress      : 0
-            const progressTotal = typeof obj.progressTotal === 'number' ? obj.progressTotal : 1
-            if (existing.__csProgress !== progress || existing.__csProgressTotal !== progressTotal) {
-              if (existing.__csFillGraphics) {
-                drawCSProgress(existing.__csFillGraphics, TILE_SIZE / 2, TILE_SIZE / 2, CS_FILL_R, progress, progressTotal, existing.__csColor ?? CS_OWN)
-              }
-              existing.__csProgress      = progress
-              existing.__csProgressTotal = progressTotal
-            }
-          }
-          if (obj.type === 'powerBank') {
-            const power = typeof obj.power === 'number' ? obj.power : 0
-            if (existing.__powerBankPower !== power) {
-              existing.__powerBankPower = power
-              existing.__powerBankRadius = calcPowerBankRadius(power)
-            }
-          }
+          this.updateExistingVisual(id, obj, existing, true)
         }
       }
 
@@ -3822,6 +1230,8 @@ export class ObjectLayer {
     if (roadsChanged) {
       this.redrawRoads()
     }
+
+    this.refreshDisabled()
 
     // Drive every spawn's progress ring from the local game clock. Re-sync the
     // completion tick only when the spawning payload changes (the server doesn't
@@ -3858,6 +1268,26 @@ export class ObjectLayer {
 
     this.refreshForeignCreepLabels()
     this.refreshForeignCreepBadges()
+  }
+
+  /**
+   * Recompute which structures the controller currently keeps switched off and
+   * repaint the wash. Only touches the Graphics when the tile set actually changed —
+   * the controller level and structure counts move rarely, this runs every tick.
+   */
+  private refreshDisabled(): void {
+    const disabled = computeDisabledIds(this.rawObjects)
+    const tiles: Array<{ x: number; y: number }> = []
+    for (const id of disabled) {
+      const obj = this.rawObjects.get(id)
+      if (obj) tiles.push({ x: obj.x, y: obj.y })
+    }
+    tiles.sort((a, b) => a.y - b.y || a.x - b.x)
+    const sig = tiles.map((t) => `${t.x},${t.y}`).join(' ')
+    if (sig === this.disabledSig) return
+    this.disabledSig = sig
+    drawDisabledTiles(this.disabledGraphics, tiles, TILE_SIZE)
+    if (sig === '') this.disabledGraphics.alpha = 0
   }
 
   private redrawWalls(): void {
@@ -4115,7 +1545,7 @@ export class ObjectLayer {
       // line. Adjacent segments are collinear/tangent, so butt caps meet flush.
       // Wide bright stroke on the blurred glow layer (below the fills) → a soft glow
       // that haloes past the blob edge and tints up through the translucent fill.
-      if (trace(this.rampartGlowGraphics)) this.rampartGlowGraphics.stroke({ color, width: T * 0.3, alpha: 0.55, alignment: 0.5, cap: 'butt', join: 'round' })
+      if (trace(this.rampartGlowGraphics)) this.rampartGlowGraphics.stroke({ color, width: T * 0.3, alpha: 0.35, alignment: 0.5, cap: 'butt', join: 'round' })
       // Crisp core rim on top of the fills.
       if (trace(this.rampartGraphics)) this.rampartGraphics.stroke({ color, width: T * 0.08, alpha: 0.9, alignment: 0.5, cap: 'butt', join: 'round' })
     }
@@ -4322,7 +1752,8 @@ export class ObjectLayer {
       const size = CREEP_INNER_R * 2
       badgeSprite.width = size
       badgeSprite.height = size
-      badgeSprite.rotation = Math.PI / 2
+      // Wired up after the creep already exists, so match whatever heading it holds.
+      badgeSprite.rotation = -bodyContainer.rotation
       bodyContainer.addChild(badgeSprite)
       visual.__creepBadgeSprite = badgeSprite
       this.badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
@@ -4384,7 +1815,7 @@ export class ObjectLayer {
 
     if (visual.__sayBubble && !visual.__sayBubble.destroyed) {
       visual.removeChild(visual.__sayBubble)
-      visual.__sayBubble.destroy({ children: true })
+      destroyTree(visual.__sayBubble)
     }
 
     const bubble = buildSayBubble(message)
@@ -4458,7 +1889,7 @@ export class ObjectLayer {
       const visual = this.objects.get(id)
       if (visual?.__sayBubble && !visual.__sayBubble.destroyed) {
         visual.removeChild(visual.__sayBubble)
-        visual.__sayBubble.destroy({ children: true })
+        destroyTree(visual.__sayBubble)
       }
       if (visual) {
         visual.__sayBubble = undefined
@@ -4483,7 +1914,7 @@ export class ObjectLayer {
       }
       if (visual.__sayBubble && !visual.__sayBubble.destroyed) {
         visual.removeChild(visual.__sayBubble)
-        visual.__sayBubble.destroy({ children: true })
+        destroyTree(visual.__sayBubble)
         visual.__sayBubble = undefined
         visual.__sayMessage = undefined
       }
@@ -4520,19 +1951,34 @@ export class ObjectLayer {
     this.roadGraphics.clear()
     this.rampartGraphics.clear()
     this.rampartGlowGraphics.clear()
+    this.wallGraphics.clear()
+    this.wallMarkGraphics.clear()
+    this.disabledGraphics.clear()
+    this.disabledGraphics.alpha = 0
+    this.disabledSig = ''
     this.container.removeChildren()
-    // Re-attach persistent graphics layers removed by removeChildren()
-    this.container.addChild(this.rampartGraphics)
-    this.container.addChild(this.rampartGlowGraphics)
+    // Re-attach persistent graphics layers removed by removeChildren(). rampartGraphics/
+    // rampartGlowGraphics live in `rampartLayer`, not `container` — untouched by this call.
+    this.container.addChild(this.wallGraphics)
+    this.container.addChild(this.wallMarkGraphics)
     this.container.addChild(this.roadGraphics)
+    this.container.addChild(this.disabledGraphics)
   }
 
   destroy(): void {
     this.clear()
+    this.decorationAnimator?.destroy()
+    this.decorationAnimator = null
     if (this.ticker && this.tickerCallback) {
       this.ticker.remove(this.tickerCallback)
     }
     this.ticker = null
     this.tickerCallback = null
+    // clear() only empties the containers — the layer itself is replaced on every room
+    // change, so the road/wall/rampart Graphics it keeps across ticks have to go with it.
+    // Each holds a room-wide path; leaving them undestroyed strands that geometry on the
+    // renderer until the whole PixiJS Application is torn down.
+    destroyTree(this.container)
+    destroyTree(this.rampartLayer)
   }
 }

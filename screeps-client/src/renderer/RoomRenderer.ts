@@ -1,19 +1,28 @@
 import { Application, Container, Graphics, Sprite, Point, Rectangle } from 'pixi.js'
+import type { RoomObjectMap } from 'screeps-connectivity'
 import { HoverHighlightLayer } from './HoverHighlightLayer.js'
-import { LightingLayer, buildLights } from './LightingLayer.js'
+import { LightingLayer } from './LightingLayer.js'
+import { buildLights } from './objectLights.js'
+import { destroyTree } from './destroyTree.js'
 import { ContextRecovery } from './ContextRecovery.js'
 
 export const TILE_SIZE = 12
 export const ROOM_SIZE = 50 * TILE_SIZE
 const PADDING = 48
 const OVERSCROLL = 128
+const MAX_SCALE = 5
 
 // Z-index constants for world children — controls draw order independent of insertion order.
 export const Z = {
   terrain:     0,
+  decorations: 5,
   objects:    10,
   animations: 20,
   darkOverlay:30,
+  // Above darkOverlay so ramparts glow at full brightness regardless of room lighting —
+  // the reference renders them in its topmost "effects" layer, past the light multiply,
+  // for the same reason.
+  rampartGlow:35,
   visuals:    40,
   hover:      50,
   nav:        60,
@@ -41,6 +50,8 @@ export class RoomRenderer {
   private onHoverTile: ((tx: number | null, ty: number | null) => void) | null = null
   private onClickTile: ((tx: number, ty: number, ctrlKey: boolean) => void) | null = null
   private onRightClick: (() => void) | null = null
+  private onViewChange: (() => void) | null = null
+  private cameraLocked = false
 
   private constructor(app: Application, container: HTMLElement) {
     this.app = app
@@ -77,16 +88,27 @@ export class RoomRenderer {
     this.setupResizeObserver()
   }
 
-  bringNavOverlayToTop(): void {
-    // Keep hover layer just below nav overlay
-    if (this.hoverLayer.container.parent === this.world) {
-      this.world.removeChild(this.hoverLayer.container)
-      this.world.addChild(this.hoverLayer.container)
-    }
-    if (this.navOverlay.parent === this.world) {
-      this.world.removeChild(this.navOverlay)
-      this.world.addChild(this.navOverlay)
-    }
+  /**
+   * Park the camera on the whole room and stop it moving.
+   *
+   * The in-room decoration editor draws its frame and handles as HTML over the canvas, so
+   * it needs the world transform to hold still between renders — and a fixed, fully
+   * zoomed-out view is what makes a decoration editable end to end without panning.
+   */
+  setCameraLocked(locked: boolean): void {
+    if (this.cameraLocked === locked) return
+    this.cameraLocked = locked
+    if (locked) this.resetView()
+  }
+
+  /** Where the room sits on screen right now: origin of cell (0,0) plus the zoom. */
+  get viewTransform(): { x: number; y: number; scale: number } {
+    return { x: this.world.x, y: this.world.y, scale: this.world.scale.x }
+  }
+
+  /** Called whenever {@link viewTransform} changed — pan, zoom, resize, reset. */
+  setViewChangeHandler(handler: (() => void) | null): void {
+    this.onViewChange = handler
   }
 
   static async create(container: HTMLElement): Promise<RoomRenderer> {
@@ -148,6 +170,7 @@ export class RoomRenderer {
     }
 
     this.canDrag = true
+    this.onViewChange?.()
   }
 
   private getTargetPosition(): { x: number; y: number } | null {
@@ -246,9 +269,8 @@ export class RoomRenderer {
 
   private getTargetScale(): number | null {
     const minScale = this.getMinScale()
-    const maxScale = 5
     if (this.world.scale.x < minScale) return minScale
-    if (this.world.scale.x > maxScale) return maxScale
+    if (this.world.scale.x > MAX_SCALE) return MAX_SCALE
     return null
   }
 
@@ -271,12 +293,22 @@ export class RoomRenderer {
 
 
     canvas.addEventListener('pointerdown', (e) => {
+      // Primary button (or touch/pen) only: right/middle clicks must not pan, pinch,
+      // or register as tile clicks — right-click is handled via contextmenu below.
+      if (e.button !== 0) return
       this.cancelBounce()
       this.cancelWheelTimeout()
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
       canvas.setPointerCapture(e.pointerId)
 
-      if (activePointers.size >= 2) {
+      if (this.cameraLocked) {
+        // Still track the pointer so a tap is recognised as a click, but never pan or
+        // zoom: the decoration editor's HTML handles are positioned against this view.
+        pinching = false
+        dragging = false
+        lastPos = new Point(e.clientX, e.clientY)
+        pointerDownPos = new Point(e.clientX, e.clientY)
+      } else if (activePointers.size >= 2) {
         // Enter pinch mode, cancel single-finger drag
         dragging = false
         pinching = true
@@ -311,11 +343,10 @@ export class RoomRenderer {
         const newMidY = (pts[0].y + pts[1].y) / 2 - rect.top
         const newDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
         const minScale = this.getMinScale()
-        const maxScale = 5
         const ZOOM_RESISTANCE = 0.6
         let newScale = pinchStartScale * (newDist / pinchStartDist)
         if (newScale < minScale) newScale = minScale + (newScale - minScale) * ZOOM_RESISTANCE
-        if (newScale > maxScale) newScale = maxScale + (newScale - maxScale) * ZOOM_RESISTANCE
+        if (newScale > MAX_SCALE) newScale = MAX_SCALE + (newScale - MAX_SCALE) * ZOOM_RESISTANCE
         this.cancelBounce()
         this.world.scale.set(newScale)
         this.world.x = newMidX - pinchPivotWorldX * newScale
@@ -341,6 +372,9 @@ export class RoomRenderer {
     })
 
     const onUp = (e: PointerEvent) => {
+      // Mirror of the pointerdown filter. button is 0 for a primary-button pointerup
+      // and -1 for pointercancel; anything greater was never tracked or captured.
+      if (e.button > 0) return
       canvas.releasePointerCapture(e.pointerId)
       activePointers.delete(e.pointerId)
 
@@ -354,6 +388,17 @@ export class RoomRenderer {
       }
 
       dragging = false
+
+      if (this.cameraLocked) {
+        const dx = e.clientX - pointerDownPos.x
+        const dy = e.clientY - pointerDownPos.y
+        if (Math.sqrt(dx * dx + dy * dy) < CLICK_THRESHOLD) {
+          const rect = canvas.getBoundingClientRect()
+          const tile = this.screenToTile(e.clientX - rect.left, e.clientY - rect.top)
+          if (tile) this.onClickTile?.(tile.tx, tile.ty, e.ctrlKey || e.metaKey)
+        }
+        return
+      }
 
       // Treat as click if pointer barely moved
       const dx = e.clientX - pointerDownPos.x
@@ -385,9 +430,9 @@ export class RoomRenderer {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault()
+      if (this.cameraLocked) return
       const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1
       const minScale = this.getMinScale()
-      const maxScale = 5
       let newScale = this.world.scale.x * scaleFactor
 
       // Rubber-band resistance: the further past the limit, the less effect
@@ -395,8 +440,8 @@ export class RoomRenderer {
       if (newScale < minScale) {
         newScale = minScale + (newScale - minScale) * ZOOM_RESISTANCE
       }
-      if (newScale > maxScale) {
-        newScale = maxScale + (newScale - maxScale) * ZOOM_RESISTANCE
+      if (newScale > MAX_SCALE) {
+        newScale = MAX_SCALE + (newScale - MAX_SCALE) * ZOOM_RESISTANCE
       }
 
       const rect = canvas.getBoundingClientRect()
@@ -483,7 +528,10 @@ export class RoomRenderer {
     this.resizeObserver = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect
       this.app.renderer.resize(width, height)
-      this.clampView()
+      // A locked camera re-fits instead of clamping, so "the whole room is visible"
+      // survives the sidebar being opened or the window being resized.
+      if (this.cameraLocked) this.resetView()
+      else this.clampView()
     })
     this.resizeObserver.observe(this.container)
   }
@@ -494,8 +542,9 @@ export class RoomRenderer {
     north?: () => void
     south?: () => void
   }): void {
-    // Remove existing zones from overlay
-    this.navOverlay.removeChildren()
+    // Destroy rather than detach: zones are rebuilt on every room change, and a Graphics
+    // that is merely removed leaves its GraphicsContext registered with the renderer.
+    this.clearNavigationZones()
 
     const createZone = (
       x: number,
@@ -538,7 +587,9 @@ export class RoomRenderer {
         zone.fill()
       })
 
-      zone.on('pointerdown', handler)
+      // Tap, not pointerdown: a touch drag that merely starts inside the zone
+      // must pan the room, not navigate away immediately.
+      zone.on('pointertap', handler)
 
       this.navOverlay.addChild(zone)
     }
@@ -595,6 +646,10 @@ export class RoomRenderer {
     }
   }
 
+  private clearNavigationZones(): void {
+    for (const zone of this.navOverlay.removeChildren()) destroyTree(zone)
+  }
+
   clear(): void {
     // Remove all children except navOverlay and hoverLayer
     for (let i = this.world.children.length - 1; i >= 0; i--) {
@@ -603,7 +658,7 @@ export class RoomRenderer {
         this.world.removeChild(child)
       }
     }
-    this.navOverlay.removeChildren()
+    this.clearNavigationZones()
     this.hoverLayer.clearSelection()
     this.hoverLayer.setHoveredTile(null, null)
     this.clearLighting()
@@ -617,7 +672,7 @@ export class RoomRenderer {
     this.lighting.clear()
   }
 
-  updateLighting(objects: Record<string, { type?: unknown; x?: unknown; y?: unknown }>): void {
+  updateLighting(objects: RoomObjectMap): void {
     this.lighting.setLights(buildLights(objects))
     this.lighting.render()
   }

@@ -1,8 +1,10 @@
-import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
+import { createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 import { MapRenderer } from '~/renderer/MapRenderer.js'
-import { client, userInfo, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
+import { buildMapDecoration } from '~/renderer/mapDecorations.js'
+import { client, userInfo, isGuest, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
 import { showMapRoomNames, showUnclaimableRooms, showMapVisuals, showRoomDecorations } from '~/stores/settingsStore.js'
 import { mapOverlayMode } from '~/stores/mapOverlayStore.js'
+import { allianceMembers, loadAlliances, setAllianceRoomCounts } from '~/stores/allianceStore.js'
 import { parseRoomName, formatRoomName, isRoomInWorld, isBusRoom, isCenterRoom } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
 import { createLogger } from '~/utils/log.js'
@@ -31,10 +33,23 @@ interface MapViewerProps {
   shard: string | null
   originRoom?: string
   initialZoom?: number
+  /**
+   * Viewport centre in room units, from the URL's `?pos=`. Takes precedence over
+   * `originRoom` / the account's start room. A fresh object on every URL read, so
+   * back/forward re-centres even when the coordinates repeat.
+   */
+  centerPos?: { x: number; y: number }
+  /**
+   * Live external selection (e.g. the main window's room, pushed into a map
+   * popout). Mount-time seeding still goes through `originRoom`; this only
+   * handles later changes.
+   */
+  selectedRoom?: string | null
   onNavigateToRoom: (room: string) => void
   onHoveredRoomChanged?: (info: RoomInfo | null) => void
   onSelectedRoomChanged?: (info: RoomInfo | null) => void
   onZoomChanged?: (zoom: number) => void
+  onCenterChanged?: (center: { x: number; y: number }) => void
   onSubscriptionStateChanged?: (active: boolean) => void
 }
 
@@ -44,6 +59,9 @@ export function MapViewer(props: MapViewerProps) {
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
   const [zoom, setZoom] = createSignal(1)
+  // Applied once by onMount; every later value is a browser back/forward landing
+  // on a different ?pos=, handled by the effect further down.
+  const initialCenterPos = untrack(() => props.centerPos)
   const origin = () => props.originRoom
   const [selectedRoom, setSelectedRoom] = createSignal<string | null>(origin() ?? null)
   let lastSubsActive: boolean | null = null
@@ -97,6 +115,46 @@ export function MapViewer(props: MapViewerProps) {
     }
   }
 
+  // Push the owner's alliance tint for one room. Reads the roster non-reactively —
+  // the effect below re-runs this for every known room once the roster lands.
+  const applyAlliance = (room: string) => {
+    const stat = roomStats.get(room)
+    // Owned only — map-stats encodes a reservation as own with level 0, and tinting
+    // every remote buried the actual territory.
+    const owned = !!stat?.own && stat.own.level >= 1
+    const alliance = owned ? allianceMembers().get((stat!.username ?? '').toLowerCase()) : undefined
+    renderer?.setRoomAlliance(
+      room,
+      alliance ? { abbreviation: alliance.abbreviation, color: alliance.color } : null,
+    )
+  }
+
+  // Alliance room tally for the sidebar legend. Owner stats stream in per room, so a
+  // recount per event would be O(viewport) on every message — coalesce into one pass.
+  const COUNT_DEBOUNCE_MS = 250
+  let countTimer: ReturnType<typeof setTimeout> | null = null
+
+  const recountAlliances = () => {
+    const members = allianceMembers()
+    const counts = new Map<string, number>()
+    if (members.size > 0) {
+      for (const room of visibleRooms()) {
+        const stat = roomStats.get(room)
+        // Owned only — map-stats encodes a reservation as own with level 0.
+        if (!stat?.own || stat.own.level < 1) continue
+        const alliance = members.get((stat.username ?? '').toLowerCase())
+        if (!alliance) continue
+        counts.set(alliance.abbreviation, (counts.get(alliance.abbreviation) ?? 0) + 1)
+      }
+    }
+    setAllianceRoomCounts(counts)
+  }
+
+  const scheduleAllianceRecount = () => {
+    if (countTimer !== null || mapOverlayMode() !== 'alliance') return
+    countTimer = setTimeout(() => { countTimer = null; recountAlliances() }, COUNT_DEBOUNCE_MS)
+  }
+
   // Terrain is fetched progressively in batches, sorted center-out
   const TERRAIN_BATCH_SIZE = 200
   const TERRAIN_BATCH_MS = 0
@@ -126,6 +184,7 @@ export function MapViewer(props: MapViewerProps) {
           if (unclaimable !== undefined) renderer?.setRoomOwned(room, unclaimable)
           const stat = roomStats.get(room)
           if (stat) renderer?.setRoomMineral(room, stat.mineral, stat.density)
+          applyAlliance(room)
         }
         for (const room of batch) {
           if (!terrainMap.has(room)) renderer?.markRoomFetched(room)
@@ -191,6 +250,7 @@ export function MapViewer(props: MapViewerProps) {
           setZoom(z)
           props.onZoomChanged?.(z)
         },
+        onCenterChanged: (c) => props.onCenterChanged?.(c),
       })
 
       await renderer.init(canvasRef!)
@@ -203,11 +263,33 @@ export function MapViewer(props: MapViewerProps) {
       const initialBounds = worldBounds()
       if (initialBounds) renderer.setBounds(initialBounds.minX, initialBounds.maxX, initialBounds.minY, initialBounds.maxY)
 
-      if (props.originRoom) {
+      // Falls back to the middle of the known world bounds, or the map's origin
+      // room if bounds haven't arrived yet — better than leaving the camera at
+      // the renderer's raw (uncentred) default transform.
+      const centerOnMapMiddle = () => {
+        if (!renderer) return
+        const b = worldBounds()
+        const x = b ? (b.minX + b.maxX) / 2 : 0
+        const y = b ? (b.minY + b.maxY) / 2 : 0
+        renderer.centerOnPoint(x, y)
+      }
+
+      // A bookmarked/deep-linked position wins over both the room the map was
+      // opened from and the account's start room.
+      if (initialCenterPos) {
+        renderer.centerOnPoint(initialCenterPos.x, initialCenterPos.y)
+        if (props.originRoom) {
+          renderer.setSelectedRoom(props.originRoom)
+          props.onSelectedRoomChanged?.(buildRoomInfo(props.originRoom))
+        }
+      } else if (props.originRoom) {
         const coord = parseRoomName(props.originRoom)
         if (coord) renderer.centerOn(coord.x, coord.y)
         renderer.setSelectedRoom(props.originRoom)
         props.onSelectedRoomChanged?.(buildRoomInfo(props.originRoom))
+      } else if (isGuest()) {
+        // Guests have no account, so /api/user/world-start-room would just 401 — skip it.
+        centerOnMapMiddle()
       } else {
         const c = client()
         if (c) {
@@ -215,13 +297,15 @@ export function MapViewer(props: MapViewerProps) {
             const res = await c.http.user.worldStartRoom(props.shard ?? 'shard0') as { room?: string | string[] }
             if (!renderer) return
             const roomName = Array.isArray(res?.room) ? res.room[0] : res?.room
-            if (typeof roomName === 'string') {
-              const coord = parseRoomName(roomName)
-              if (coord) renderer.centerOn(coord.x, coord.y)
-            }
+            const coord = typeof roomName === 'string' ? parseRoomName(roomName) : null
+            if (coord) renderer.centerOn(coord.x, coord.y)
+            else centerOnMapMiddle()
           } catch (err) {
             error('worldStartRoom failed:', err)
+            centerOnMapMiddle()
           }
+        } else {
+          centerOnMapMiddle()
         }
       }
 
@@ -231,12 +315,35 @@ export function MapViewer(props: MapViewerProps) {
 
   onCleanup(() => {
     if (terrainTimer !== null) { clearTimeout(terrainTimer); terrainTimer = null }
+    if (countTimer !== null) { clearTimeout(countTimer); countTimer = null }
+    setAllianceRoomCounts(new Map())
     terrainQueue = []
     requested.clear()
     for (const sub of map2Subs.values()) sub.dispose()
     map2Subs.clear()
     renderer?.destroy()
     renderer = null
+  })
+
+  // Browser back/forward landing on a /map URL with a different ?pos=. The map
+  // stays mounted across those, so nothing else would move the camera.
+  createEffect(() => {
+    const p = props.centerPos
+    if (!p || p === initialCenterPos) return
+    renderer?.centerOnPoint(p.x, p.y)
+  })
+
+  // External selection pushed in while the map stays mounted (popout following
+  // the main window's room view). Local clicks/arrow keys still own selectedRoom;
+  // this only reconciles when the outside value actually differs.
+  createEffect(() => {
+    const room = props.selectedRoom
+    if (room == null || room === untrack(selectedRoom)) return
+    setSelectedRoom(room)
+    renderer?.setSelectedRoom(room)
+    const coord = parseRoomName(room)
+    if (coord) renderer?.centerOn(coord.x, coord.y, true)
+    props.onSelectedRoomChanged?.(buildRoomInfo(room))
   })
 
   // Arrow key navigation (moves map selection) + 'm' to enter room view
@@ -364,6 +471,29 @@ export function MapViewer(props: MapViewerProps) {
     c.stores.mapStats.request(rooms, MapStatName.minerals, shard ?? undefined)
   })
 
+  // Load the LOAN roster the first time the alliance overlay is selected — it's a
+  // third-party request, so it never fires for users who don't ask for the overlay.
+  createEffect(() => {
+    if (mapOverlayMode() !== 'alliance') return
+    void loadAlliances()
+  })
+
+  // Re-tint everything we already have stats for whenever the roster changes.
+  // Owner stats usually arrive long before the (async, cached) roster does.
+  createEffect(() => {
+    allianceMembers()
+    for (const room of roomStats.keys()) applyAlliance(room)
+  })
+
+  // Recount for the legend when the viewport moves, the roster lands, or the mode
+  // is switched on — stat events cover the rest.
+  createEffect(() => {
+    visibleRooms()
+    allianceMembers()
+    if (mapOverlayMode() !== 'alliance') return
+    scheduleAllianceRecount()
+  })
+
   // Fetch world bounds with the correct shard whenever client or shard changes.
   createEffect(() => {
     const c = client()
@@ -470,7 +600,10 @@ export function MapViewer(props: MapViewerProps) {
           renderer?.setRoomMineral(room, existing.mineral, existing.density)
         }
 
-        renderer?.setRoomDecoration(room, stat.terrainColors)
+        applyAlliance(room)
+        scheduleAllianceRecount()
+
+        renderer?.setRoomDecoration(room, stat.decorations ? buildMapDecoration(stat.decorations) : undefined)
 
         // Badge change-check: cheap string comparison, runs only on event, never per tick.
         const badgeKey = stat.badge ? JSON.stringify(stat.badge) : ''

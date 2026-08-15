@@ -60,6 +60,8 @@ export interface ApiUserRoomsResponse {
   ok: number
   shards?: Record<string, string[]>
   rooms?: string[]
+  /** Only present when asking with `reservation` — rooms reserved rather than owned. */
+  reservations?: Record<string, string[]>
 }
 
 export interface ApiAuthQueryTokenResponse {
@@ -146,11 +148,45 @@ export interface ApiUserBranchesResponse {
   }>
 }
 
+/** One entry in a branch's module map: JS source text, or a binary
+ *  (WebAssembly) module carried as base64. */
+export type ApiCodeModule = string | { binary: string }
+
+export interface ApiUserCodeResponse {
+  ok: number
+  branch: string
+  modules: Record<string, ApiCodeModule>
+}
+
+/** The two ranking tables the world game keeps: `world` scores control points
+ *  earned upgrading controllers, `power` scores power processed. (The official
+ *  server also ranks the retired arena/survival modes; they have no client here.) */
+export type LeaderboardMode = 'world' | 'power'
+
+/** One row of the ranking table. `rank` is 0-based — render it as `rank + 1`. */
+export interface ApiLeaderboardEntry {
+  _id: string
+  season: string
+  user: string
+  score: number
+  rank: number
+}
+
+/** The player records the ranking rows point at, keyed by user id. Private
+ *  servers may omit badge/gcl, so both are optional. */
+export interface ApiLeaderboardUser {
+  _id: string
+  username: string
+  badge?: import('./game.js').Badge
+  gcl?: number
+}
+
 export interface ApiLeaderboardListResponse {
   ok: number
-  list: Array<{ _id: string; season: string; user: string; score: number; rank: number }>
+  list: ApiLeaderboardEntry[]
+  /** Total ranked players in the season — the pager's row count, not the page length. */
   count: number
-  users: Record<string, { _id: string; username: string; badge: import('./game.js').Badge; gcl: number }>
+  users: Record<string, ApiLeaderboardUser>
 }
 
 export interface ApiLeaderboardSeasonsResponse {
@@ -159,21 +195,34 @@ export interface ApiLeaderboardSeasonsResponse {
 }
 
 export interface ApiDecorationActive {
+  /** Set when the decoration is meant to show on the world map. */
   world?: boolean
   tileScale?: number | string
-  // terrain theme
+  // floor landscape
   floorBackgroundColor?: string
+  floorBackgroundBrightness?: number | string
   floorForegroundColor?: string
+  floorForegroundBrightness?: number | string
   floorForegroundAlpha?: string | number
   swampColor?: string
   swampStrokeColor?: string
   roadsColor?: string
   roadsBrightness?: number | string
-  // room overlay (not used on world map yet)
+  // wall landscape
   foregroundColor?: string
+  foregroundBrightness?: number | string
   foregroundAlpha?: number | string
   backgroundColor?: string
+  backgroundBrightness?: number | string
   strokeColor?: string
+  // graffiti geometry, in room cells
+  x?: number | string
+  y?: number | string
+  width?: number | string
+  height?: number | string
+  alpha?: number | string
+  brightness?: number | string
+  lighting?: boolean | string
   [key: string]: unknown
 }
 
@@ -207,12 +256,28 @@ export interface ApiGameRoomsResponse {
   }>
 }
 
+/**
+ * Reduced decoration definition, as delivered by the `decorations` dictionary of
+ * `map-stats`. Deliberately smaller than the room-view definition — the world map only
+ * needs the type, the graphics and the two landscape overlay textures.
+ */
+export interface ApiMapStatsDecorationDef {
+  type?: string
+  graphics?: ApiRoomDecorationGraphic[]
+  tiling?: boolean
+  foregroundUrl?: string
+  floorForegroundUrl?: string
+  [key: string]: unknown
+}
+
 export interface ApiMapStatsResponse {
   ok: number
   gameTime: number
   stats: Record<string, ApiMapStatsRoomStat>
   statsMax: Record<string, unknown>
   users: Record<string, { _id: string; username: string; badge: ApiMapStatsBadge }>
+  /** Definitions referenced by the `decoration` id on each `stat.decorations[]` entry. */
+  decorations?: Record<string, ApiMapStatsDecorationDef>
 }
 
 export interface ApiCreateFlagResponse {
@@ -402,6 +467,38 @@ export interface ApiUserMessagesUnreadCountResponse {
   count: number
 }
 
+/**
+ * Schema of one editable property of a decoration.
+ *
+ * `default` seeds the value when the decoration is first activated. `readonly` props are
+ * still part of the active state — they just aren't offered in the editor.
+ */
+export interface ApiDecorationProp {
+  type?: 'color' | 'range' | 'boolean' | 'display' | 'string'
+  label?: string
+  readonly?: boolean
+  default?: unknown
+  /** `range` only. */
+  min?: number
+  max?: number
+  step?: number
+}
+
+/**
+ * `decoration.props` mixes two things: a descriptor per editable property, and a handful
+ * of scalar layout constraints read straight off the object (`proportional`, the
+ * width/height bounds). Index into it by prop name for the former.
+ */
+export interface ApiDecorationProps {
+  /** Force the original aspect ratio while resizing. */
+  proportional?: boolean
+  minWidth?: number
+  maxWidth?: number
+  minHeight?: number
+  maxHeight?: number
+  [name: string]: ApiDecorationProp | boolean | number | undefined
+}
+
 export interface ApiRoomDecorationGraphic {
   url: string
   color?: string
@@ -411,11 +508,29 @@ export interface ApiRoomDecorationGraphic {
 
 export interface ApiRoomDecorationDef {
   _id: string
-  type: 'floorLandscape' | 'wallLandscape' | 'wallGraffiti' | 'creep' | 'object' | 'metadata'
+  /** `landscape` is the combined type — it acts as both a floor and a wall landscape. */
+  type: 'floorLandscape' | 'wallLandscape' | 'landscape' | 'wallGraffiti' | 'creep' | 'object' | 'metadata' | 'badge'
+  name?: string
+  /** 1–5. Drives the colour and glow of the rarity indicator. */
+  rarity?: number
+  /** Id of the theme this decoration belongs to. */
+  theme?: string
+  /** Cannot be converted to pixels or transferred to Steam. */
+  restricted?: boolean
+  groupDescription?: string
+  preview?: { original?: string; '128x128'?: string; '256x256'?: string }
+  /** Schema of the editable properties, plus the layout constraints. */
+  props?: ApiDecorationProps
   graphics?: ApiRoomDecorationGraphic[]
   foregroundUrl?: string
   floorForegroundUrl?: string
+  /** Render the graphics as a repeating tile instead of a single stretched sprite. */
+  tiling?: boolean
   tileScale?: number | string
+  /** Target object type, `type === 'object'` only. */
+  objectType?: string
+  /** The badge symbol this decoration grants while worn, `type === 'badge'` only. */
+  badge?: import('./game.js').BadgeSymbol
   [key: string]: unknown
 }
 
@@ -442,18 +557,29 @@ export interface ApiRoomDecorationActive {
   foregroundColor?: string
   foregroundAlpha?: number | string
   foregroundBrightness?: number | string
-  // creep / object
-  user?: string
-  nameFilter?: string
-  exclude?: boolean
+  // geometry — cells for wallGraffiti, pixels for creep/object
+  x?: number | string
+  y?: number | string
   width?: number | string
   height?: number | string
+  /** Radians. The official UI edits this in degrees. */
+  rotation?: number | string
+  flip?: boolean | string
+  alpha?: number | string
   brightness?: number | string
-  lighting?: boolean
+  tileScale?: number | string
+  lighting?: boolean | string
   animation?: string
+  // target
+  shard?: string
+  room?: string
+  // creep / object
+  user?: string
+  /** `!SEP!`-separated list, not an array. */
+  nameFilter?: string
+  exclude?: boolean | string
   position?: string
-  syncRotate?: boolean
-  flip?: boolean
+  syncRotate?: boolean | string
   [key: string]: unknown
 }
 
@@ -468,4 +594,40 @@ export interface ApiRoomDecorationItem {
 export interface ApiRoomDecorationsResponse {
   ok: number
   decorations: ApiRoomDecorationItem[]
+}
+
+/**
+ * One decoration owned by the logged-in user, as returned by the inventory.
+ *
+ * `active` is `null` while the decoration is not placed; once activated it carries the
+ * chosen prop values plus the target `shard`/`room` (absent for the globally-active
+ * `creep` and `badge` types).
+ */
+export interface ApiUserDecorationItem {
+  _id: string
+  /** Sort key for "new to old". */
+  createdAt: string
+  activatedAt?: string
+  active: ApiRoomDecorationActive | null
+  decoration: ApiRoomDecorationDef
+}
+
+export interface ApiUserDecorationsInventoryResponse {
+  ok: number
+  list: ApiUserDecorationItem[]
+}
+
+export interface ApiDecorationTheme {
+  _id: string
+  name: string
+  color?: string
+  /** Not offered in the inventory's theme filter. */
+  hidden?: boolean
+  /** Not selectable as a pixelization target. */
+  restricted?: boolean
+}
+
+export interface ApiDecorationThemesResponse {
+  ok: number
+  list: ApiDecorationTheme[]
 }

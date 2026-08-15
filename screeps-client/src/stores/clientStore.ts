@@ -2,7 +2,7 @@ import { createSignal } from 'solid-js'
 import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus, ApiRoomDecorationsResponse } from 'screeps-connectivity'
 import { addToast } from './toastStore.js'
-import { isEmbedded, embeddedServerUrl } from '~/utils/embedded.js'
+import { isEmbedded, embeddedServerUrl, embeddedServerVersion } from '~/utils/embedded.js'
 import { isTauri } from '~/utils/tauri.js'
 import { isProxy, toProxyUrl } from '~/utils/proxy.js'
 import { createLogger } from '~/utils/log.js'
@@ -142,6 +142,34 @@ export const isPrivateServer = () => {
 
 export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus }
 
+/**
+ * Popout windows install an RPC-backed client shim instead of connecting
+ * themselves — the main window proxies for them over a BroadcastChannel.
+ */
+export function installPopoutClient(c: ScreepsClient): void {
+  setClient(c)
+  setStatus('connected')
+}
+
+/**
+ * Popout windows seed session-level signals from the host's `session.state`
+ * answer — the map needs userInfo for own-room colouring, and the shard select
+ * in MapInfoPanel needs serverVersion. The setters stay module-private.
+ *
+ * The server URL is adopted too: it keys the per-server settings (custom UI
+ * segment), and a popout opened by hand in a new tab has no sessionStorage copy
+ * of its own. Nothing else in a popout reads it — they never connect.
+ */
+export function applyPopoutSessionState(state: {
+  userInfo: UserInfo | null
+  serverVersion: ServerVersion | null
+  url?: string | null
+}): void {
+  setUserInfo(state.userInfo)
+  setServerVersion(state.serverVersion)
+  if (state.url) setSession(SS.url, state.url)
+}
+
 interface ConnectOpts {
   url: string
   auth: 'password' | 'token' | 'guest'
@@ -199,6 +227,7 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     storage: opts.storage ?? new IndexedDBStorage('screeps-client'),
     debug: false,
     serverPassword: opts.serverPassword,
+    initialVersion: embeddedServerVersion() ?? undefined,
   })
 
   screepsClient.http.on('http:tokenRefresh', ({ token }) => {

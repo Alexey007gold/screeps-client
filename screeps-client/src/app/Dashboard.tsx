@@ -1,5 +1,5 @@
 import { createEffect, createSignal, lazy, onCleanup, onMount, Show, Switch, Match, untrack, type JSX } from 'solid-js'
-import { Map, Code2, Settings, LogIn, LayoutDashboard, LayoutGrid, Store, Clock, BarChart3, Target } from 'lucide-solid'
+import { Map, Code2, Settings, LogIn, LayoutDashboard, LayoutGrid, Store, Clock, BarChart3, Target, Trophy, Package, ExternalLink } from 'lucide-solid'
 import { ConnectionStatus } from '~/components/ConnectionStatus.js'
 import { RoomViewer } from '~/components/RoomViewer.js'
 import { ToastContainer } from '~/components/ToastContainer.js'
@@ -28,18 +28,23 @@ const MultiRoomViewer = lazy(() =>
   import('~/components/MultiRoomViewer.js').then((m) => ({ default: m.MultiRoomViewer })),
 )
 import { client, disconnect, isGuest, userInfo, gameTime, isPrivateServer, serverVersion } from '~/stores/clientStore.js'
+import { broadcastMapClose, initPopoutHost, mapCloseRequests, openPopoutWindow, popoutHostReady, popoutSid } from '~/popout/host.js'
+import { isTauri } from '~/utils/tauri.js'
 import { capabilities } from '~/stores/capabilities.js'
 import { historyMode, historyTick, enterHistoryMode, exitHistoryMode, seekToTick } from '~/stores/historyStore.js'
-import { widescreenMode } from '~/stores/settingsStore.js'
-import { toggleShowLog, toggleShowConsole, toggleShowMemory, showSegments, setShowSegments, showCustomUiEditor, setShowCustomUiEditor } from '~/stores/consoleStore.js'
+import { widescreenMode, showRoomDecorations } from '~/stores/settingsStore.js'
+import { showSegments, setShowSegments, showCustomUiEditor, setShowCustomUiEditor } from '~/stores/consoleStore.js'
 import { setRoomViewMode } from '~/stores/roomViewStore.js'
+import { startDecorationPlacement } from '~/stores/decorationEditStore.js'
 import { initCustomUi, disposeCustomUi } from '~/stores/customUiStore.js'
-import { route, goToUser, goToGame, goToMarket, goToRoomOverview } from '~/stores/routeStore.js'
+import { route, goToUser, goToGame, goToMarket, goToRoomOverview, goToLeaderboard, goToInventory } from '~/stores/routeStore.js'
 import { Overview } from '~/components/Overview.js'
 import { Profile } from '~/components/Profile.js'
 import { RoomOverview } from '~/components/RoomOverview.js'
 import { Messages } from '~/components/Messages.js'
 import { Market } from '~/components/market/Market.js'
+import { Leaderboard } from '~/components/leaderboard/Leaderboard.js'
+import { Inventory } from '~/components/inventory/Inventory.js'
 import { BadgePickerModal } from '~/components/BadgePickerModal.js'
 import type { Badge } from 'screeps-connectivity'
 
@@ -47,7 +52,7 @@ const DEFAULT_BADGE: Badge = { type: 1, color1: '#4a5060', color2: '#7a9ec0', co
 
 import { parseRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
-import { buildMapUrl, buildRoomUrl, buildGridUrl } from '~/utils/gameRoutes.js'
+import { buildMapUrl, buildRoomUrl, buildGridUrl, mapViewQuery, parseMapView, type MapView } from '~/utils/gameRoutes.js'
 import { isTypingTarget } from '~/utils/dom.js'
 import { LS, getStr, setStr, removeLocal, getNum, setNum } from '~/utils/storage.js'
 
@@ -74,13 +79,13 @@ function parseRoomUrl(): { room: string | null; shard: string | null; tick: numb
   return { room, shard, tick }
 }
 
-function parseMapUrl(): { shard: string | null } | null {
+function parseMapUrl(): { shard: string | null; view: MapView } | null {
   const mapPath = `${basePath()}/map`
   const path = window.location.pathname
   if (path !== mapPath && !path.startsWith(`${mapPath}/`)) return null
   const rest = path.slice(mapPath.length).replace(/^\//, '')
   const pathShard = rest ? decodeURIComponent(rest.split('/')[0]) : null
-  return { shard: pathShard ?? legacyQueryShard() }
+  return { shard: pathShard ?? legacyQueryShard(), view: parseMapView(window.location.search) }
 }
 
 function parseGridUrl(): { shard: string | null } | null {
@@ -124,17 +129,25 @@ function HeaderButton(props: {
 
 export function Dashboard() {
   const urlState = parseRoomUrl()
+  const initialMapUrl = parseMapUrl()
   const [room, setRoom] = createSignal(urlState.room ?? getStr(LS.room) ?? 'W1N1')
   const [shard, setShard] = createSignal<string | null>(urlState.shard ?? getStr(LS.shard))
   // Three peer game sub-views. 'grid' is only ever entered explicitly (via its
   // own URL or the in-room toggle), never the default landing view.
   const [viewMode, setViewMode] = createSignal<'room' | 'map' | 'grid'>(
-    parseGridUrl() !== null ? 'grid' : (parseMapUrl() !== null || !urlState.room) ? 'map' : 'room',
+    parseGridUrl() !== null ? 'grid' : (initialMapUrl !== null || !urlState.room) ? 'map' : 'room',
   )
   // Kept as a derived helper — minimizes churn in the many existing readers
   // that only ever cared about "map vs. not map".
   const mapMode = () => viewMode() === 'map'
   const gridMode = () => viewMode() === 'grid'
+
+  // Two one-way channels between the map camera and the URL, deliberately not
+  // one signal: `mapCenterPos` is URL → map (deep link, back/forward) and is only
+  // ever written from a URL read, `mapView` is map → URL. Feeding panning back
+  // into mapCenterPos would have the map fighting its own camera.
+  const [mapCenterPos, setMapCenterPos] = createSignal<{ x: number; y: number } | null>(initialMapUrl?.view.pos ?? null)
+  const [mapView, setMapView] = createSignal<MapView | null>(initialMapUrl?.view ?? null)
 
   // Server message-of-the-day, shown once over the map for guest sessions after
   // connecting. Dismissed manually or by its own timer; never re-shown afterwards.
@@ -185,7 +198,9 @@ export function Dashboard() {
   const [hoveredRoomInfo, setHoveredRoomInfo] = createSignal<RoomInfo | null>(null)
   const [selectedRoomInfo, setSelectedRoomInfo] = createSignal<RoomInfo | null>(null)
   const savedMapZoom = getStr(LS.mapZoom)
-  const [mapZoom, setMapZoom] = createSignal<number | null>(urlState.room && savedMapZoom ? Number(savedMapZoom) : null)
+  const [mapZoom, setMapZoom] = createSignal<number | null>(
+    initialMapUrl?.view.zoom ?? (urlState.room && savedMapZoom ? Number(savedMapZoom) : null),
+  )
   const [mapSubsActive, setMapSubsActive] = createSignal<boolean | null>(null)
   // Size of a history chunk, mirroring the fallback in RoomViewer (private servers
   // default to 20, the official server to 100).
@@ -230,6 +245,20 @@ export function Dashboard() {
     } else {
       history.replaceState(null, '', base)
     }
+  })
+
+  // Mirror the map camera into the URL so a view can be bookmarked or shared.
+  // Always replaceState: panning isn't navigation, and a history entry per drag
+  // would make Back useless. MapViewer only reports a settled view, so this runs
+  // once a gesture ends rather than per frame.
+  // The route check is not redundant with mapMode: an overlay route owns the URL
+  // while the map stays mounted underneath, and a settled-view event landing just
+  // after (say) the Leaderboard button was clicked would otherwise overwrite it.
+  createEffect(() => {
+    if (!mapMode() || route() !== 'game') return
+    const view = mapView()
+    if (!view?.pos) return
+    history.replaceState(null, '', buildMapUrl(shard(), view))
   })
 
   const [sidebarWidth, setSidebarWidth] = createSignal(getNum(LS.sidebarWidth, 300))
@@ -322,6 +351,10 @@ export function Dashboard() {
     }
     const mapState = parseMapUrl()
     if (mapState) {
+      // Before setViewMode, so a map mounting for this transition already sees the
+      // position it should open at.
+      setMapCenterPos(mapState.view.pos)
+      setMapView(mapState.view)
       setViewMode('map')
       if (mapState.shard !== null) setShard(mapState.shard)
       if (untrack(historyMode)) exitHistoryMode()
@@ -349,15 +382,21 @@ export function Dashboard() {
     return r
   })
 
+  // Same coordinates on the new shard — every shard shares the world grid, and
+  // dropping to the start room on a shard switch loses the spot being compared.
   const handleShardChange = (s: string) => {
     setShard(s)
     setStr(LS.shard, s)
-    history.pushState(null, '', gridMode() ? buildGridUrl(s) : buildMapUrl(s))
+    history.pushState(null, '', gridMode() ? buildGridUrl(s) : buildMapUrl(s, mapView() ?? undefined))
   }
 
   const openMap = (originRoom: string) => {
     if (untrack(historyMode)) exitHistoryMode()
     setMapOriginRoom(originRoom)
+    // The map opens on the room we came from, so any position left over from a
+    // previous visit must not reach the freshly mounted MapViewer or the URL.
+    setMapCenterPos(null)
+    setMapView(null)
     setViewMode('map')
     history.pushState(null, '', buildMapUrl(shard()))
   }
@@ -369,9 +408,56 @@ export function Dashboard() {
     history.pushState(null, '', buildGridUrl(shard()))
   }
 
+  // Serve popout windows for this session. Reactive rather than onMount: the
+  // sid needs the user id, which can arrive after the Dashboard mounts.
+  createEffect(() => {
+    const c = client()
+    const sid = popoutSid()
+    if (!c || !sid) return
+    onCleanup(initPopoutHost(c, sid, { session: () => ({ room: room(), shard: shard() }) }))
+  })
+
+  // Only one map at a time, in whichever window: entering map mode here tells a
+  // live map popout to yield. Also gated on the host being up, so a reload
+  // landing on /map still reaches a popout that survived it.
+  createEffect(() => {
+    if (mapMode() && popoutHostReady()) broadcastMapClose()
+  })
+
+  // …and the same rule in reverse: a map popout announcing itself takes the map
+  // away from this window.
+  createEffect((prev: number | undefined) => {
+    const n = mapCloseRequests()
+    if (prev !== undefined && n !== prev && untrack(mapMode)) {
+      setViewMode('room')
+      history.pushState(null, '', buildRoomUrl(untrack(room), untrack(shard)))
+    }
+    return n
+  }, undefined)
+
+  // Hand the map off to a popout window: same camera, main window drops back to
+  // the room view. Not under Tauri (its webview can't window.open), and only
+  // with a session id (logged-in user), matching the console popout gates.
+  const openMapPopout = () => {
+    const sid = popoutSid()
+    if (!sid) return
+    openPopoutWindow({
+      sid,
+      panes: ['map'],
+      shard: shard(),
+      room: room(),
+      extraQuery: mapViewQuery(mapView() ?? undefined),
+      features: 'popup,width=1280,height=800',
+    })
+    setViewMode('room')
+    history.pushState(null, '', buildRoomUrl(room(), shard()))
+  }
+
   onMount(() => {
-    // Ensure URL reflects the active view even when loaded without a path
-    if (!parseRoomUrl().room && !parseMapUrl() && !parseGridUrl()) {
+    // Ensure URL reflects the active view even when loaded without a path.
+    // Only when the game view is the active one: an overlay route (deep link to
+    // /leaderboard, /market, /profile, …) owns the URL and must not be clobbered.
+    if (route() === 'game' && !parseRoomUrl().room && !parseMapUrl() && !parseGridUrl()) {
       history.replaceState(null, '', buildMapUrl(shard()))
     }
 
@@ -388,20 +474,12 @@ export function Dashboard() {
         setShowSettings(false)
         return
       }
-      if (e.key === 'l' || e.key === 'L') {
-        toggleShowLog()
-      }
-      if (e.key === 'c' || e.key === 'C') {
-        toggleShowConsole()
-      }
-      if (e.key === 'y' || e.key === 'Y') {
-        toggleShowMemory()
-      }
       if (viewMode() === 'room') {
         if (e.key === '1') setRoomViewMode('view')
         if (!isGuest()) {
           if (e.key === '2') setRoomViewMode('flag')
           if (e.key === '3') setRoomViewMode('build')
+          if (e.key === '4' && capabilities().hasInventory && showRoomDecorations()) startDecorationPlacement()
         }
         if (e.key === 'm') openMap(room())
         if (e.key === 'g') openGrid(room())
@@ -450,15 +528,39 @@ export function Dashboard() {
             shard={shard()}
             originRoom={mapOriginRoom()}
             initialZoom={mapZoom() ?? undefined}
+            centerPos={mapCenterPos() ?? undefined}
             onNavigateToRoom={(r) => handleNavigate(r, shard())}
             onHoveredRoomChanged={setHoveredRoomInfo}
             onSelectedRoomChanged={setSelectedRoomInfo}
+            onCenterChanged={(pos) => setMapView({ pos, zoom: untrack(mapZoom) })}
             onZoomChanged={(z) => {
               setMapZoom(z)
               setNum(LS.mapZoom, z)
             }}
             onSubscriptionStateChanged={setMapSubsActive}
           />
+          <Show when={!isTauri() && popoutSid()}>
+            <button
+              onClick={openMapPopout}
+              title="Open map in a separate window"
+              style={{
+                position: 'absolute',
+                top: '8px',
+                left: '8px',
+                'z-index': 5,
+                padding: '12px',
+                'border-radius': '6px',
+                border: '1px solid #30363d',
+                background: 'rgba(33,38,45,0.85)',
+                color: '#c9d1d9',
+                cursor: 'pointer',
+                display: 'flex',
+                'align-items': 'center',
+              }}
+            >
+              <ExternalLink size={24} />
+            </button>
+          </Show>
         </Match>
         <Match when={viewMode() === 'grid'}>
           <MultiRoomViewer
@@ -683,6 +785,23 @@ export function Dashboard() {
             <Store size={16} />
           </HeaderButton>
         </Show>
+        <Show when={!isGuest() && capabilities().hasInventory}>
+          <HeaderButton
+            title={route() === 'inventory' ? 'Close Inventory' : 'Inventory'}
+            active={route() === 'inventory'}
+            onClick={() => route() === 'inventory' ? goToGame() : goToInventory()}
+          >
+            <Package size={16} />
+          </HeaderButton>
+        </Show>
+        {/* Rankings are public, so guests get this one too. */}
+        <HeaderButton
+          title={route() === 'leaderboard' ? 'Close Leaderboard' : 'Leaderboard'}
+          active={route() === 'leaderboard'}
+          onClick={() => route() === 'leaderboard' ? goToGame() : goToLeaderboard()}
+        >
+          <Trophy size={16} />
+        </HeaderButton>
         <Show when={!isGuest()}>
           <HeaderButton title="Code Editor" active={showCode()} onClick={() => { if (route() !== 'game') goToGame(); setShowCode((v) => !v); setShowSettings(false) }}>
             <Code2 size={16} />
@@ -746,12 +865,14 @@ export function Dashboard() {
             {sidebarArea(false)}
           </div>
         </Show>
-        <Show when={route() === 'user' || route() === 'profile' || route() === 'messages' || route() === 'market' || route() === 'room-overview' || showSettings()}>
+        <Show when={route() === 'user' || route() === 'profile' || route() === 'messages' || route() === 'market' || route() === 'room-overview' || route() === 'leaderboard' || route() === 'inventory' || showSettings()}>
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, 'z-index': 10, overflow: 'hidden' }}>
             <Show when={route() === 'user'}><Overview /></Show>
             <Show when={route() === 'profile'}><Profile /></Show>
             <Show when={route() === 'messages'}><Messages /></Show>
             <Show when={route() === 'market'}><Market /></Show>
+            <Show when={route() === 'leaderboard'}><Leaderboard /></Show>
+            <Show when={route() === 'inventory'}><Inventory /></Show>
             <Show when={route() === 'room-overview'}><RoomOverview /></Show>
             <Show when={showSettings()}><SettingsPanel onClose={() => setShowSettings(false)} /></Show>
           </div>

@@ -1,7 +1,8 @@
-import { createEffect, createSignal, onCleanup, onMount, untrack, Show } from 'solid-js'
-import { RoomRenderer, Z } from '~/renderer/RoomRenderer.js'
-import { createTerrainLayer, setTerrainEffectsVisible, rebakeWallNoise } from '~/renderer/TerrainLayer.js'
-import { parseRoomDecorations, type RoomDecoration } from '~/renderer/roomDecorations.js'
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, Show } from 'solid-js'
+import { RoomRenderer, TILE_SIZE, Z } from '~/renderer/RoomRenderer.js'
+import { createTerrainLayer, setTerrainEffectsVisible, type TerrainDecoration } from '~/renderer/TerrainLayer.js'
+import { parseRoomDecorations, mergeDecorationItems, type RoomDecoration } from '~/renderer/roomDecorations.js'
+import { DecorationLayer } from '~/renderer/DecorationLayer.js'
 import { OBJ_ROAD, ST_DARK } from '~/renderer/colors.js'
 import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
@@ -11,17 +12,28 @@ import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBound
 import { showCreepLabels, terrainEffects, showRoomVisuals, showRoomDecorations, roomDarkOverlay, smoothAnimations } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff, updateSelectionFromObjects, createSelectedObject } from '~/stores/selectionStore.js'
 import { addToast } from '~/stores/toastStore.js'
-import { setRoomObjectCount, setRoomOwner, setControllerLevel, setControllerProgress, setControllerReservation, setStructureCounts, setRoomUsers, roomUsers, setCurrentShard, setCurrentRoom } from '~/stores/roomDataStore.js'
+import { setRoomObjectCount, setRoomOwner, setControllerLevel, setControllerProgress, setControllerReservation, setStructureCounts, setRoomUsers, roomUsers, setCurrentShard, setCurrentRoom, setRoomDecorationItems, decorationsRevision } from '~/stores/roomDataStore.js'
+import {
+  decorateHint, decorationDraft, decorationPreviewItem, draftBounds, draftCapabilities,
+  draftHasFrame, draftPlacement, setDraftPlacement,
+} from '~/stores/decorationEditStore.js'
+import { PlacementFrame } from '~/components/inventory/PlacementFrame.js'
+import { AMBER } from '~/components/theme.js'
 import { parseRoomName, formatRoomName, isRoomInWorld } from '~/utils/roomName.js'
 import { useRoomNavigationKeys } from '~/utils/useRoomNavigationKeys.js'
-import type { Badge, RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
+import type { ApiRoomDecorationItem, Badge, RoomTerrain, RoomObjectMap, RoomObjectDiff } from 'screeps-connectivity'
 import { SubscriptionGroup } from 'screeps-connectivity'
-import { historyMode, historyTick, historyMinTick, historyMaxTick, setHistoryMaxTick, historyLoading, setHistoryLoading, seekToTick, playbackSpeed, isPlaying, pausePlayback } from '~/stores/historyStore.js'
+import { historyMode, historyTick, historyMinTick, historyMaxTick, setHistoryMaxTick, historyLoading, setHistoryLoading, seekToTick, playbackSpeed, isPlaying, pausePlayback, historyTimestamp, setHistoryTimestamp } from '~/stores/historyStore.js'
 import { HistoryPlayer, HistoryUnavailableError } from '~/stores/HistoryPlayer.js'
 import {flagDraft, roomViewMode, FLAG_COLOR_MAP, pendingTile, setPendingTile, clearPendingTile, setFlagDraft, modeHint, overlayAction, setOverlayAction, clearOverlayAction, buildDraft, confirmBuild, resetRoomViewMode, resetRoomViewModeOnNavigate} from '~/stores/roomViewStore';
 import { createLogger } from '~/utils/log.js'
 
 const { log, error } = createLogger('room')
+
+// How long the first terrain draw waits for the decoration read of a room change. Long
+// enough for the round trip on a healthy server, short enough that a hanging request only
+// costs a beat of empty room before the plain terrain goes up anyway.
+const DECORATION_WAIT_MS = 500
 
 // After creating a flag the server needs a moment to register it, so an
 // immediate gen-unique-flag-name can still return the name we just used.
@@ -29,17 +41,31 @@ const { log, error } = createLogger('room')
 function regenerateUniqueFlagName(
   c: NonNullable<ReturnType<typeof client>>,
   usedName: string,
+  shard: string | null,
   retries = 4,
 ): void {
-  c.http.game.genUniqueFlagName()
+  c.http.game.genUniqueFlagName(shard)
     .then((res) => {
       if (res.name === usedName && retries > 0) {
-        setTimeout(() => regenerateUniqueFlagName(c, usedName, retries - 1), 200)
+        setTimeout(() => regenerateUniqueFlagName(c, usedName, shard, retries - 1), 200)
         return
       }
       setFlagDraft((prev) => ({ ...prev, name: res.name }))
     })
     .catch((err) => error('gen unique flag name failed:', err))
+}
+
+/** Decorate mode's hint, which depends on the draft rather than the mode alone. */
+function DecorateHint() {
+  return (
+    <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px', 'text-align': 'center' }}>
+      <span>{decorateHint().primary}</span>
+      <Show when={decorateHint().note}>
+        {(note) => <span style={{ color: AMBER }}>{note()}</span>}
+      </Show>
+      <span style={{ opacity: '0.6', 'font-size': '0.9em' }}>{decorateHint().secondary}</span>
+    </div>
+  )
 }
 
 interface RoomViewerProps {
@@ -50,13 +76,58 @@ interface RoomViewerProps {
 
 export function RoomViewer(props: RoomViewerProps) {
   let containerRef: HTMLDivElement | undefined
+  // The renderer signal is still null while PixiJS initialises, so onCleanup cannot
+  // reach an Application whose create() resolves after unmount — this flag lets
+  // onMount destroy it instead of leaking a WebGL context.
+  let disposed = false
   let objLayer: ObjectLayer | null = null
   let animLayer: ActionAnimationLayer | null = null
   let visualLayer: VisualLayer | null = null
   let terrainLayerRef: ReturnType<typeof createTerrainLayer> | null = null
+  let decorationLayerRef: DecorationLayer | null = null
+  // Fingerprint of the TerrainDecoration the live terrain layer was built from. Terrain
+  // and decorations arrive over separate requests, so a room is normally drawn once plain
+  // and then again decorated — and for the many rooms with no landscape the second build
+  // is byte-identical, a visible flash for nothing. Comparing lets that case skip it.
+  let terrainDecorationKey: string | null = null
+  const terrainKey = (d?: TerrainDecoration) => JSON.stringify(d ?? null)
   const [renderer, setRenderer] = createSignal<RoomRenderer | null>(null)
   const [terrain, setTerrain] = createSignal<{ room: string, data: RoomTerrain } | null>(null)
-  const [roomDecoration, setRoomDecoration] = createSignal<{ room: string; decoration: RoomDecoration } | null>(null)
+  // Raw items are kept so socket updates can be merged into them by `_id`; the parsed
+  // form every layer consumes is derived from that.
+  const [decorationItems, setDecorationItems] = createSignal<{ room: string; items: readonly ApiRoomDecorationItem[] } | null>(null)
+  // Terrain comes out of a cache and lands almost instantly, while decorations always cost
+  // an HTTP round trip — so a decorated room would be painted plain and repainted a moment
+  // later, the flash on every room change. Holding the *first* terrain draw of a room until
+  // its decoration read has settled (or the deadline above passed) collapses the two paints
+  // into one. Later arrivals — a socket tick, a colour edit — still rebuild as before.
+  const [decorationsSettled, setDecorationsSettled] = createSignal<string | null>(null)
+  const terrainReady = () => !showRoomDecorations() || decorationsSettled() === props.room
+  // Items that arrived over the socket while an HTTP read was in flight. Only those are
+  // layered back on top of the response — carrying every earlier socket item over would
+  // keep a decoration that has since been taken down alive until the next room change.
+  let socketItemsSinceFetch: ApiRoomDecorationItem[] = []
+  // The draft changes on every pointer move, but its geometry is pinned, so most of those
+  // changes are no-ops here. Comparing by content keeps the decoration memo — and with it
+  // the layer rebuild — off the drag path entirely.
+  const decorationPreview = createMemo(decorationPreviewItem, undefined, {
+    equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+  })
+  const roomDecoration = createMemo<{ room: string; decoration: RoomDecoration } | null>(() => {
+    const raw = decorationItems()
+    if (!raw) return null
+    // While a decoration is being edited in this room, the draft stands in for the stored
+    // item — that is what makes a colour or animation change show up live. Its geometry
+    // is pinned (see `decorationPreviewItem`) and pushed to the layer separately.
+    const preview = raw.room === props.room ? decorationPreview() : null
+    const items = preview ? mergeDecorationItems(raw.items, [preview]) : raw.items
+    return { room: raw.room, decoration: parseRoomDecorations(items) }
+  })
+  // Publish the raw items for the sidebar and the creep properties panel.
+  createEffect(() => {
+    const raw = decorationItems()
+    setRoomDecorationItems(raw?.room === props.room ? raw.items : [])
+  })
   const [objectState, setObjectState] = createSignal<{ objects: RoomObjectMap, diff?: RoomObjectDiff, users?: Record<string, { _id: string; username: string; badge?: Badge }> } | null>(null)
   const [visualState, setVisualState] = createSignal<string>('')
   // Set when the current history tick has no data on the server (404). Shows a
@@ -70,22 +141,21 @@ export function RoomViewer(props: RoomViewerProps) {
   onMount(async () => {
     if (!containerRef) return
     const r = await RoomRenderer.create(containerRef)
-    // The terrain layer's wall-noise sprite and the visual layer's canvas texture are
-    // both GPU-only content owned here (not inside RoomRenderer) — see ContextRecovery
-    // for why they don't self-heal from a WebGL context loss and need an explicit repaint.
-    // eslint-disable-next-line solid/reactivity -- fires later, off a WebGL event, not during render
+    if (disposed) {
+      r.destroy()
+      return
+    }
+    // The visual layer's canvas texture is GPU-only content owned here (not inside
+    // RoomRenderer) — see ContextRecovery for why it doesn't self-heal from a WebGL
+    // context loss and needs an explicit repaint.
     r.onContextRestored(() => {
-      const t = untrack(terrain)
-      if (terrainLayerRef && t && t.room === props.room) {
-        const dec = untrack(roomDecoration)
-        rebakeWallNoise(terrainLayerRef, t.data, r.app.renderer, dec?.room === props.room ? dec.decoration.terrain : undefined)
-      }
       visualLayer?.refresh()
     })
     setRenderer(r)
   })
 
   onCleanup(() => {
+    disposed = true
     if (seekDebounceTimer !== null) clearTimeout(seekDebounceTimer)
     objLayer?.destroy()
     objLayer = null
@@ -93,6 +163,8 @@ export function RoomViewer(props: RoomViewerProps) {
     animLayer = null
     visualLayer?.destroy()
     visualLayer = null
+    decorationLayerRef?.destroy()
+    decorationLayerRef = null
     const r = renderer()
     if (r) r.destroy()
   })
@@ -109,7 +181,8 @@ export function RoomViewer(props: RoomViewerProps) {
     const shard = props.shard
 
     setTerrain(null)
-    setRoomDecoration(null)
+    setDecorationItems(null)
+    setDecorationsSettled(null)
     setCurrentRoom(room)
     setCurrentShard(shard)
 
@@ -123,18 +196,79 @@ export function RoomViewer(props: RoomViewerProps) {
       })
       .catch((err) => { if (!cancelled) error(`terrain load failed for ${room}:`, err) })
 
-    if (untrack(showRoomDecorations)) {
-      c.http.game.roomDecorations(room, shard)
-        .then((resp) => {
-          if (!cancelled) {
-            log(`decorations loaded — ${room}: ${resp.decorations.length} item(s)`)
-            setRoomDecoration({ room, decoration: parseRoomDecorations(resp) })
-          }
-        })
-        .catch((err) => { if (!cancelled) log(`no decorations for ${room}: ${err}`) })
-    }
-
     onCleanup(() => { cancelled = true })
+  })
+
+  // Decorations are fetched in their own effect so that switching the setting back on
+  // re-fetches immediately instead of waiting for the next room change.
+  createEffect(() => {
+    const c = client()
+    if (!c || !showRoomDecorations()) return
+
+    const room = props.room
+    const shard = props.shard
+    // Re-read after this client placed or removed a decoration. The room socket only
+    // carries decorations when the server volunteers them, so an activation made from
+    // the inventory would otherwise stay invisible until the room was reloaded.
+    void decorationsRevision()
+
+    let cancelled = false
+    socketItemsSinceFetch = []
+    // Settling releases the terrain draw, so it has to happen on every outcome — response,
+    // failure, or a server that simply takes too long.
+    const settle = () => setDecorationsSettled(room)
+    const deadline = setTimeout(settle, DECORATION_WAIT_MS)
+    c.http.game.roomDecorations(room, shard)
+      .then((resp) => {
+        if (!cancelled) {
+          log(`decorations loaded — ${room}: ${resp.decorations.length} item(s)`)
+          // The response is authoritative, so removals take effect; a room tick that
+          // landed while it was in flight is layered back on top rather than dropped.
+          const items = mergeDecorationItems(resp.decorations, socketItemsSinceFetch)
+          socketItemsSinceFetch = []
+          // One batch: the terrain draw waits on the settle and must see the items.
+          batch(() => {
+            setDecorationItems({ room, items })
+            settle()
+          })
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          log(`no decorations for ${room}: ${err}`)
+          settle()
+        }
+      })
+
+    onCleanup(() => {
+      cancelled = true
+      clearTimeout(deadline)
+    })
+  })
+
+  // Room ticks can carry decoration changes. Merge them into whatever the HTTP fetch
+  // returned; the merge keeps the previous array when nothing actually differs, so a
+  // server that repeats the payload every tick doesn't rebuild the layer.
+  createEffect(() => {
+    const c = client()
+    if (!c || !showRoomDecorations()) return
+
+    const room = props.room
+    const shard = props.shard
+
+    const sub = c.stores.room.on('room:decorations', (data) => {
+      if (data.room !== room || data.shard !== shard) return
+      socketItemsSinceFetch.push(...data.decorations)
+      setDecorationItems((prev) => {
+        const current = prev?.room === room ? prev.items : []
+        const merged = mergeDecorationItems(current, data.decorations)
+        if (prev?.room === room && merged === current) return prev
+        log(`decorations updated via socket — ${room}: ${merged.length} item(s)`)
+        return { room, items: merged }
+      })
+    })
+
+    onCleanup(() => sub.dispose())
   })
 
   // Subscribe to room data as soon as client is ready (no renderer dependency to avoid
@@ -147,17 +281,19 @@ export function RoomViewer(props: RoomViewerProps) {
     const shard = props.shard
 
     log(`navigate → ${room} (shard=${shard ?? 'default'})`)
-    setObjectState(null)
-    setVisualState('')
-    setGameTime(null)
-    clearSelection()
-    setRoomObjectCount(null)
-    setRoomOwner(null)
-    setControllerLevel(null)
-    setControllerProgress(null)
-    setControllerReservation(null)
-    setStructureCounts({})
-    setRoomUsers(null)
+    batch(() => {
+      setObjectState(null)
+      setVisualState('')
+      setGameTime(null)
+      clearSelection()
+      setRoomObjectCount(null)
+      setRoomOwner(null)
+      setControllerLevel(null)
+      setControllerProgress(null)
+      setControllerReservation(null)
+      setStructureCounts({})
+      setRoomUsers(null)
+    })
 
     const group = new SubscriptionGroup()
 
@@ -210,17 +346,21 @@ export function RoomViewer(props: RoomViewerProps) {
       if (!data.diff) {
         log(`objects loaded — ${room}: ${objectCount} objects, tick=${data.gameTime}`)
       }
-      setObjectState({ objects: data.objects, diff: data.diff, users: data.users })
-      setVisualState(data.visual)
-      setGameTime(data.gameTime ?? null)
-      recordGameTime(data.gameTime)
-      setRoomObjectCount(objectCount)
-      setRoomOwner(owner)
-      setControllerLevel(ctrlLevel || null)
-      setControllerProgress(ctrlProgress)
-      setControllerReservation(reservation)
-      setStructureCounts(structCounts)
-      setRoomUsers(data.users ?? null)
+      // One batch per tick: the render effect tracks several of these signals and must
+      // run once per update, not once per setter.
+      batch(() => {
+        setObjectState({ objects: data.objects, diff: data.diff, users: data.users })
+        setVisualState(data.visual)
+        setGameTime(data.gameTime ?? null)
+        recordGameTime(data.gameTime)
+        setRoomObjectCount(objectCount)
+        setRoomOwner(owner)
+        setControllerLevel(ctrlLevel || null)
+        setControllerProgress(ctrlProgress)
+        setControllerReservation(reservation)
+        setStructureCounts(structCounts)
+        setRoomUsers(data.users ?? null)
+      })
     }))
 
     onCleanup(() => {
@@ -260,9 +400,6 @@ export function RoomViewer(props: RoomViewerProps) {
             seekToTick(state.clampedTo)
             return
           }
-          setObjectState({ objects: state.objects, diff: undefined, users: cachedUsers })
-          setGameTime(state.gameTime)
-
           let objectCount = 0
           const structCounts: Record<string, number> = {}
           let ctrlLevel = 0
@@ -300,12 +437,18 @@ export function RoomViewer(props: RoomViewerProps) {
             }
           }
 
-          setRoomObjectCount(objectCount)
-          setRoomOwner(owner)
-          setControllerLevel(ctrlLevel || null)
-          setControllerProgress(ctrlProgress)
-          setControllerReservation(reservation)
-          setStructureCounts(structCounts)
+          // Mirrors the live path: one batch per tick so the render effect runs once.
+          batch(() => {
+            setObjectState({ objects: state.objects, diff: undefined, users: cachedUsers })
+            setGameTime(state.gameTime)
+            setHistoryTimestamp(state.timestamp)
+            setRoomObjectCount(objectCount)
+            setRoomOwner(owner)
+            setControllerLevel(ctrlLevel || null)
+            setControllerProgress(ctrlProgress)
+            setControllerReservation(reservation)
+            setStructureCounts(structCounts)
+          })
         })
         .catch((err: Error) => {
           if (cancelled) return
@@ -313,6 +456,7 @@ export function RoomViewer(props: RoomViewerProps) {
           // No data for this tick (404): show an in-room hint instead of a failure toast.
           if (err instanceof HistoryUnavailableError) {
             setHistoryNoData(true)
+            setHistoryTimestamp(undefined)
             // While playing, don't re-fetch the same missing chunk file on every tick —
             // skip to the start of the next chunk in one hop. Stop if there's none left.
             if (isPlaying()) {
@@ -336,6 +480,34 @@ export function RoomViewer(props: RoomViewerProps) {
     onCleanup(() => setHistoryNoData(false))
   })
 
+  // Shared by the clear-effect (room change) and the worldBounds effect below, so the
+  // arrow zones always reflect both the current room and the known world bounds.
+  const wireNavZones = (
+    r: RoomRenderer,
+    room: string,
+    shard: string | null,
+    nav: RoomViewerProps['onNavigate'],
+    bounds: ReturnType<typeof worldBounds>,
+  ): void => {
+    const coord = parseRoomName(room)
+    if (!coord || !nav) return
+
+    const canNavigate = (tx: number, ty: number) =>
+      !bounds || isRoomInWorld(tx, ty, bounds)
+
+    const navTo = (target: string) => {
+      log(`navigate requested: ${room} → ${target}`)
+      nav(target, shard)
+    }
+
+    r.setupNavigationZones({
+      west:  canNavigate(coord.x - 1, coord.y) ? () => navTo(formatRoomName(coord.x - 1, coord.y)) : undefined,
+      east:  canNavigate(coord.x + 1, coord.y) ? () => navTo(formatRoomName(coord.x + 1, coord.y)) : undefined,
+      north: canNavigate(coord.x, coord.y - 1) ? () => navTo(formatRoomName(coord.x, coord.y - 1)) : undefined,
+      south: canNavigate(coord.x, coord.y + 1) ? () => navTo(formatRoomName(coord.x, coord.y + 1)) : undefined,
+    })
+  }
+
   // Clear and reset when renderer or room changes (worldBounds intentionally NOT tracked here
   // — it arriving after login must not re-clear the scene and lose the terrain layer)
   createEffect(() => {
@@ -358,6 +530,7 @@ export function RoomViewer(props: RoomViewerProps) {
 
     terrainLayerRef?.destroy()
     terrainLayerRef = null
+    terrainDecorationKey = null
     r.clear()
     r.resetView()
     objLayer?.destroy()
@@ -367,42 +540,24 @@ export function RoomViewer(props: RoomViewerProps) {
     visualLayer?.destroy()
     visualLayer = null
 
-    // Apply terrain immediately if it arrived before this clear ran
+    // Apply terrain immediately if it arrived before this clear ran — unless the room's
+    // decorations are still outstanding, in which case the apply effect below draws it
+    // once they settle. untracked: this effect must not re-clear the scene on that.
     const t = untrack(terrain)
-    if (t && t.room === props.room) {
+    if (t && t.room === props.room && untrack(terrainReady)) {
       log(`terrain applied immediately (pre-loaded) — ${props.room}`)
       const dec = untrack(roomDecoration)
-      terrainLayerRef = createTerrainLayer(t.data, r.app.renderer, dec?.room === props.room ? dec.decoration.terrain : undefined)
+      const terrainDec = dec?.room === props.room ? dec.decoration.terrain : undefined
+      terrainLayerRef = createTerrainLayer(t.data, terrainDec, r.lighting)
+      terrainDecorationKey = terrainKey(terrainDec)
       setTerrainEffectsVisible(terrainLayerRef, untrack(terrainEffects))
       terrainLayerRef.zIndex = Z.terrain
-      r.world.addChild(terrainLayerRef)
-      r.bringNavOverlayToTop()
-    }
+      r.world.addChild(terrainLayerRef)    }
 
     // Re-create navigation zones immediately after clear so arrows are never missing
-    // after a room change. We untrack worldBounds/onNavigate so this effect only runs
+    // after a room change. worldBounds/onNavigate are untracked so this effect only runs
     // when room/shard/renderer changes (matching the clear trigger).
-    const room = props.room
-    const shard = props.shard
-    const coord = parseRoomName(room)
-    const nav = untrack(() => props.onNavigate)
-    const bounds = untrack(worldBounds)
-    if (coord && nav) {
-      const canNavigate = (tx: number, ty: number) =>
-        !bounds || isRoomInWorld(tx, ty, bounds)
-
-      const navTo = (target: string) => {
-        log(`navigate requested: ${room} → ${target}`)
-        nav(target, shard)
-      }
-
-      r.setupNavigationZones({
-        west:  canNavigate(coord.x - 1, coord.y) ? () => navTo(formatRoomName(coord.x - 1, coord.y)) : undefined,
-        east:  canNavigate(coord.x + 1, coord.y) ? () => navTo(formatRoomName(coord.x + 1, coord.y)) : undefined,
-        north: canNavigate(coord.x, coord.y - 1) ? () => navTo(formatRoomName(coord.x, coord.y - 1)) : undefined,
-        south: canNavigate(coord.x, coord.y + 1) ? () => navTo(formatRoomName(coord.x, coord.y + 1)) : undefined,
-      })
-    }
+    wireNavZones(r, props.room, props.shard, untrack(() => props.onNavigate), untrack(worldBounds))
   })
 
   // Setup navigation zones — separate effect so worldBounds / onNavigate updates
@@ -415,32 +570,19 @@ export function RoomViewer(props: RoomViewerProps) {
 
     const room = untrack(() => props.room)
     const shard = untrack(() => props.shard)
-    const coord = parseRoomName(room)
+    const nav = props.onNavigate
+    if (!nav || !parseRoomName(room)) return
 
-    if (coord && props.onNavigate) {
-      const nav = props.onNavigate
-      const bounds = worldBounds()
-      const canNavigate = (tx: number, ty: number) =>
-        !bounds || isRoomInWorld(tx, ty, bounds)
+    useRoomNavigationKeys({
+      currentRoom: () => props.room,
+      worldBounds,
+      onMove: (rx, ry) => {
+        log(`navigate requested: ${props.room} → ${formatRoomName(rx, ry)}`)
+        nav(formatRoomName(rx, ry), shard)
+      },
+    })
 
-      const navTo = (target: string) => {
-        log(`navigate requested: ${room} → ${target}`)
-        nav(target, shard)
-      }
-
-      useRoomNavigationKeys({
-        currentRoom: () => props.room,
-        worldBounds,
-        onMove: (rx, ry) => navTo(formatRoomName(rx, ry)),
-      })
-
-      r.setupNavigationZones({
-        west:  canNavigate(coord.x - 1, coord.y) ? () => navTo(formatRoomName(coord.x - 1, coord.y)) : undefined,
-        east:  canNavigate(coord.x + 1, coord.y) ? () => navTo(formatRoomName(coord.x + 1, coord.y)) : undefined,
-        north: canNavigate(coord.x, coord.y - 1) ? () => navTo(formatRoomName(coord.x, coord.y - 1)) : undefined,
-        south: canNavigate(coord.x, coord.y + 1) ? () => navTo(formatRoomName(coord.x, coord.y + 1)) : undefined,
-      })
-    }
+    wireNavZones(r, room, shard, nav, worldBounds())
   })
 
   // Clear pending marker when switching back to view mode
@@ -475,29 +617,34 @@ export function RoomViewer(props: RoomViewerProps) {
       log(`terrain already in scene, skipping — ${props.room}`)
       return
     }
+    // Tracked: settling the decoration read re-runs this effect and draws the room once,
+    // already decorated, instead of painting it plain and rebuilding a moment later.
+    if (!terrainReady()) return
     log(`terrain applied (async) — ${props.room}`)
     const dec = untrack(roomDecoration)
-    terrainLayerRef = createTerrainLayer(t.data, r.app.renderer, dec?.room === props.room ? dec.decoration.terrain : undefined)
+    const terrainDec = dec?.room === props.room ? dec.decoration.terrain : undefined
+    terrainLayerRef = createTerrainLayer(t.data, terrainDec, r.lighting)
+    terrainDecorationKey = terrainKey(terrainDec)
     setTerrainEffectsVisible(terrainLayerRef, untrack(terrainEffects))
     r.world.addChildAt(terrainLayerRef, 0)
-    r.bringNavOverlayToTop()
   })
 
   // Clear decorations when the setting is turned off
   createEffect(() => {
     if (showRoomDecorations()) return
-    setRoomDecoration(null)
+    setDecorationItems(null)
     const r = untrack(renderer)
     const t = untrack(terrain)
     if (!r || !t || t.room !== props.room) return
     if (!terrainLayerRef?.parent) return
     terrainLayerRef.destroy()
-    terrainLayerRef = createTerrainLayer(t.data, r.app.renderer)
+    terrainLayerRef = createTerrainLayer(t.data, undefined, r.lighting)
+    terrainDecorationKey = terrainKey(undefined)
     setTerrainEffectsVisible(terrainLayerRef, untrack(terrainEffects))
     r.world.addChildAt(terrainLayerRef, 0)
-    r.bringNavOverlayToTop()
     objLayer?.setRoadColor(OBJ_ROAD)
     objLayer?.setWallColor(ST_DARK)
+    objLayer?.setDecorations([], [])
   })
 
   // Re-apply terrain colors when decoration arrives after terrain (common async case)
@@ -509,19 +656,87 @@ export function RoomViewer(props: RoomViewerProps) {
     if (!t || t.room !== props.room) return
     if (!terrainLayerRef?.parent) return
 
-    log(`decoration arrived, rebuilding terrain layer — ${props.room}`)
-    terrainLayerRef.destroy()
-    terrainLayerRef = createTerrainLayer(t.data, r.app.renderer, dec.decoration.terrain)
-    setTerrainEffectsVisible(terrainLayerRef, untrack(terrainEffects))
-    r.world.addChildAt(terrainLayerRef, 0)
-    r.bringNavOverlayToTop()
-
+    // Only the terrain half of the decoration is baked into the layer; road and object
+    // colours below are applied live, so an unchanged landscape needs no rebuild at all.
+    if (terrainDecorationKey !== terrainKey(dec.decoration.terrain)) {
+      log(`decoration arrived, rebuilding terrain layer — ${props.room}`)
+      terrainLayerRef.destroy()
+      terrainLayerRef = createTerrainLayer(t.data, dec.decoration.terrain, r.lighting)
+      terrainDecorationKey = terrainKey(dec.decoration.terrain)
+      setTerrainEffectsVisible(terrainLayerRef, untrack(terrainEffects))
+      r.world.addChildAt(terrainLayerRef, 0)
+    }
     if (objLayer && dec.decoration.roadColor != null) {
       objLayer.setRoadColor(dec.decoration.roadColor)
     }
     if (objLayer && dec.decoration.terrain?.wallFillColor != null) {
       objLayer.setWallColor(dec.decoration.terrain.wallFillColor)
     }
+    // Creep and object overlays hang off the individual object visuals, so the
+    // ObjectLayer owns them rather than a layer of our own.
+    objLayer?.setDecorations(dec.decoration.creeps, dec.decoration.objects)
+  })
+
+  // Graffiti overlay. Rebuilt whenever the decorations or the terrain change — the
+  // layer masks itself against the terrain, so it needs both.
+  createEffect(() => {
+    const r = renderer()
+    const dec = roomDecoration()
+    const t = terrain()
+
+    decorationLayerRef?.destroy()
+    decorationLayerRef = null
+
+    if (!r || !t || t.room !== props.room) return
+    if (!dec || dec.room !== props.room || dec.decoration.graffiti.length === 0) return
+
+    log(`graffiti — ${props.room}: ${dec.decoration.graffiti.length} item(s)`)
+    decorationLayerRef = new DecorationLayer(dec.decoration.graffiti, t.data, r.app.ticker)
+    r.world.addChild(decorationLayerRef.base)
+
+    // A rebuild — a colour edit, a tick carrying decorations — starts from the stored
+    // placement, so an in-progress drag has to be put back on top of it.
+    const draft = untrack(decorationDraft)
+    const placement = untrack(draftPlacement)
+    if (draft && placement) decorationLayerRef.setTransform(draft.id, placement)
+  })
+
+  // ── In-room decoration editing ──────────────────────────────────────────────────
+  // The frame and its handles are HTML drawn over the canvas, so they need the world
+  // transform to be readable and to hold still. Locking the camera gives both, and a
+  // fully zoomed-out room is what makes a decoration reachable without panning.
+  const [viewTransform, setViewTransform] = createSignal({ x: 0, y: 0, scale: 1 })
+  // A plain boolean, so a drag — which replaces the draft on every pointer move — does
+  // not re-run the camera wiring underneath it. The camera parks as soon as the mode is
+  // entered, before anything is picked: choosing what to place means looking at the room.
+  const decorating = createMemo(() => roomViewMode() === 'decorate')
+
+  createEffect(() => {
+    const r = renderer()
+    if (!r) return
+
+    const editing = decorating()
+    r.setCameraLocked(editing)
+    if (!editing) {
+      r.setViewChangeHandler(null)
+      return
+    }
+
+    const sync = () => setViewTransform(r.viewTransform)
+    r.setViewChangeHandler(sync)
+    sync()
+    onCleanup(() => r.setViewChangeHandler(null))
+  })
+
+  const hint = () => roomViewMode() === 'decorate' ? <DecorateHint /> : modeHint()
+
+  // Dragging never rebuilds the decoration layer: the placement goes straight to the
+  // sprites, so the wall-masked artwork follows the frame at pointer speed.
+  createEffect(() => {
+    const draft = decorationDraft()
+    const placement = draftPlacement()
+    if (!decorationLayerRef || !draft || !placement) return
+    decorationLayerRef.setTransform(draft.id, placement)
   })
 
   // Render objects when they update
@@ -557,11 +772,15 @@ export function RoomViewer(props: RoomViewerProps) {
       if (dec?.room === props.room) {
         if (dec.decoration.roadColor != null) objLayer.setRoadColor(dec.decoration.roadColor)
         if (dec.decoration.terrain?.wallFillColor != null) objLayer.setWallColor(dec.decoration.terrain.wallFillColor)
+        objLayer.setDecorations(dec.decoration.creeps, dec.decoration.objects)
       }
       objLayer.setLightingLayer(r.lighting)
       objLayer.container.label = 'objects'
       objLayer.container.zIndex = Z.objects
       r.world.addChild(objLayer.container)
+      objLayer.rampartLayer.label = 'rampartGlow'
+      objLayer.rampartLayer.zIndex = Z.rampartGlow
+      r.world.addChild(objLayer.rampartLayer)
 
       animLayer = new ActionAnimationLayer(r.app.ticker)
       animLayer.container.label = 'animations'
@@ -585,13 +804,17 @@ export function RoomViewer(props: RoomViewerProps) {
             const currentShard = props.shard
             const mode = roomViewMode()
 
+            // Decorate mode owns the canvas: the frame handles the gesture, and a click
+            // beside it must not start changing the selection behind the editor.
+            if (mode === 'decorate') return
+
             const overlay = overlayAction()
 
             if (overlay?.type === 'moveFlag') {
               const c = client()
               if (!c) return
 
-              const { name, room: flagRoom, color, secondaryColor, targetRoom } = overlay
+              const { name, room: flagRoom, x: fromX, y: fromY, color, secondaryColor, targetRoom } = overlay
               c.http.game.removeFlag(flagRoom, name, currentShard ?? undefined)
                 .then(() => {
                   return c.http.game.createFlag(
@@ -604,8 +827,14 @@ export function RoomViewer(props: RoomViewerProps) {
                 })
                 .catch((err) => {
                   error('move flag failed:', err)
-                  addToast(`Failed to move flag "${name}"`, 'error')
                   clearOverlayAction()
+                  // The remove may already have gone through — recreate the flag on its
+                  // old tile so a half-failed move never silently deletes it. Creating a
+                  // flag under its existing name just re-places it, so this is also safe
+                  // when the remove itself was what failed.
+                  c.http.game.createFlag(flagRoom, fromX, fromY, name, color, secondaryColor, currentShard ?? undefined)
+                    .then(() => addToast(`Failed to move flag "${name}" — restored at its previous position`, 'error'))
+                    .catch(() => addToast(`Failed to move flag "${name}" and could not restore it`, 'error'))
                 })
               return
             }
@@ -635,7 +864,7 @@ export function RoomViewer(props: RoomViewerProps) {
                     addToast(`Flag "${name}" created`, 'success')
                     clearPendingTile()
                     r.hoverLayer.clearPendingTile()
-                    regenerateUniqueFlagName(c, name)
+                    regenerateUniqueFlagName(c, name, currentShard)
                   })
                   .catch((err) => error('create flag failed:', err))
               return
@@ -684,10 +913,7 @@ export function RoomViewer(props: RoomViewerProps) {
             const hits = objLayer.getObjectsAtTile(tx, ty)
 
             if (hits.length === 0) {
-              if (!ctrlKey) {
-                setSelection([])
-                r.hoverLayer.clearSelection()
-              }
+              if (!ctrlKey) setSelection([])
               return
             }
 
@@ -714,21 +940,12 @@ export function RoomViewer(props: RoomViewerProps) {
               nextSelection = hits.map(({ id, obj }) => createSelectedObject(id, obj))
             }
 
+            // The selection-sync effect below rebuilds the canvas overlays from this.
             setSelection(nextSelection)
-
-            // Rebuild visual overlays from the full new selection
-            const visuals = nextSelection
-                .map(({ id, type }) => ({
-                  id,
-                  type,
-                  visual: objLayer!.getVisualById(id)!,
-                }))
-                .filter(v => v.visual != null)
-            r.hoverLayer.setSelectedObjects(visuals)
           },
           () => {
             const mode = roomViewMode()
-            if (mode === 'build' || mode === 'flag' || overlayAction()?.type === 'moveFlag') {
+            if (mode === 'build' || mode === 'flag' || mode === 'decorate' || overlayAction()?.type === 'moveFlag') {
               resetRoomViewMode()
               r.hoverLayer.clearPendingTile()
             }
@@ -758,6 +975,25 @@ export function RoomViewer(props: RoomViewerProps) {
       applyActionLogAnimations(objs, animLayer, objLayer, beamDuration, userInfo()?._id)
     }
     if (untrack(roomDarkOverlay)) r.updateLighting(objs)
+  })
+
+  // Keep the canvas selection overlays in sync with the selection store. Objects can
+  // leave the selection outside the canvas click handler — a selected creep dying in a
+  // diff, a deselect from the sidebar — and the ring/box has to go with them.
+  createEffect(() => {
+    const r = renderer()
+    const sel = selection()
+    if (!r) return
+    const layer = objLayer
+    if (!layer) {
+      r.hoverLayer.clearSelection()
+      return
+    }
+    const visuals = sel.flatMap(({ id, type }) => {
+      const visual = layer.getVisualById(id)
+      return visual ? [{ id, type, visual }] : []
+    })
+    r.hoverLayer.setSelectedObjects(visuals)
   })
 
   // Update RoomVisuals overlay each tick (layer is created in the objects effect).
@@ -796,13 +1032,39 @@ export function RoomViewer(props: RoomViewerProps) {
     const enabled = roomDarkOverlay()
     r.darkOverlay.visible = enabled
     r.lightLayer.visible = enabled
-    if (!enabled) r.clearLighting()
+    if (!enabled) {
+      r.clearLighting()
+    } else {
+      // Rebuild the lightmap from the current objects right away — waiting for the
+      // next room:update would leave the room uniformly dark for up to a full tick.
+      const state = untrack(objectState)
+      if (state) r.updateLighting(state.objects)
+    }
   })
 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <div ref={(el) => containerRef = el} style={{ width: '100%', height: '100%' }} />
-      {modeHint() && (
+      <Show when={roomViewMode() === 'decorate' && draftHasFrame() ? draftPlacement() : null}>
+        {(placement) => (
+          <div style={{ position: 'absolute', inset: '0', 'pointer-events': 'none', 'z-index': 9 }}>
+            <PlacementFrame
+              placement={placement()}
+              capabilities={draftCapabilities()!}
+              bounds={draftBounds()!}
+              cellSize={TILE_SIZE * viewTransform().scale}
+              originX={viewTransform().x}
+              originY={viewTransform().y}
+              // The real, wall-masked artwork is already rendering underneath; this is
+              // the ghost that shows where the image sits when it falls off the walls.
+              previewUrl={decorationDraft()?.decoration.preview?.['256x256'] ?? decorationDraft()?.decoration.preview?.original}
+              previewOpacity={0.3}
+              onChange={setDraftPlacement}
+            />
+          </div>
+        )}
+      </Show>
+      {hint() && (
         <div
           style={{
             position: 'absolute',
@@ -821,7 +1083,7 @@ export function RoomViewer(props: RoomViewerProps) {
             'z-index': 10,
           }}
         >
-          {modeHint()}
+          {hint()}
         </div>
       )}
       {!historyMode() && gameTime() !== null && (
@@ -908,8 +1170,19 @@ export function RoomViewer(props: RoomViewerProps) {
             }}
           >
             <span>{historyMinTick()}</span>
-            <span style={{ color: historyLoading() ? '#f0883e' : '#8b949e' }}>
-              {historyLoading() ? 'Loading…' : `Tick ${historyTick()}`}
+            <span style={{ color: historyLoading() ? '#f0883e' : '#8b949e', 'text-align': 'center' }}>
+              {historyLoading()
+                ? 'Loading…'
+                : (
+                  <>
+                    {`Tick ${historyTick()}`}
+                    <Show when={historyTimestamp() !== undefined}>
+                      {' · '}{new Date(historyTimestamp()!).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </Show>
+                  </>
+                )}
             </span>
             <span>{historyMaxTick()}</span>
           </div>

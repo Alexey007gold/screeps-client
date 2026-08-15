@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.19.0
+
+### Minor Changes
+
+- 01a3551: Offer badge symbols granted by decorations in the badge editor. A worn `badge`-type decoration (xxscreeps decorations mod) grants an svg symbol; the badge editor now lists those beside the 24 numbered shapes and saves them through the existing `/api/user/badge` route. `ApiRoomDecorationDef` gained the `badge` field and the `BadgeSymbol` type is exported.
+- 7d2e2f4: Add a "Disable email notifications" checkbox to the OAuth registration form (Steam, Discord, ...). Mirrors the official client's registration option, but instead of dropping the email entirely it posts `{ disabled: true }` to `/api/user/notify-prefs` right after `set-username`, so the address stays on the account for login/recovery while notification emails are off from day one. `setNotifyPrefsWithToken` is exported from screeps-connectivity for bare-token use before a client session exists; the call is best-effort and never blocks the login.
+- e74c83c: Upload and manage binary WebAssembly modules in the code editor. The module list gains an upload button for `.wasm` files; a binary module shows up as `<name>.wasm` and opens a summary panel (size, download, replace) instead of the text editor. On save it is sent through `/api/user/code` as a `{ binary: <base64> }` value, the format the official server stores WASM modules in. screeps-connectivity now types the code endpoints: `code.get` returns the new `ApiUserCodeResponse`, and `code.set` plus the `user:code` socket event carry `ApiCodeModule` (`string | { binary: string }`) — both types are exported.
+
+## 0.18.0
+
+### Minor Changes
+
+- e33e5fc: Keep room decorations live.
+
+  Room tick messages can carry a `decorations` field. `RoomStore` now forwards it as a new
+  `room:decorations` event, and the room view merges those items by `_id` into the list it fetched
+  over HTTP — so a decoration placed or edited while you are watching the room appears without a
+  reload. The merge returns the previous list untouched when nothing actually differs, so a server
+  that repeats the same payload every tick does not rebuild the decoration layer.
+
+- 5a0355a: Bring world-map decorations up to the reference client.
+
+  `map-stats` returns decoration definitions in a top-level dictionary keyed by the id each room
+  stat references. That dictionary was previously discarded, so the map had to guess what a
+  decoration was from its colour properties and could only ever tint plains and swamps. It is now
+  resolved, which brings the map wall colour, both landscape overlay textures and graffiti.
+
+  Colours follow the reference map layer's maths: each layer is desaturated by its own factor (0.48
+  for walls, 0.5 for floors, 0.75 and 0.35 for the overlay textures) so a decorated room still reads
+  as a map tile. Swamps mix 70% of the already-desaturated plain colour with 30% of the raw swamp
+  colour.
+
+  The road colour was being stored but never drawn — it now tints the map's road overlay.
+
+  **Breaking (`screeps-connectivity`):** `MapStatsRoomData.terrainColors` and the `TerrainColors` type
+  are replaced by `MapStatsRoomData.decorations` and the `MapRoomDecorations` / `MapLandscape` /
+  `MapGraffiti` types. The store now reports raw decoration values and leaves the colour maths to the
+  renderer.
+
+- 268b592: Show room decorations in the sidebar and on the selected creep.
+
+  The sidebar lists the decorations placed in the current room — landscapes, graffiti and object
+  overlays — with their preview image, type and owner. Selecting a creep now shows which creep
+  decorations actually apply to it, reusing the renderer's own owner and `!SEP!` name-filter matching
+  so the panel cannot drift away from what is drawn.
+
+  `screeps-connectivity` gained `user.decorations.inventory()` and `user.decorations.themes()`, plus
+  the `ApiUserDecorationItem` and `ApiDecorationTheme` types and the display fields of a decoration
+  definition (`name`, `rarity`, `theme`, `restricted`, `preview`, `groupDescription`).
+
+- 4b3412e: Place and remove decorations from the inventory.
+
+  Clicking a decoration opens an editor for its properties — colours, ranges, checkboxes, the
+  animation preset, and the creep name filter with its `exclude` inversion — plus the target room,
+  and activates or deactivates it.
+
+  The room picker disables rooms that already hold a clashing decoration, following the reference
+  client's rules: the combined `landscape` type blocks both halves, a wall and a floor landscape
+  coexist, skins and object overlays clash only with their own type, and graffiti is unrestricted.
+  Creep and badge decorations are account-wide and skip the room picker entirely.
+
+  Geometry shows as numeric controls for now; dragging a decoration around a room preview follows.
+
+  `screeps-connectivity` gained `user.decorations.activate()` / `.deactivate()`, a `reservation`
+  flag on `user.rooms()`, and the `ApiDecorationProp` / `ApiDecorationProps` schema types.
+
+- f31e5c8: Send the shard with flag-name lookups. `genUniqueFlagName()` and `checkUniqueFlagName()` now take an optional `shard`, and the client passes the shard of the room being viewed. Without it, official multi-shard servers rejected both calls with `invalid shard`, so the flag form could not generate or validate a name.
+
+  `addGlobalIntent()`, `setNotifyWhenAttacked()`, `createInvader()` and `removeInvader()` gained the same optional `shard` argument — the official client sends one on all four, and they were previously unusable on multi-shard servers for the same reason.
+
+  `tick()` also takes an optional `shard`, and with one it queries the official server's per-shard route `/api/game/shards/tick` instead of the shardless `/api/game/tick`, which only private servers provide. Calls without a shard are unchanged.
+
+- c4d9b82: Room decorations: rework the parsing foundation ahead of graffiti/creep/object rendering.
+
+  - Decoration `brightness` props now scale HSL lightness like the official renderer instead of
+    multiplying RGB channels — floor, wall, road and texture colours were visibly off whenever
+    brightness was below 1.
+  - Landscapes are first-wins per room (matching the reference renderer) instead of last-wins, and
+    the combined `landscape` type is finally recognised as both a floor and a wall landscape.
+  - Graffiti, creep and object decorations are parsed into typed lists (sprites with their
+    `color`/`alpha`/`visible` prop references resolved, `!SEP!` name filters split, animation names
+    validated). Rendering for them follows in a later change.
+  - Turning the "room decorations" setting back on now re-fetches immediately instead of waiting for
+    the next room change.
+  - Decoration textures load through a shared, deduplicating cache.
+  - `ApiRoomDecorationDef` gained the `landscape` and `badge` types plus `tiling`/`objectType`;
+    `ApiRoomDecorationActive` gained the geometry, animation and targeting fields.
+
+### Patch Changes
+
+- 552bb32: Render `wallGraffiti` room decorations.
+
+  Graffiti images now draw between the terrain and the objects, masked to the room's walls, with
+  tint, per-graphic alpha, tiling, rotation and horizontal flip applied. The five alpha animations of
+  the official renderer (`slow`, `fast`, `blink`, `neon`, `flash`) are driven off a single ticker
+  callback, and `lighting`-enabled items are drawn a second time above the darkness overlay so they
+  stay bright — the same trick the reference renderer's separate lighting layer performs.
+
+  `ROOM_DECORATIONS_MOCK` gained a synthetic `wallGraffiti` entry so the path can be exercised
+  without owning one.
+
+## 0.17.0
+
+### Minor Changes
+
+- 6f45a4b: Add the world and power leaderboards.
+
+  **screeps-client** — a new Leaderboard page (`/leaderboard/<mode>`) reachable from
+  the header, modeled on the official client's Expansion Rank and Power Rank lobby
+  pages: season picker, paged ranking table with badges linking through to player
+  profiles, a name search that jumps to a player's page, and a "your rank" chip.
+  Opening it without a page lands on the row of the player you're looking for —
+  yours, or the one you searched or linked to. The account Overview and public
+  Profile pages now show clickable current-month rank tiles that open the table on
+  that row.
+
+  **screeps-connectivity** — `http.leaderboard.list()` now takes an options object
+  (`{ mode, season, limit, offset }`) instead of four positional arguments,
+  `seasons()` accepts an optional mode, and `find()` omits `season` rather than
+  sending an empty one so it returns every ranked season. All three routes are
+  silent, since not every private server keeps ranking tables. Adds the
+  `currentLeaderboardSeason()` and `normalizeLeaderboardRank()` helpers plus
+  `LeaderboardMode`, `ApiLeaderboardEntry` and `ApiLeaderboardUser` types.
+
+## 0.16.0
+
+### Minor Changes
+
+- f218429: Embedded clients are now configured from the first frame with no `/api/version` round-trip: both the xxscreeps mod and the classic server mod prefetch the version payload and inline it into the page (`window.__SCREEPS_BOOTSTRAP__`), and the client seeds it into both the pre-login UI and the connection. `ScreepsClient` gains an `initialVersion` option and `ServerStore` a `seedVersion()` method to support this.
+
+## 0.15.2
+
+### Patch Changes
+
+- b39a0c1: Fix duplicated console output when multiple parts of the app subscribe to the same `UserStore` channel. `subscribe()` now installs a single shared, ref-counted socket subscription and listener per channel instead of one listener per caller, so each incoming frame is processed and re-emitted exactly once. The server subscription and listener are torn down only after the last subscriber disposes.
+
 ## 0.15.1
 
 ### Patch Changes

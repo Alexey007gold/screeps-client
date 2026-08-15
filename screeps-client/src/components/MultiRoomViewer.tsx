@@ -189,7 +189,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
 
         if (showRoomDecorations()) {
           c.http.game.roomDecorations(room, shard)
-            .then((resp) => renderer?.applyFullDetailDecoration(room, parseRoomDecorations(resp)))
+            .then((resp) => renderer?.applyFullDetailDecoration(room, parseRoomDecorations(resp.decorations)))
             .catch(() => {})
         }
       }

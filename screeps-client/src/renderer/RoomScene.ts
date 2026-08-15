@@ -1,11 +1,12 @@
 import { Container, type Renderer, type Ticker } from 'pixi.js'
 import type { Badge, RoomObjectMap, RoomObjectDiff, RoomTerrain } from 'screeps-connectivity'
-import { createTerrainLayer, rebakeWallNoise } from './TerrainLayer.js'
+import { createTerrainLayer } from './TerrainLayer.js'
 import { ObjectLayer, type EdgeExitTile } from './ObjectLayer.js'
 import { HoverHighlightLayer, type SelectionVisual } from './HoverHighlightLayer.js'
 import { ActionAnimationLayer } from './ActionAnimationLayer.js'
 import { applyActionLogAnimations, tryRecoverDepartureBeam, type NeighborActionLogLookup } from './actionLogAnimations.js'
-import { LightingLayer, buildLights } from './LightingLayer.js'
+import { LightingLayer } from './LightingLayer.js'
+import { buildLights } from './objectLights.js'
 import { VisualLayer } from './VisualLayer.js'
 import { Z } from './RoomRenderer.js'
 import type { RoomDecoration } from './roomDecorations.js'
@@ -95,7 +96,7 @@ export class RoomScene {
     if (this.terrainLayer) return // already applied; RoomScene is one-shot per mount
     this.rawTerrain = terrain
     this.rendererGpu = rendererGpu
-    this.terrainLayer = createTerrainLayer(terrain, rendererGpu, this.decoration?.terrain)
+    this.terrainLayer = createTerrainLayer(terrain, this.decoration?.terrain, this.lighting)
     this.terrainLayer.zIndex = Z.terrain
     this.root.addChildAt(this.terrainLayer, 0)
     this.terrainReady = true
@@ -116,13 +117,8 @@ export class RoomScene {
 
     if (this.rawTerrain && this.rendererGpu && this.terrainLayer) {
       this.root.removeChild(this.terrainLayer)
-      // context: true — without it, Graphics.destroy() leaves each child's owned
-      // GraphicsContext (and its GPU vertex/uv/index buffers) orphaned but never
-      // freed, since Graphics.destroy() only frees an owned context when `options`
-      // is exactly `true` or has `context: true` — a bare `{ children: true }` hits
-      // neither branch.
-      this.terrainLayer.destroy({ children: true, context: true, texture: true, textureSource: true })
-      this.terrainLayer = createTerrainLayer(this.rawTerrain, this.rendererGpu, decoration.terrain)
+      this.terrainLayer.destroy()
+      this.terrainLayer = createTerrainLayer(this.rawTerrain, decoration.terrain, this.lighting)
       this.terrainLayer.zIndex = Z.terrain
       this.root.addChildAt(this.terrainLayer, 0)
     }
@@ -199,9 +195,6 @@ export class RoomScene {
   // back after a loss — repaints this scene's GPU-only content, none of which self-heals
   // the way CPU-backed textures do. See ContextRecovery.
   handleContextRestored(): void {
-    if (this.terrainLayer && this.rawTerrain && this.rendererGpu) {
-      rebakeWallNoise(this.terrainLayer, this.rawTerrain, this.rendererGpu, this.decoration?.terrain)
-    }
     this.lighting.refreshAfterContextRestore()
     this.visualLayer.refresh()
   }
@@ -295,8 +288,7 @@ export class RoomScene {
     }
     if (this.terrainLayer) {
       this.root.removeChild(this.terrainLayer)
-      // context: true — see the matching comment in applyDecoration().
-      this.terrainLayer.destroy({ children: true, context: true, texture: true, textureSource: true })
+      this.terrainLayer.destroy()
       this.terrainLayer = null
     }
     this.root.removeChild(this.visualLayer.container)

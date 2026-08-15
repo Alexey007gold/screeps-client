@@ -9,8 +9,9 @@ import { RankRing, GCL_RING, GCL_TEXT, GPL_RING, GPL_TEXT } from '~/components/R
 import { PlayerBadge } from '~/components/PlayerBadge.js'
 import { RoomPreviewTile } from '~/components/RoomPreviewTile.js'
 import { StatTileRow } from '~/components/AccountStatTiles.js'
+import { LeaderboardRankTiles } from '~/components/leaderboard/RankTiles.js'
 import { OverlayPage } from '~/components/OverlayPage.js'
-import { extractOwnedRooms, type OwnedRoom } from '~/utils/ownedRooms.js'
+import { extractOwnedRooms, groupRoomsByShard, type OwnedRoom } from '~/utils/ownedRooms.js'
 import { gclProgress, gplProgress, gplLevel, type LevelProgress } from '~/utils/levels.js'
 import { freePowerLevels } from '~/data/powerCreeps.js'
 import { PowerCreepList } from '~/components/power/PowerCreepList.js'
@@ -112,18 +113,7 @@ export function Overview() {
 
   const togglePower = () => userView() === 'power' ? goToUser() : goToUserPower()
 
-  // Group owned rooms by shard for the minimap grid. Multishard servers key
-  // rooms by shard; single-shard servers report shard: null, which collapses to
-  // one unlabeled group. Sort shards by name so the order is stable.
-  const roomsByShard = (): [string | null, OwnedRoom[]][] => {
-    const groups = new Map<string | null, OwnedRoom[]>()
-    for (const r of rooms()) {
-      const arr = groups.get(r.shard)
-      if (arr) arr.push(r)
-      else groups.set(r.shard, [r])
-    }
-    return [...groups.entries()].sort(([a], [b]) => (a ?? '').localeCompare(b ?? ''))
-  }
+  const roomsByShard = () => groupRoomsByShard(rooms())
 
   const powerCtx: PowerContext = {
     creeps,
@@ -231,6 +221,10 @@ export function Overview() {
                     </div>
                   </div>
                 </div>
+
+                {/* Current month — leaderboard ranks. Hidden entirely on servers
+                    that keep no rankings, rather than showing a row of dashes. */}
+                <LeaderboardRankTiles username={userInfo()?.username} hideWhenUnranked />
 
                 {/* Lifetime stat tiles */}
                 <StatTileRow totals={totals()} />

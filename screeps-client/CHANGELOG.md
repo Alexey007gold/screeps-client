@@ -1,5 +1,523 @@
 # screeps-client
 
+## 0.24.3
+
+### Patch Changes
+
+- acfa85b: Fix decorated rooms flashing undecorated on every room change: terrain comes out of a cache and was drawn immediately, while decorations always need an HTTP round trip, so the room was painted plain and repainted decorated a moment later. The first terrain draw of a room now waits for its decoration read to settle — with a 500 ms deadline so a slow or failing request still gets the plain room up.
+- 55194c5: Room decorations are now enabled by default. Users who haven't explicitly toggled the setting (including existing users with no stored preference) will now see decorations on; anyone who previously turned it off keeps it off.
+- 0867a1b: Fix a memory leak in the room view: switching rooms stranded the PixiJS `GraphicsContext` of every object visual, terrain layer, decoration mask and navigation arrow on the renderer, so memory climbed with each room change and only came back when the room view was left entirely (e.g. by switching to the world map). Teardown now frees those contexts — and the per-room filters that went with them — explicitly.
+
+## 0.24.2
+
+### Patch Changes
+
+- 0cd19e4: History view now shows the real server-recorded time for a tick instead of only an estimate.
+- d30ebd7: Render ramparts in their own layer above the room's ambient lighting overlay, so the glow reads at full brightness instead of being dimmed by the dark-overlay multiply — matching the reference client, which draws ramparts in its topmost "effects" layer past the light map.
+- 760e440: Fix room decoration landscape textures (wall/floor) rendering too dark and desaturated, and stop the stretched landscape sprites from bleeding a sliver past the room's edge into the void.
+
+## 0.24.1
+
+### Patch Changes
+
+- 3d0aa73: Match the official client's room-decoration geometry
+
+  Landscape overlays diverged from the official renderer, so a decoration pack authored
+  against one looked wrong on the other:
+
+  - Floor and wall overlays always tiled. The official tiles the floor only when the
+    _definition_ declares `tileScale`, otherwise stretching one copy over the room, and never
+    tiles the wall half at all. A placement's `tileScale` prop no longer flips the branch —
+    the official ignores it on landscapes.
+  - Tile scales are now rebased from the official's 100-units-per-tile space onto ours
+    instead of a magic `0.8`, so the same authored number gives the same density. The same
+    fix applies to tiled `wallGraffiti`, which repeated roughly 8× too often.
+  - `strokeWidth` and `swampStrokeWidth` were 1.25× too thin. They are SVG units at 100 per
+    tile, and `paint-order: stroke` hides the inner half of the centred stroke, so the
+    visible border is half the authored width.
+  - The hardcoded green swamp glow is replaced by the official's additive, green-tinted
+    swamp noise, leaving a pack's own `swampColor` readable underneath.
+  - The procedural wall noise no longer disappears when a wall texture is present; the
+    official draws both.
+
+  Room lighting now follows the same reference, which changes how every room reads, not
+  just decorated ones:
+
+  - The dark overlay was a flat 20% black veil. It is now a light map — mid-grey ambient,
+    multiplied over the world — so unlit ground sits at half brightness as it does
+    officially, and lights screen it back towards white instead of erasing holes in it.
+  - Walls cast a soft blurred shadow onto the floor, and their own faces are lit back up,
+    so a room reads with depth rather than flat.
+  - Wall noise was a flat grey wash at 50% that pulled decorated walls towards neutral and
+    cost a landscape its colour. It is now additive at 20%, as officially.
+  - `strokeLighting` is honoured: it sets how brightly a wall's rim reads in the light map.
+  - Undecorated rooms use the reference's own terrain colours rather than a darker local
+    palette, and gain the ground mottling the reference draws when no floor landscape
+    applies — without which a plain room under the new light map read almost black.
+
+- 677c063: Lighten the default road color in the room view so roads read as a lighter grey against the terrain instead of appearing too dark.
+- f29d41a: Guest sessions and world-start-room lookup failures now center the map on the world's middle instead of leaving the camera at its raw uncentered default.
+- 526e00c: Bring back the memory tree's per-node reload buttons and give the bottom bar a collapse toggle again.
+
+  Since watch values moved to typed HTTP fetches, the reload button was gated on a WebSocket placeholder that no longer reaches the tree, so it never rendered. Every object and array node now has one, and it writes the refetched subtree back into the watch store instead of a node-local copy, so live change signals keep updating the node afterwards.
+
+  The bottom bar gained a collapse/expand button next to the popout action, and collapsing it by hand sticks: the effect that mirrors the pane toggles no longer reacts to the bar's own height, which previously snapped a bar dragged shut back open and discarded a collapsed bar on reload.
+
+- 4016760: Map visual text now matches the reference client: text renders opaque unless an explicit `opacity` is given (the documented 0.5 default only applies to shapes), a `stroke` colour without `strokeWidth` falls back to the reference default of 0.15, and the background box is sized from the font size instead of the measured glyph height so padding reads consistently across strings.
+- d63cb89: Match the official client's RoomVisual style defaults: text is centered instead of left-aligned, and a `stroke` colour on its own now outlines text and shapes (`strokeWidth` defaults to 0.15 for text and 0.1 for circles, rects and polys). An unstyled `poly()` gets the reference's white outline.
+- 7ec6fc4: Match the official client's light pools and wall shadows
+
+  Every object punched the same three-tile pool at full alpha into the light map, which is
+  the size and strength the official client reserves for a spawn — a base full of extensions
+  therefore washed out into one bright cloud. Each type now contributes the pools its own
+  metadata gives it: an extension's halo grows with its tier and only lights while it holds
+  energy, a lab lights only for a non-energy payload, a storage's core only when it holds
+  something, sources, minerals, deposits, portals and keeper lairs light in their own colour,
+  and roads, walls, ramparts, construction sites and flags stay dark as they do officially.
+
+  Wall shadows were twice as wide as the reference's. Both blur by the same fraction of the
+  room, but PixiJS v7 spreads that figure across its passes and lands at half of it, where v8
+  normalises its passes to hit it exactly.
+
+## 0.24.0
+
+### Minor Changes
+
+- 01a3551: Offer badge symbols granted by decorations in the badge editor. A worn `badge`-type decoration (xxscreeps decorations mod) grants an svg symbol; the badge editor now lists those beside the 24 numbered shapes and saves them through the existing `/api/user/badge` route. `ApiRoomDecorationDef` gained the `badge` field and the `BadgeSymbol` type is exported.
+- 7d2e2f4: Add a "Disable email notifications" checkbox to the OAuth registration form (Steam, Discord, ...). Mirrors the official client's registration option, but instead of dropping the email entirely it posts `{ disabled: true }` to `/api/user/notify-prefs` right after `set-username`, so the address stays on the account for login/recovery while notification emails are off from day one. `setNotifyPrefsWithToken` is exported from screeps-connectivity for bare-token use before a client session exists; the call is best-effort and never blocks the login.
+- e74c83c: Upload and manage binary WebAssembly modules in the code editor. The module list gains an upload button for `.wasm` files; a binary module shows up as `<name>.wasm` and opens a summary panel (size, download, replace) instead of the text editor. On save it is sent through `/api/user/code` as a `{ binary: <base64> }` value, the format the official server stores WASM modules in. screeps-connectivity now types the code endpoints: `code.get` returns the new `ApiUserCodeResponse`, and `code.set` plus the `user:code` socket event carry `ApiCodeModule` (`string | { binary: string }`) — both types are exported.
+
+### Patch Changes
+
+- 40f5076: Room renderer fixes and cleanups:
+
+  - Storage, container, terminal, lab, nuker, powerSpawn, extractor and factory visuals now update during history playback and full reconciles — the diff and full update paths share one per-object update function.
+  - Right/middle clicks no longer count as tile clicks or start a pan; navigation arrows trigger on tap instead of pointer-down, so a touch drag starting on one pans instead of navigating.
+  - The PixiJS application is destroyed instead of leaking a WebGL context when the room view unmounts while the renderer is still initialising.
+  - Canvas selection rings/boxes now follow the selection store, so a selected creep dying or a sidebar deselect clears its overlay.
+  - Room updates apply their signals in one batch, so the render effect runs once per tick instead of several times.
+  - Enabling the dark overlay builds the lightmap immediately instead of waiting up to a tick.
+  - A failed flag move restores the flag at its previous position instead of silently deleting it.
+  - The per-frame ticker consolidates its object loops, and the zoom limit is a single constant.
+
+## 0.23.0
+
+### Minor Changes
+
+- 1accbd8: Console, log and memory panes can now pop out into separate browser windows.
+  Popouts don't open their own server connection: the main window serves them
+  over a BroadcastChannel RPC bridge and they reattach automatically after a
+  main-window reload. Memory watches now always load their values typed over
+  HTTP — the string-coerced WS payload only acts as a change signal — fixing
+  the display of strings vs numbers, arrays, and keys deleted from Memory.
+  Array elements are editable: bracket paths (`list[3]`) map to the dot form
+  the server's path resolution understands.
+- 3d31ab2: The popped-out world map now shows the custom UI at the bottom of its sidebar,
+  like the inline map does. The popout loads the config segment, sends commands
+  and receives their console answers over the existing host bridge, shows the
+  resulting toasts in its own window, and hands a response's room over to the
+  main window's room view. A popout opened by hand in a new tab picks up the
+  per-server custom UI setting from the host, which it previously could not see.
+- ae911fa: The world map can now pop out into a separate browser window or tab, with a
+  collapsible sidebar carrying the overlay controls and room info boxes. The
+  popout replaces the inline map — only one map exists at a time: opening the
+  map in the main window closes the popout and vice versa. Selecting a room
+  twice on the popped-out map navigates the main window's room view, and
+  navigating the room view moves the popout's highlighted room in return.
+  Popout hosts now answer every ping with a heartbeat, so a popout no longer
+  reports the main window as unreachable while that window sits in a throttled
+  background tab.
+
+### Patch Changes
+
+- 0b62464: The Custom UI editor now offers only the options the respective sidebar actually
+  evaluates. The map section drops the `selection` and `tile` requirements, which
+  it can never satisfy, and the `showIf.selType` field, which it never tests — both
+  previously produced elements that stayed disabled or never appeared at all. The
+  objects section drops `needs` entirely, since an object card ignores it. Configs
+  are normalized on load, so form, preview and JSON view always agree; the parser
+  stays tolerant, so existing segments keep loading.
+- 3020fec: Swamp tiles are drawn with their border again. The decoration's
+  `swampStrokeColor` and `swampStrokeWidth` were parsed and resolved but never
+  reached a draw call, so only the fill was painted — and at alpha 0.4 over a
+  dark themed floor that fill is nearly invisible, which made swamps look as if
+  they were hidden underneath the ground. The swamp shape now gets the same
+  stroke-then-fill pass the wall shape already used. Its translucency comes from
+  an `AlphaFilter` rather than `Graphics.alpha`, because plain alpha is applied
+  per-vertex: the translucent fill would blend with the border strokes beneath it
+  instead of covering them, outlining every quadrant sub-path and showing the
+  seams through as a grid.
+
+## 0.22.0
+
+### Minor Changes
+
+- 35df8bd: Render portals in the room view — an animated well with a cyan ring welling up and being swallowed by a dark disc, plus a violet halo — and show their destination (linked, inter-shard aware) and decay countdown in the selection panel
+
+### Patch Changes
+
+- 0adbd5f: Stop the Custom UI editor's option fields from losing focus on every keystroke
+- 564ce4e: Fix custom UI buttons often needing several presses before they react. The room's owner and controller reservation were rebuilt as fresh objects on every room update, so their signals fired once per tick; combined with the panel's per-run rebuild of its element list this recreated every button's DOM node each tick, and a button replaced between mousedown and mouseup never fires a click. Both signals now compare by value, and the sidebar panel and the per-object actions reuse stable entry objects.
+
+  The structure counts and the room's user map are compared by value too, which stops the build panel and the room info panel from re-rendering on every tick of an idle room.
+
+- b510e92: Pin the custom UI panel to the bottom of the sidebar in map view, matching room view
+- b510e92: Label the controller level chip in the map sidebar's Selected/Cursor boxes as "RCL"
+- b6b228d: Let server-hosted `/assets` requests through to the backend: the Vite dev server proxies `/assets` to `VITE_PROXY_TARGET`, and `screeps-client-proxy` forwards wrapped `/assets` paths instead of falling through to the SPA. Assets now load in dev and behind the proxy the same way they do when the client is served by the backend itself.
+
+## 0.21.0
+
+### Minor Changes
+
+- 5253263: Carry the world map position in the URL so a view can be bookmarked.
+
+  The map now writes its centre and zoom into the query as `?zoom=<z>&pos=<x>,<y>` — the same room
+  coordinates the official client uses, where `.5` is a room's centre. Panning and zooming update the
+  URL with `replaceState` once the view settles, so it never adds history entries and Back still leaves
+  the map. Opening such a URL (or using Back/Forward) restores that exact view instead of dropping back
+  to the account's start room, and switching shards keeps the position.
+
+- afb753d: Give the console command line a persistent history and TypeScript autocompletion.
+
+  The command history now survives a reload. It is stored per server — commands referencing a private
+  server's creeps are meaningless on MMO — capped at 200 entries, and no longer records a command
+  twice in a row. Failed commands are kept as well, since a rejected command is exactly the one worth
+  recalling and fixing.
+
+  Typing `.` opens a completion list drawn from the same in-browser TypeScript service the code editor
+  uses, so `Game`, `Memory`, the room-object API and every game constant complete from
+  `@types/screeps`. `Ctrl+Space` requests completions anywhere. The arrow keys drive the list while it
+  is open and walk the history otherwise; `Escape` closes the list, or clears the input when there is
+  no list.
+
+  The TypeScript worker is only loaded once completions are actually requested, so a session that
+  never uses them does not pay for it.
+
+- 127adca: Add an alliance overlay to the world map, backed by the League of Automated Nations roster.
+
+  A fourth overlay mode next to Owner / Mineral / None — on the official server only, since the
+  roster describes nobody on a private one — tints each owned room in its alliance's colour and
+  stamps the abbreviation along the room's bottom edge. Owner badges stay visible, so the tint
+  says which alliance and the badge still says which player. The sidebar gains a colour legend
+  while the mode is active, listing each alliance's rooms in the current viewport and sorted by
+  them, so panning tells you who actually holds the region you're looking at. The room info box
+  shows the owner's alliance for hover and selection regardless of overlay mode, and a player's
+  profile page carries an alliance chip next to their name.
+
+  The roster comes from `leagueofautomatednations.com/alliances.js`, fetched lazily the first
+  time the overlay is selected — never for users who don't ask for it — and cached in
+  `localStorage` for 6h, with a stale cache used as a fallback when the network fails. The feed
+  ships `#000000` as the colour for every alliance, so colours are derived locally by hashing the
+  abbreviation into a fixed palette, which keeps them stable across sessions.
+
+### Patch Changes
+
+- ef5eba7: Fix the decoration editor's inputs losing a drag or keystroke.
+
+  The property list was rebuilt on every edit, so the browser lost the element it was dragging: a
+  slider let go after a couple of pixels, a text field dropped focus after one character, and the
+  colour picker closed itself. The controls now stay put while the values change, in the room
+  sidebar's decorate panel and in the inventory dialog alike.
+
+- 66bf09f: Drop solid-devtools and ship Solid's production runtime.
+
+  The devtools are no longer used, so the `solid-devtools/vite` plugin, the `@solid-devtools/debugger`
+  setup import in `index.tsx` and both dev dependencies are gone. With them goes
+  `resolve.conditions: ['development']`, which was there to force Solid's `development` export for the
+  debugger — it applied to production builds too, so releases shipped `solid-js/dist/dev.js` and the
+  matching dev builds of `solid-js/web` and `solid-js/store`, with their warning paths and reactive
+  bookkeeping. Builds now resolve `solid.js` / `web.js` / `store.js`.
+
+  The dev server is unaffected: vite-plugin-solid adds the `development` condition itself when the
+  command is `serve`.
+
+- b6df4b5: Hide the room sidebar's Decorate button while room decorations are switched off.
+
+  With the decorations setting off the room draws none of them and the client fetches none, so the
+  editor's entry point led into an empty view. The mode button and its `4` shortcut are now gone
+  along with the decorations, and the inventory's "edit in room" hand-off is offered only while they
+  are on.
+
+  Turning the setting off with the editor already open closes it back to view mode instead of leaving
+  it stranded.
+
+  The list of decorations placed in the room moved into decorate mode's sidebar as well — it is the
+  counterpart to the picker's unplaced ones, and no longer takes up room above the selection, flag and
+  build panels.
+
+- 682f31e: Group the player profile's owned rooms by shard.
+
+  The public profile listed every room in one flat grid, so on a multishard server a player's rooms
+  from different shards sat side by side with nothing to tell them apart. They are now grouped under a
+  shard heading, the same as the account overview already did. Single-shard servers still render one
+  unlabeled grid.
+
+- 66bf09f: Keep the CodeMirror bundle off the first load — it is roughly 162 kB gzip that no longer blocks
+  startup.
+
+  The three editor panels (script, segments, custom UI) were already `lazy()`, but the `vendor-codemirror`
+  manual chunk also claimed `solid-codemirror`, which pulled solid-js in with it. Since the whole app
+  needs solid-js, the entry chunk ended up statically importing the vendor chunk and `index.html`
+  preloaded it, so every visitor paid for CodeMirror whether or not they opened an editor. Leaving
+  `solid-codemirror` unassigned keeps solid-js in the eager graph and CodeMirror behind the dynamic
+  imports it belongs to.
+
+## 0.20.0
+
+### Minor Changes
+
+- be68680: Add the decoration inventory page at `/inventory`.
+
+  Lists every decoration the account owns with its preview, rarity and type, filterable by type,
+  theme and target room, and sortable new/old, rare/common or grouped by room. Activated items link
+  straight to the room they sit in.
+
+  The nav entry appears only when the server advertises the `inventory` feature in `/api/version`,
+  which is the same gate the reference client uses — private servers without decorations keep the
+  section hidden.
+
+  Placing and removing decorations is not wired up yet; this view is read-only.
+
+- 552bb32: Render `wallGraffiti` room decorations.
+
+  Graffiti images now draw between the terrain and the objects, masked to the room's walls, with
+  tint, per-graphic alpha, tiling, rotation and horizontal flip applied. The five alpha animations of
+  the official renderer (`slow`, `fast`, `blink`, `neon`, `flash`) are driven off a single ticker
+  callback, and `lighting`-enabled items are drawn a second time above the darkness overlay so they
+  stay bright — the same trick the reference renderer's separate lighting layer performs.
+
+  `ROOM_DECORATIONS_MOCK` gained a synthetic `wallGraffiti` entry so the path can be exercised
+  without owning one.
+
+- e33e5fc: Keep room decorations live.
+
+  Room tick messages can carry a `decorations` field. `RoomStore` now forwards it as a new
+  `room:decorations` event, and the room view merges those items by `_id` into the list it fetched
+  over HTTP — so a decoration placed or edited while you are watching the room appears without a
+  reload. The merge returns the previous list untouched when nothing actually differs, so a server
+  that repeats the same payload every tick does not rebuild the decoration layer.
+
+- 278230a: Mark structures disabled by the controller level with a pulsing red tile wash, matching the official client. Structures beyond the RCL cap (the ones farthest from the controller) and everything in an unowned or downgraded room now read as switched off in the room view.
+- 0e8b382: Render `creep` and `object` room decorations.
+
+  Creep overlays now apply to their owner's creeps, honouring the `!SEP!` name filter and its
+  `exclude` inversion, skipping creeps that are still spawning, and following the body rotation when
+  `syncRotate` is set. Object overlays apply to every object of their target type. Both support the
+  alpha animations and per-graphic tint and alpha.
+
+  Sizes for these two types arrive in the reference renderer's pixels rather than room cells, so they
+  are converted on the way in — a 256 is 2.56 cells, not 256.
+
+  The six identical object-visual creation blocks in `ObjectLayer` were collapsed into one helper.
+
+- 975c619: Place decorations by dragging them around the room.
+
+  Once a target room is picked, the decoration dialog shows the room's terrain with a frame over it:
+  drag to move, eight handles to resize, and a grip to rotate. Which of the three is offered comes
+  from the decoration's own schema — a read-only `rotation` means no rotate grip — and `proportional`
+  decorations keep their aspect ratio while resizing.
+
+  The room is drawn as flat terrain rather than a full render: walls are what matters when placing
+  graffiti, which only shows on them.
+
+- 4d4167f: Place and edit room decorations in the room view itself, instead of on a separate 2D canvas.
+
+  A new Decorate mode (the palette button beside View / Flag / Build, or `4`) lists the decorations
+  the account owns but has not placed; picking one drops it into the middle of the room, where it is
+  visible before it is ever activated. Clicking one of your already-placed decorations in the room
+  sidebar opens the same editor for it.
+
+  Either way the frame is dragged, resized and turned over the live, ticking room, with the artwork
+  following it wall-masked and tinted as it will really look. The sidebar carries the same numbers
+  and properties the dialog offers, so colours, alpha and animation update live too.
+
+  While editing, the camera parks on the whole room and stops panning and zooming — the decoration
+  stays reachable end to end, and the frame can sit as HTML over the canvas. Right-click leaves the
+  mode, a room change abandons the draft, and saving keeps the editor open rather than closing it
+  under the re-read it triggers.
+
+  Only rooms the account owns or reserves offer placement, and a type the room already holds — a
+  second wall landscape, say — is greyed out in the list rather than failing on the server. While a
+  graffiti is being placed, the hint over the room says it only shows where it covers walls, which
+  is otherwise easy to read as nothing having happened.
+
+  The dialog's 2D editor stays for decorations whose room is not the one on screen, and history
+  playback still edits through the inventory — it is a read-only view of a past tick.
+
+- 5a0355a: Bring world-map decorations up to the reference client.
+
+  `map-stats` returns decoration definitions in a top-level dictionary keyed by the id each room
+  stat references. That dictionary was previously discarded, so the map had to guess what a
+  decoration was from its colour properties and could only ever tint plains and swamps. It is now
+  resolved, which brings the map wall colour, both landscape overlay textures and graffiti.
+
+  Colours follow the reference map layer's maths: each layer is desaturated by its own factor (0.48
+  for walls, 0.5 for floors, 0.75 and 0.35 for the overlay textures) so a decorated room still reads
+  as a map tile. Swamps mix 70% of the already-desaturated plain colour with 30% of the raw swamp
+  colour.
+
+  The road colour was being stored but never drawn — it now tints the map's road overlay.
+
+  **Breaking (`screeps-connectivity`):** `MapStatsRoomData.terrainColors` and the `TerrainColors` type
+  are replaced by `MapStatsRoomData.decorations` and the `MapRoomDecorations` / `MapLandscape` /
+  `MapGraffiti` types. The store now reports raw decoration values and leaves the colour maths to the
+  renderer.
+
+- 5173461: Open the decoration editor straight from the room sidebar.
+
+  Clicking one of your own decorations in the room's Decorations panel opens its editor. Decorations
+  belonging to other players stay inert, since there is nothing to edit.
+
+  The open editor now lives in the URL as `/inventory/<id>`, the way the reference client addresses
+  it. That is what lets a link from the room open it at all — the dialog needs the inventory and the
+  room list, which the inventory page already has.
+
+- 268b592: Show room decorations in the sidebar and on the selected creep.
+
+  The sidebar lists the decorations placed in the current room — landscapes, graffiti and object
+  overlays — with their preview image, type and owner. Selecting a creep now shows which creep
+  decorations actually apply to it, reusing the renderer's own owner and `!SEP!` name-filter matching
+  so the panel cannot drift away from what is drawn.
+
+  `screeps-connectivity` gained `user.decorations.inventory()` and `user.decorations.themes()`, plus
+  the `ApiUserDecorationItem` and `ApiDecorationTheme` types and the display fields of a decoration
+  definition (`name`, `rarity`, `theme`, `restricted`, `preview`, `groupDescription`).
+
+- 4b3412e: Place and remove decorations from the inventory.
+
+  Clicking a decoration opens an editor for its properties — colours, ranges, checkboxes, the
+  animation preset, and the creep name filter with its `exclude` inversion — plus the target room,
+  and activates or deactivates it.
+
+  The room picker disables rooms that already hold a clashing decoration, following the reference
+  client's rules: the combined `landscape` type blocks both halves, a wall and a floor landscape
+  coexist, skins and object overlays clash only with their own type, and graffiti is unrestricted.
+  Creep and badge decorations are account-wide and skip the room picker entirely.
+
+  Geometry shows as numeric controls for now; dragging a decoration around a room preview follows.
+
+  `screeps-connectivity` gained `user.decorations.activate()` / `.deactivate()`, a `reservation`
+  flag on `user.rooms()`, and the `ApiDecorationProp` / `ApiDecorationProps` schema types.
+
+- c4d9b82: Room decorations: rework the parsing foundation ahead of graffiti/creep/object rendering.
+
+  - Decoration `brightness` props now scale HSL lightness like the official renderer instead of
+    multiplying RGB channels — floor, wall, road and texture colours were visibly off whenever
+    brightness was below 1.
+  - Landscapes are first-wins per room (matching the reference renderer) instead of last-wins, and
+    the combined `landscape` type is finally recognised as both a floor and a wall landscape.
+  - Graffiti, creep and object decorations are parsed into typed lists (sprites with their
+    `color`/`alpha`/`visible` prop references resolved, `!SEP!` name filters split, animation names
+    validated). Rendering for them follows in a later change.
+  - Turning the "room decorations" setting back on now re-fetches immediately instead of waiting for
+    the next room change.
+  - Decoration textures load through a shared, deduplicating cache.
+  - `ApiRoomDecorationDef` gained the `landscape` and `badge` types plus `tiling`/`objectType`;
+    `ApiRoomDecorationActive` gained the geometry, animation and targeting fields.
+
+### Patch Changes
+
+- 764b871: Fix moving an already-placed decoration failing with "Decoration already activated".
+
+  The server rejects `activate` on a decoration that is already active, so editing one now takes it
+  down first — the same two-step the reference client performs behind its "back edit" button. Because
+  that leaves a moment where the decoration sits nowhere, a failure in the second step says the old
+  placement is gone instead of reading as if nothing happened.
+
+- 4d4167f: Show decoration changes in the room view without reloading the room.
+
+  Placing or removing a decoration now re-reads `game/room-decorations` straight away. The room
+  socket only carries decorations when the server volunteers them, so an activation made from the
+  inventory — which leaves the room view mounted behind it — stayed invisible until the room was
+  reloaded.
+
+  Removals propagate as well. The re-read treats its response as authoritative instead of merging
+  it onto everything seen so far, which could only ever add decorations: a deactivated one kept
+  being drawn. Items that arrive over the socket while the read is in flight are still layered back
+  on top, so the race that guarded against is unaffected.
+
+- 465a257: Preselect the open room when placing an unplaced decoration from the inventory.
+
+  Opening the inventory while a room is on screen is a strong hint about where a decoration is meant
+  to go, so its room picker now starts there instead of on "Select a room…" — and the position editor
+  comes up with that room's terrain straight away.
+
+  Only for decorations that are not placed anywhere: one that already sits in a room keeps pointing
+  at it, and a room chosen by hand is never overwritten. Rooms the account does not hold, and rooms
+  whose decoration of that type is already taken, are skipped.
+
+- 1a9556f: Fix the decoration editor crashing on open.
+
+  A memo evaluated at setup read an accessor declared further down the component, so opening any
+  decoration that offers a position editor threw `Cannot access 'selectedRoomName' before
+initialization`. The room accessors now sit above their first use.
+
+- 6e815d6: Keep the owner badge upright on a moving creep.
+
+  The badge sits inside the creep's rotating body container so the store fill can cover it, and
+  counter-rotated by a fixed quarter turn — which only cancelled the idle heading. Once the creep
+  moved, the badge tilted with it. Facing changes now go through one helper that keeps the badge
+  level at any heading, including a badge that arrives after the creep is already on screen.
+
+- ecdadcf: Fix `syncRotate` creep decorations rendering a quarter turn counter-clockwise.
+
+  The artwork is drawn for the reference renderer, whose creep container faces
+  `atan2(dy, dx) + π/2` — zero means "moving up". Ours faces plain `atan2(dy, dx)`, so an
+  overlay inheriting that rotation landed 90° off.
+
+- f31e5c8: Send the shard with flag-name lookups. `genUniqueFlagName()` and `checkUniqueFlagName()` now take an optional `shard`, and the client passes the shard of the room being viewed. Without it, official multi-shard servers rejected both calls with `invalid shard`, so the flag form could not generate or validate a name.
+
+  `addGlobalIntent()`, `setNotifyWhenAttacked()`, `createInvader()` and `removeInvader()` gained the same optional `shard` argument — the official client sends one on all four, and they were previously unusable on multi-shard servers for the same reason.
+
+  `tick()` also takes an optional `shard`, and with one it queries the official server's per-shard route `/api/game/shards/tick` instead of the shardless `/api/game/tick`, which only private servers provide. Calls without a shard are unchanged.
+
+- 47b7b75: Fix the inventory's room, theme and decoration lists never loading or refreshing.
+
+  All three took their dependency by reading it inside the fetcher, which `createResource` runs
+  exactly once — so whatever wasn't ready when the page mounted stayed missing for the rest of the
+  session. The room picker was hit hardest, since it also needs the user id. They now take their
+  dependency as a source signal, and the room list refreshes when the editor opens so claiming or
+  losing a room mid-session can't leave a stale picker.
+
+## 0.19.0
+
+### Minor Changes
+
+- 6f45a4b: Add the world and power leaderboards.
+
+  **screeps-client** — a new Leaderboard page (`/leaderboard/<mode>`) reachable from
+  the header, modeled on the official client's Expansion Rank and Power Rank lobby
+  pages: season picker, paged ranking table with badges linking through to player
+  profiles, a name search that jumps to a player's page, and a "your rank" chip.
+  Opening it without a page lands on the row of the player you're looking for —
+  yours, or the one you searched or linked to. The account Overview and public
+  Profile pages now show clickable current-month rank tiles that open the table on
+  that row.
+
+  **screeps-connectivity** — `http.leaderboard.list()` now takes an options object
+  (`{ mode, season, limit, offset }`) instead of four positional arguments,
+  `seasons()` accepts an optional mode, and `find()` omits `season` rather than
+  sending an empty one so it returns every ranked season. All three routes are
+  silent, since not every private server keeps ranking tables. Adds the
+  `currentLeaderboardSeason()` and `normalizeLeaderboardRank()` helpers plus
+  `LeaderboardMode`, `ApiLeaderboardEntry` and `ApiLeaderboardUser` types.
+
+## 0.18.0
+
+### Minor Changes
+
+- 114e4b1: Render room-view minerals as a colour-tinted disc with a letter glyph (matching the reference client) instead of the spritesheet sprite: a bright stroked ring plus a dark fill and the mineral's letter in the ring colour, with per-mineral colours for H/O/U/L/K/Z/X. The spritesheet mineral frames are now used only for the map overlay, so room-view minerals stay crisp at every zoom level.
+- 3b2c531: Show a damage-graded hits bar in the object property view. When a selected creep, structure, power bank or ruin is below full health, the selection panel now renders a thin fill bar beneath the numeric hits — green above ~66%, amber in the mid range, red when critical — so damage reads at a glance instead of only from the raw `hits / hitsMax` text. Full-health objects are unchanged. The RCL and store-fill bars now share a single reusable `MeterBar` component.
+
+### Patch Changes
+
+- 8e9f7ed: Centralize the HTML UI's GitHub-dark palette in `components/theme.ts`. The market and power section themes now re-export the shared tokens (unifying the near-duplicate raised-panel tone `#1c2129`/`#1c2128` on one value) and keep only their own accents; the market's `fmtAmount`/`fmtPrice` number formatters move to `utils/formatNumber.ts` next to `formatLargeNumber`. `MeterBar` consumes the shared tokens instead of hardcoded hex.
+- 202bb3d: Remove the `l`/`c`/`y` keyboard shortcuts for the log, console, and memory panels. The `c` shortcut clashed with copy/paste; the panels remain toggleable via their toolbar buttons.
+- f218429: Embedded clients are now configured from the first frame with no `/api/version` round-trip: both the xxscreeps mod and the classic server mod prefetch the version payload and inline it into the page (`window.__SCREEPS_BOOTSTRAP__`), and the client seeds it into both the pre-login UI and the connection. `ScreepsClient` gains an `initialVersion` option and `ServerStore` a `seedVersion()` method to support this.
+- ddc2277: Deduplicate the two login screens: `components/login/shared.tsx` now holds the input styles, the password/token toggle, the server-password field, the error line, the connect button, the Steam/Discord buttons, and the shared server-capability probes (`serverHasSteam`, `serverHasDiscord`, `serverShowsServerPassword`). `LoginForm` and `DesktopLoginForm` consume these instead of carrying parallel copies. No behavior change.
+- e678c10: Split the 4200-line `renderer/ObjectLayer.ts` into per-object modules under `renderer/objects/` — one file per object type (creep, spawn, tower, storage, terminal, lab, …) plus shared helpers, types and a `createObjectVisual` dispatcher. Pure internal refactor: the rendering output, the `ObjectLayer` class API and its animation/update logic are unchanged.
+- 7cc40b4: Split the 1280-line `SelectionList.tsx` into `components/selection/` — one file per detail view (creep, flag, controller, extension, store structures, power bank, ruin, default), shared lookup tables/styles in `shared.ts`, and the type→component registry in `registry.ts`. `SelectionList.tsx` keeps only the list and item chrome. Pure internal refactor, no behavior change.
+
 ## 0.17.1
 
 ### Patch Changes

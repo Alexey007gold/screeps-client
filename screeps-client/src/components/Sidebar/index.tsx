@@ -8,15 +8,21 @@ import { roomViewMode } from '~/stores/roomViewStore.js'
 import { historyMode } from '~/stores/historyStore.js'
 
 import { RoomInfoBox } from './RoomInfoBox.js'
+import { RoomDecorationsPanel } from './RoomDecorationsPanel.js'
 import { FlagForm } from './FlagForm.js'
 import { BuildPanel } from './BuildPanel.js'
+import { DecoratePanel } from './DecoratePanel.js'
 import { HistoryControlPanel } from './HistoryControlPanel.js'
 import { CustomUiPanel } from './CustomUiPanel.js'
 
 function RoomModePanel(props: { shard?: string | null }) {
   return (
     <Show when={roomViewMode() === 'flag'} fallback={
-      <Show when={roomViewMode() === 'build'} fallback={<SelectionList />}>
+      <Show when={roomViewMode() === 'build'} fallback={
+        <Show when={roomViewMode() === 'decorate'} fallback={<SelectionList />}>
+          <DecoratePanel />
+        </Show>
+      }>
         <BuildPanel shard={props.shard} />
       </Show>
     }>
@@ -146,17 +152,25 @@ export function Sidebar(props: SidebarProps) {
         <Switch
           fallback={
             <>
+              {/* The decorations placed in the room are the editor's counterpart to the
+                  picker's unplaced ones, so they belong to decorate mode rather than to
+                  every mode's sidebar. */}
+              <Show when={roomViewMode() === 'decorate'}>
+                <RoomDecorationsPanel />
+              </Show>
               <RoomModePanel shard={props.shard} />
               <CustomUiPanel mode="room" shard={props.shard ?? null} room={props.room} />
             </>
           }
         >
           <Match when={props.mapMode}>
-            <div style={{ 'padding-bottom': '8px', overflow: 'auto', 'min-height': 0 }}>
+            {/* Same split as room view: the info boxes take the free space and
+                scroll, so the custom UI stays pinned to the bottom. */}
+            <div style={{ flex: 1, overflow: 'auto', 'min-height': 0, 'padding-bottom': '8px' }}>
               <RoomInfoBox label="Selected" info={props.selectedRoomInfo ?? null} />
               <RoomInfoBox label="Cursor" info={props.hoveredRoomInfo ?? null} dim />
-              <CustomUiPanel mode="map" shard={props.shard ?? null} selectedRoomInfo={props.selectedRoomInfo ?? null} />
             </div>
+            <CustomUiPanel mode="map" shard={props.shard ?? null} selectedRoomInfo={props.selectedRoomInfo ?? null} />
           </Match>
           <Match when={props.gridMode}>
             <Show
