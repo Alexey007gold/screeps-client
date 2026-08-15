@@ -27,7 +27,7 @@ export interface GameEndpoints {
   roomTerrain(room: string, shard?: string | null, opts?: RequestOptions): Promise<ApiRoomTerrainResponse>
   /** @deprecated Not available on private servers (backend-local). Room objects are delivered via the `room:<name>` WebSocket channel. */
   roomObjects(room: string, shard?: string | null): Promise<ApiRoomObjectsResponse>
-  roomDecorations(room: string, shard?: string | null): Promise<ApiRoomDecorationsResponse>
+  roomDecorations(room: string, shard?: string | null, opts?: RequestOptions): Promise<ApiRoomDecorationsResponse>
   roomStatus(room: string, shard?: string | null): Promise<{ ok: number; status: string; novice?: string }>
   roomOverview(room: string, interval?: number, shard?: string | null): Promise<ApiRoomOverviewResponse>
   time(shard?: string | null): Promise<{ ok: number; time: number }>
@@ -76,7 +76,7 @@ export function createGameEndpoints(http: HttpClient, decorationsMock?: ApiRoomD
     roomObjects: (room, shard) => http.request('GET', '/api/game/room-objects', withShard({ room }, shard)),
     roomDecorations: decorationsMock
       ? () => Promise.resolve(decorationsMock)
-      : (room, shard) => http.request('GET', '/api/game/room-decorations', withShard({ room }, shard)),
+      : (room, shard, opts) => http.request('GET', '/api/game/room-decorations', withShard({ room }, shard), { ...opts, silent: true }),
     roomStatus: (room, shard) => http.request('GET', '/api/game/room-status', withShard({ room }, shard)),
     roomOverview: (room, interval = 8, shard) => http.request('GET', '/api/game/room-overview', withShard({ room, interval }, shard)),
     time: (shard) => http.request('GET', '/api/game/time', withShard({}, shard)),
