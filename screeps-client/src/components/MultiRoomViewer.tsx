@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MultiRoomRenderer, MAP2_MIN_ZOOM, FULL_DETAIL_ZOOM_THRESHOLD } from '~/renderer/MultiRoomRenderer.js'
 import { FullDetailRoomCoordinator } from '~/renderer/FullDetailRoomCoordinator.js'
 import type { SelectionVisual } from '~/renderer/HoverHighlightLayer.js'
-import { client, userInfo, worldBounds, setWorldBounds, tickDuration, recordGameTime, isPrivateServer } from '~/stores/clientStore.js'
+import { client, userInfo, worldBounds, setWorldBounds, tickDuration, setGameTime, recordGameTime, isPrivateServer } from '~/stores/clientStore.js'
 import { showCreepLabels, showRoomVisuals, roomDarkOverlay, showRoomDecorations } from '~/stores/settingsStore.js'
 import { parseRoomDecorations } from '~/renderer/roomDecorations.js'
 import { selection, setSelection, createSelectedObject, updateSelectionWithDiff, updateSelectionFromObjects } from '~/stores/selectionStore.js'
@@ -462,6 +462,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
       // must be treated as a full reconcile (mirrors RoomViewer's isFirstUpdate).
       const hadObjectLayer = renderer?.hasFullDetailObjects(data.room) ?? false
 
+      setGameTime(data.gameTime ?? null)
       recordGameTime(data.gameTime)
       const tickMs = tickDuration() ?? 2000
       renderer?.applyFullDetailUpdate(data.room, data.objects, data.diff, {
