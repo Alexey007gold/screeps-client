@@ -1,5 +1,12 @@
 # screeps-client-proxy
 
+## 0.1.10
+
+### Patch Changes
+
+- Updated dependencies [0942ea0]
+  - screeps-client@0.25.0
+
 ## 0.1.9
 
 ### Patch Changes
