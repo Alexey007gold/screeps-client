@@ -46,9 +46,11 @@ async function keychainDelete(account: string): Promise<void> {
   }
 }
 
+export type SavedCredentialType = 'password' | 'token'
+
 const tokenAccount = (url: string) => `${url}:token`
 const serverPasswordAccount = (url: string) => `${url}:serverPassword`
-const savedCredentialAccount = (url: string) => `${url}:savedCredential`
+const savedCredentialAccount = (url: string, type: SavedCredentialType) => `${url}:savedCredential:${type}`
 
 // Dispatch: OS keychain under Tauri, localStorage under the browser proxy, no-op
 // otherwise (plain browser without a secure store).
@@ -92,14 +94,14 @@ export async function deleteServerPasswordForUrl(url: string): Promise<void> {
   await secretDelete(serverPasswordAccount(url))
 }
 
-export async function saveSavedCredential(url: string, credential: string): Promise<void> {
-  await secretSave(savedCredentialAccount(url), credential)
+export async function saveSavedCredential(url: string, type: SavedCredentialType, credential: string): Promise<void> {
+  await secretSave(savedCredentialAccount(url, type), credential)
 }
 
-export async function loadSavedCredential(url: string): Promise<string | null> {
-  return secretLoad(savedCredentialAccount(url))
+export async function loadSavedCredential(url: string, type: SavedCredentialType): Promise<string | null> {
+  return secretLoad(savedCredentialAccount(url, type))
 }
 
-export async function deleteSavedCredential(url: string): Promise<void> {
-  await secretDelete(savedCredentialAccount(url))
+export async function deleteSavedCredential(url: string, type: SavedCredentialType): Promise<void> {
+  await secretDelete(savedCredentialAccount(url, type))
 }

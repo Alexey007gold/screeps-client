@@ -14,6 +14,8 @@ import {
   saveServerPasswordForUrl,
   loadServerPasswordForUrl,
   deleteServerPasswordForUrl,
+  loadSavedCredential,
+  deleteSavedCredential,
 } from '~/utils/keychain.js'
 
 
@@ -414,12 +416,26 @@ export async function tryAutoConnect(): Promise<void> {
     } else {
       await connect({ url, auth: 'token', token, serverPassword, authMethod: storedAuthMethod ?? 'token' })
     }
-  } catch {
-    log('auto-connect failed — clearing stored token')
+    return
+  } catch (err) {
+    log('auto-connect with cached session token failed:', err instanceof Error ? err.message : String(err))
     if (isTauri()) {
       void deleteTokenForUrl(url)
     } else {
       removeSession(SS.token)
+    }
+  }
+
+  if (isTauri() && storedAuthMethod === 'token') {
+    const savedToken = await loadSavedCredential(url, 'token')
+    if (savedToken && savedToken !== token) {
+      try {
+        await connect({ url, auth: 'token', token: savedToken, serverPassword, authMethod: 'token' })
+        log(`auto-connect recovered using saved token for ${url}`)
+      } catch (err) {
+        log('auto-connect retry with saved token failed:', err instanceof Error ? err.message : String(err))
+        void deleteSavedCredential(url, 'token')
+      }
     }
   }
 }

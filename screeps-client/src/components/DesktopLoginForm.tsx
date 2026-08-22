@@ -177,15 +177,35 @@ function ServerLoginForm(props: { server: ServerConfig }) {
 
   async function applyLoadedCredential(url: string) {
     log(`applyLoadedCredential: loading for "${url}"`)
-    const saved = await loadSavedCredential(url)
-    log(`applyLoadedCredential: result for "${url}" →`, saved !== null ? '[found]' : '[not found]')
-    if (saved !== null) {
+
+    if (props.server.forcedAuth === 'token' || props.server.forcedAuth === 'password') {
+      const forced = props.server.forcedAuth
+      const saved = await loadSavedCredential(url, forced)
+      log(`applyLoadedCredential: result for "${url}" (${forced}) →`, saved !== null ? '[found]' : '[not found]')
+      if (saved !== null) {
+        setCredentialSaved(true)
+        setSaveCredentials(true)
+        if (forced === 'token') setToken(saved)
+        else setPassword(saved)
+      }
+      return
+    }
+
+    const [savedToken, savedPassword] = await Promise.all([
+      loadSavedCredential(url, 'token'),
+      loadSavedCredential(url, 'password'),
+    ])
+    log(`applyLoadedCredential: result for "${url}" → token=${savedToken !== null ? '[found]' : '[not found]'} password=${savedPassword !== null ? '[found]' : '[not found]'}`)
+    if (savedToken !== null) {
+      setAuthType('token')
+      setToken(savedToken)
       setCredentialSaved(true)
       setSaveCredentials(true)
-      const auth = effectiveAuth()
-      log(`applyLoadedCredential: applying to field, effectiveAuth="${auth}"`)
-      if (auth === 'token') setToken(saved)
-      else setPassword(saved)
+    } else if (savedPassword !== null) {
+      setAuthType('password')
+      setPassword(savedPassword)
+      setCredentialSaved(true)
+      setSaveCredentials(true)
     }
   }
 
@@ -223,10 +243,11 @@ function ServerLoginForm(props: { server: ServerConfig }) {
 
   const handleSaveCredentialsChange = async (checked: boolean) => {
     setSaveCredentials(checked)
-    if (!checked && credentialSaved()) {
-      await deleteSavedCredential(props.server.url)
+    const auth = effectiveAuth()
+    if (!checked && credentialSaved() && auth !== 'guest') {
+      await deleteSavedCredential(props.server.url, auth)
       setCredentialSaved(false)
-      if (effectiveAuth() === 'token') setToken('')
+      if (auth === 'token') setToken('')
       else setPassword('')
     }
   }
@@ -235,12 +256,12 @@ function ServerLoginForm(props: { server: ServerConfig }) {
     e.preventDefault()
     const auth = effectiveAuth()
     const credential = auth === 'token' ? token() : auth === 'password' ? password() : null
-    const willSave = saveCredentials() && !credentialSaved() && credential !== null && credential !== ''
+    const willSave = auth !== 'guest' && saveCredentials() && !credentialSaved() && credential !== null && credential !== ''
     log(`handleSubmit: auth="${auth}" saveCredentials=${saveCredentials()} credentialSaved=${credentialSaved()} willSave=${willSave} credential=${credential !== null && credential !== '' ? '[present]' : '[empty]'}`)
 
     if (willSave) {
       log(`handleSubmit: saving credential for "${props.server.url}"`)
-      await saveSavedCredential(props.server.url, credential!)
+      await saveSavedCredential(props.server.url, auth as 'password' | 'token', credential!)
       setCredentialSaved(true)
       log(`handleSubmit: credential saved`)
     }
@@ -258,7 +279,7 @@ function ServerLoginForm(props: { server: ServerConfig }) {
     } catch {
       if (willSave) {
         log(`handleSubmit: connect failed, removing saved credential`)
-        void deleteSavedCredential(props.server.url)
+        void deleteSavedCredential(props.server.url, auth as 'password' | 'token')
         setCredentialSaved(false)
       }
     }
