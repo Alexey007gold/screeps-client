@@ -8,6 +8,7 @@ import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap } from './terrainCache.js'
+import { resolveDecorationAssetUrl } from './decorationTextures.js'
 import TerrainWorker from './terrain.worker.ts?worker'
 import { TERRAIN_WALL, TERRAIN_BORDER } from '~/renderer/colors.js'
 import {
@@ -296,6 +297,24 @@ export class MapRenderer {
   }
 
 
+  /**
+   * The bake worker fetches decoration textures itself, but it cannot reach the
+   * Tauri HTTP plugin (no `__TAURI_INTERNALS__` in workers), so its S3 requests
+   * would die on WebView CORS. Swapping the URLs for main-thread-resolved blob:
+   * URLs here keeps the worker's fetch path unchanged. A URL that fails to
+   * resolve is passed through as-is: the worker treats a failed texture load as
+   * a missing texture, same as before.
+   */
+  private async resolveDecorationUrls(decoration: MapDecorationRender): Promise<MapDecorationRender> {
+    const resolve = async <T extends { url: string }>(item: T): Promise<T> =>
+      ({ ...item, url: await resolveDecorationAssetUrl(item.url).catch(() => item.url) })
+    const [overlays, graffiti] = await Promise.all([
+      Promise.all(decoration.overlays.map(resolve)),
+      Promise.all(decoration.graffiti.map(resolve)),
+    ])
+    return { ...decoration, overlays, graffiti }
+  }
+
   private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array, decoration?: MapDecorationRender): Promise<ImageBitmap | null> {
     const shard = this.currentShard
     try {
@@ -313,7 +332,7 @@ export class MapRenderer {
       const promise = new Promise<ImageBitmap>((resolve, reject) => {
         this.pendingBakes.set(id, { roomName, lod, resolve, reject })
       })
-      this.worker.postMessage({ id, roomName, lod, raw, shard, decoration })
+      this.worker.postMessage({ id, roomName, lod, raw, shard, decoration: decoration && await this.resolveDecorationUrls(decoration) })
 
       return await promise
     } catch (e) {
