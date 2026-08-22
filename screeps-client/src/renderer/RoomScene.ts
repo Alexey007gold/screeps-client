@@ -145,6 +145,9 @@ export class RoomScene {
       this.objLayer.container.label = 'objects'
       this.objLayer.container.zIndex = Z.objects
       this.root.addChild(this.objLayer.container)
+      this.objLayer.rampartLayer.label = 'rampartGlow'
+      this.objLayer.rampartLayer.zIndex = Z.rampartGlow
+      this.root.addChild(this.objLayer.rampartLayer)
       this.objLayer.setLightingLayer(this.lighting)
 
       if (this.decoration?.roadColor != null) this.objLayer.setRoadColor(this.decoration.roadColor)
@@ -284,6 +287,7 @@ export class RoomScene {
       this.objLayer.destroy()
       this.root.removeChild(this.objLayer.container)
       this.objLayer.container.destroy({ children: true, context: true })
+      this.root.removeChild(this.objLayer.rampartLayer)
       this.objLayer = null
     }
     if (this.terrainLayer) {
