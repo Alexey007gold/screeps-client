@@ -266,12 +266,18 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
       worldStatusPollUntil = 0
       updateWorldStatusPolling(null)
       setSessionError('Lost connection to the server.')
+      screepsClient.disconnect()
     }
   })
 
   screepsClient.stores.server.on('server:error', (data) => {
     log('server error:', data.error.message)
     setSessionError(data.error.message)
+    screepsClient.disconnect()
+  })
+
+  screepsClient.stores.server.on('server:connected', () => {
+    setSessionError(null)
   })
 
   screepsClient.stores.user.on('user:me', (info) => {
