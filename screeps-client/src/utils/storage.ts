@@ -1,6 +1,7 @@
 // Centralized storage keys and helpers.
 // localStorage = persistent UI/settings; sessionStorage = auth tokens (cleared on browser close).
 
+import { createSignal } from 'solid-js'
 import { isTauri } from './tauri.js'
 import { isProxy } from './proxy.js'
 
@@ -13,8 +14,6 @@ function sessionBackend(): Storage {
 }
 
 export const LS = {
-  room: 'screeps:room',
-  shard: 'screeps:shard',
   sidebarWidth: 'screeps:sidebarWidth',
   consoleHeight: 'screeps:consoleHeight',
   consoleSplit: 'screeps:consoleSplit',
@@ -39,7 +38,15 @@ export const LS = {
   showMapVisuals: 'screeps:settings:showMapVisuals',
   hideCustomUiProtocol: 'screeps:settings:hideCustomUiProtocol',
   alliances: 'screeps:alliances',
+  showLog: 'screeps:show:log',
+  showConsole: 'screeps:show:console',
+  showMemory: 'screeps:show:memory',
+  showSegments: 'screeps:show:segments',
+  showCustomUiEditor: 'screeps:show:customUiEditor',
+  showCode: 'screeps:show:code',
   // Per-server prefixes — the active server URL is appended as ':<url>'.
+  room: 'screeps:room',
+  shard: 'screeps:shard',
   customUiSegment: 'screeps:customUi:segment',
   customUiShard: 'screeps:customUi:shard',
 } as const
@@ -83,6 +90,12 @@ export function getJson<T>(key: string, fallback: T): T {
 
 export function setJson(key: string, value: unknown): void {
   localStorage.setItem(key, JSON.stringify(value))
+}
+
+export function boolSetting(key: string, defaultVal: boolean): [() => boolean, (v: boolean) => void] {
+  const stored = localStorage.getItem(key)
+  const [val, setVal] = createSignal(stored !== null ? stored === 'true' : defaultVal)
+  return [val, (v: boolean) => { setVal(v); localStorage.setItem(key, String(v)) }]
 }
 
 export function getSession(key: string): string | null {

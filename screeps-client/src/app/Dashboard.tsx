@@ -54,12 +54,20 @@ import { parseRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
 import { buildMapUrl, buildRoomUrl, buildGridUrl, mapViewQuery, parseMapView, type MapView } from '~/utils/gameRoutes.js'
 import { isTypingTarget } from '~/utils/dom.js'
-import { LS, getStr, setStr, removeLocal, getNum, setNum } from '~/utils/storage.js'
+import { LS, SS, getStr, setStr, removeLocal, getNum, setNum, getSession, boolSetting } from '~/utils/storage.js'
 
 // Shard used to live in the ?shard query; it now sits in the path. Still read
 // the query as a fallback so old bookmarks keep resolving to the right shard.
 function legacyQueryShard(): string | null {
   return new URLSearchParams(window.location.search).get('shard')
+}
+
+function roomKey(): string {
+  return `${LS.room}:${getSession(SS.url) ?? ''}`
+}
+
+function shardKey(): string {
+  return `${LS.shard}:${getSession(SS.url) ?? ''}`
 }
 
 function parseRoomUrl(): { room: string | null; shard: string | null; tick: number | null } {
@@ -130,8 +138,9 @@ function HeaderButton(props: {
 export function Dashboard() {
   const urlState = parseRoomUrl()
   const initialMapUrl = parseMapUrl()
-  const [room, setRoom] = createSignal(urlState.room ?? getStr(LS.room) ?? 'W1N1')
-  const [shard, setShard] = createSignal<string | null>(urlState.shard ?? getStr(LS.shard))
+  const [room, setRoom] = createSignal(urlState.room ?? getStr(roomKey()) ?? 'W1N1')
+  const [shard, setShard] = createSignal<string | null>(urlState.shard ?? getStr(shardKey()))
+  onCleanup(() => history.replaceState(null, '', basePath() || '/'))
   // Three peer game sub-views. 'grid' is only ever entered explicitly (via its
   // own URL or the in-room toggle), never the default landing view.
   const [viewMode, setViewMode] = createSignal<'room' | 'map' | 'grid'>(
@@ -157,7 +166,7 @@ export function Dashboard() {
 
   const [showSettings, setShowSettings] = createSignal(false)
   const [showBadgePicker, setShowBadgePicker] = createSignal(!isGuest() && !userInfo()?.badge)
-  const [showCode, setShowCode] = createSignal(false)
+  const [showCode, setShowCode] = boolSetting(LS.showCode, false)
   // Suppresses sidebar transition for one render cycle whenever a full-canvas
   // overlay toggles, so both open and close are instant with no CSS animation.
   const [suppressSidebarTransition, setSuppressSidebarTransition] = createSignal(false)
@@ -386,7 +395,7 @@ export function Dashboard() {
   // dropping to the start room on a shard switch loses the spot being compared.
   const handleShardChange = (s: string) => {
     setShard(s)
-    setStr(LS.shard, s)
+    setStr(shardKey(), s)
     history.pushState(null, '', gridMode() ? buildGridUrl(s) : buildMapUrl(s, mapView() ?? undefined))
   }
 
@@ -470,7 +479,7 @@ export function Dashboard() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return
       if (e.key === 'o' || e.key === 'O') {
-        setShowCode((v) => !v)
+        setShowCode(!showCode())
         setShowSettings(false)
         return
       }
@@ -503,9 +512,9 @@ export function Dashboard() {
       setHoveredRoomInfo(null)
       setSelectedRoomInfo(null)
       setGridSelectedRoom(null)
-      setStr(LS.room, state.room)
-      if (state.shard) setStr(LS.shard, state.shard)
-      else removeLocal(LS.shard)
+      setStr(roomKey(), state.room)
+      if (state.shard) setStr(shardKey(), state.shard)
+      else removeLocal(shardKey())
       history.pushState(null, '', buildRoomUrl(state.room, state.shard))
     })
     onCleanup(() => navSub.dispose())
@@ -803,7 +812,7 @@ export function Dashboard() {
           <Trophy size={16} />
         </HeaderButton>
         <Show when={!isGuest()}>
-          <HeaderButton title="Code Editor" active={showCode()} onClick={() => { if (route() !== 'game') goToGame(); setShowCode((v) => !v); setShowSettings(false) }}>
+          <HeaderButton title="Code Editor" active={showCode()} onClick={() => { if (route() !== 'game') goToGame(); setShowCode(!showCode()); setShowSettings(false) }}>
             <Code2 size={16} />
           </HeaderButton>
         </Show>

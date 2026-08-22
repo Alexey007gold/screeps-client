@@ -1,15 +1,15 @@
 import { createSignal } from 'solid-js'
-import { LS, SS, getJson, setJson, getSession } from '~/utils/storage.js'
+import { LS, SS, getJson, setJson, getSession, boolSetting } from '~/utils/storage.js'
 
-const [showLog, setShowLog] = createSignal(true)
-const [showConsole, setShowConsole] = createSignal(true)
-const [showMemory, setShowMemory] = createSignal(false)
+const [showLog, setShowLog] = boolSetting(LS.showLog, true)
+const [showConsole, setShowConsole] = boolSetting(LS.showConsole, true)
+const [showMemory, setShowMemory] = boolSetting(LS.showMemory, false)
 // Segments is not a console pane — it opens the full-canvas SegmentsPanel
 // overlay (like the code editor), but its button lives in the console bar.
-const [showSegments, setShowSegments] = createSignal(false)
+const [showSegments, setShowSegments] = boolSetting(LS.showSegments, false)
 // The Custom UI editor is a full-canvas overlay (like the segments panel) but is
 // opened from Settings → Custom UI rather than the console bar.
-const [showCustomUiEditor, setShowCustomUiEditor] = createSignal(false)
+const [showCustomUiEditor, setShowCustomUiEditor] = boolSetting(LS.showCustomUiEditor, false)
 const [consoleInput, setConsoleInput] = createSignal('')
 
 let consoleInputEl: HTMLInputElement | undefined
@@ -117,17 +117,17 @@ export function resetHistoryCursor(): void {
 }
 
 export function toggleShowLog(): void {
-  setShowLog((prev) => !prev)
+  setShowLog(!showLog())
 }
 
 export function toggleShowConsole(): void {
-  setShowConsole((prev) => !prev)
+  setShowConsole(!showConsole())
 }
 
 export function toggleShowMemory(): void {
-  setShowMemory((prev) => !prev)
+  setShowMemory(!showMemory())
 }
 
 export function toggleShowSegments(): void {
-  setShowSegments((prev) => !prev)
+  setShowSegments(!showSegments())
 }
