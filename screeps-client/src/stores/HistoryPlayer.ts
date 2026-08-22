@@ -18,11 +18,23 @@ export class HistoryUnavailableError extends Error {
   }
 }
 
-function isNotFound(err: unknown): boolean {
+/** Thrown when a chunk response doesn't have the expected `{ ticks: {...} }` shape
+ *  (seen rarely from the official server) — treated the same as a 404. */
+class MalformedHistoryChunkError extends Error {}
+
+function isUnavailable(err: unknown): boolean {
+  if (err instanceof MalformedHistoryChunkError) return true
   const status = (err as { status?: number } | null)?.status
   if (status === 404) return true
   const message = (err as { message?: string } | null)?.message
   return typeof message === 'string' && message.includes('HTTP 404')
+}
+
+function assertValidChunk(chunk: RoomHistoryChunk, base: number): void {
+  const ticks = (chunk as { ticks?: unknown } | null)?.ticks
+  if (!ticks || typeof ticks !== 'object' || Array.isArray(ticks)) {
+    throw new MalformedHistoryChunkError(`Malformed history chunk for base ${base}`)
+  }
 }
 
 export class HistoryPlayer {
@@ -49,6 +61,7 @@ export class HistoryPlayer {
 
     const promise = this.http.game.roomHistory(this.room, base, this.shard)
       .then((chunk) => {
+        assertValidChunk(chunk, base)
         this.chunkCache.set(base, chunk)
         this.inflight.delete(base)
         return chunk
@@ -88,14 +101,14 @@ export class HistoryPlayer {
       // Chunk not yet written — fall back to the previous one
       const prevBase = base - this.chunkSize
       if (prevBase < 0) {
-        if (isNotFound(primaryErr)) throw new HistoryUnavailableError(`No history data available for tick ${tick}`)
+        if (isUnavailable(primaryErr)) throw new HistoryUnavailableError(`No history data available for tick ${tick}`)
         throw primaryErr
       }
       try {
         chunk = await this.loadChunk(prevBase)
       } catch (prevErr) {
         // Neither the requested chunk nor the previous one exists — genuinely no data.
-        if (isNotFound(prevErr)) throw new HistoryUnavailableError(`No history data available for tick ${tick}`)
+        if (isUnavailable(prevErr)) throw new HistoryUnavailableError(`No history data available for tick ${tick}`)
         throw prevErr
       }
       base = prevBase
