@@ -177,4 +177,16 @@ describe('SocketClient', () => {
     client.disconnect()
     expect(intentional).toBe(true)
   })
+
+  it('disconnected event has willReconnect: true for a non-intentional close, since a reconnect attempt is about to start', async () => {
+    const client = makeClient()
+    const ws = await connectClient(client)
+    let willReconnect: boolean | undefined
+    client.on('disconnected', (data) => {
+      willReconnect = (data as { willReconnect: boolean }).willReconnect
+    })
+    ws.simulateClose()
+    expect(willReconnect).toBe(true)
+    client.disconnect()
+  })
 })

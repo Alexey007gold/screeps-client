@@ -88,7 +88,8 @@ export class SocketClient {
         this.authed = false
         this.authSub?.dispose()
         this.authSub = null
-        this.emit('disconnected', { willReconnect: this.reconnecting, intentional: this._intentionalClose })
+        const willReconnect = !this._intentionalClose && this.token !== null
+        this.emit('disconnected', { willReconnect, intentional: this._intentionalClose })
         void this.scheduleReconnect()
       }
       this.ws.onerror = (err) => {
