@@ -5,7 +5,7 @@ export function StoreDetails(props: { store?: Record<string, number>; capacity?:
     const storeObj = props.store || {}
     const arr: [string, number][] = []
     for (const res in storeObj) {
-      arr.push([res, storeObj[res]])
+      if (storeObj[res] > 0) arr.push([res, storeObj[res]])
     }
     return arr
   }
