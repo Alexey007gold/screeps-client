@@ -50,7 +50,7 @@ import type { Badge } from 'screeps-connectivity'
 
 const DEFAULT_BADGE: Badge = { type: 1, color1: '#4a5060', color2: '#7a9ec0', color3: '#c0daf0', param: 0, flip: false }
 
-import { parseRoomName } from '~/utils/roomName.js'
+import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
 import { basePath } from '~/utils/embedded.js'
 import { buildMapUrl, buildRoomUrl, buildGridUrl, mapViewQuery, parseMapView, type MapView } from '~/utils/gameRoutes.js'
 import { isTypingTarget } from '~/utils/dom.js'
@@ -417,6 +417,17 @@ export function Dashboard() {
     history.pushState(null, '', buildGridUrl(shard()))
   }
 
+  const closeMapOrGrid = () => {
+    setViewMode('room')
+    history.pushState(null, '', buildRoomUrl(room(), shard()))
+  }
+
+  const mapCenterRoom = () => {
+    const pos = mapView()?.pos
+    return pos ? formatRoomName(Math.floor(pos.x), Math.floor(pos.y)) : room()
+  }
+  const gridCenterRoom = () => gridSelectedRoom() ?? room()
+
   // Serve popout windows for this session. Reactive rather than onMount: the
   // sid needs the user id, which can arrive after the Dashboard mounts.
   createEffect(() => {
@@ -777,6 +788,30 @@ export function Dashboard() {
           />
         </Show>
         <div style={{ flex: 1 }} />
+        <HeaderButton
+          title={route() === 'game' && mapMode() ? 'Close World Map' : 'World Map'}
+          active={route() === 'game' && mapMode()}
+          onClick={() => {
+            const wasGame = route() === 'game'
+            if (!wasGame) goToGame()
+            if (wasGame && mapMode()) closeMapOrGrid()
+            else openMap(gridMode() ? gridCenterRoom() : room())
+          }}
+        >
+          <Map size={16} />
+        </HeaderButton>
+        <HeaderButton
+          title={route() === 'game' && gridMode() ? 'Close Grid View' : 'Grid View'}
+          active={route() === 'game' && gridMode()}
+          onClick={() => {
+            const wasGame = route() === 'game'
+            if (!wasGame) goToGame()
+            if (wasGame && gridMode()) closeMapOrGrid()
+            else openGrid(mapMode() ? mapCenterRoom() : room())
+          }}
+        >
+          <LayoutGrid size={16} />
+        </HeaderButton>
         <HeaderButton
           title={route() === 'user' ? 'Close overview' : 'Overview'}
           active={route() === 'user'}
