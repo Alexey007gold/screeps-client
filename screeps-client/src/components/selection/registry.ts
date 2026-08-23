@@ -10,6 +10,7 @@ import { StoreStructureDetails } from './StoreStructureDetails.js'
 import { PowerBankDetails } from './PowerBankDetails.js'
 import { RuinDetails } from './RuinDetails.js'
 import { PortalDetails } from './PortalDetails.js'
+import { TombstoneDetails } from './TombstoneDetails.js'
 
 export { DefaultDetails }
 
@@ -31,4 +32,5 @@ export const CUSTOM_DETAILS: Record<string, (props: { item: SelectedObject }) =>
   powerBank: PowerBankDetails,
   ruin: RuinDetails,
   portal: PortalDetails,
+  tombstone: TombstoneDetails,
 }

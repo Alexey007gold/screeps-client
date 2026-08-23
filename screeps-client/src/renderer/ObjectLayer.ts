@@ -145,8 +145,7 @@ function resolveExitTargetPx(
 interface DeathTombstone { x: number; y: number; creepName: string }
 
 function tombstoneCreepName(obj: RoomObject): string | null {
-  const creep = obj.creep as { name?: unknown } | undefined
-  return typeof creep?.name === 'string' ? creep.name : null
+  return typeof obj.creepName === 'string' ? obj.creepName : null
 }
 
 function diedNearby(oldObj: RoomObject, tombstones: readonly DeathTombstone[]): boolean {

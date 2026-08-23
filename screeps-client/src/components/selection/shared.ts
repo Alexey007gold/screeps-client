@@ -28,6 +28,7 @@ export const OBJECT_COLORS: Record<string, string> = {
   portal:      '#a371f7',
   keeperLair:  '#f85149',
   energy:      '#d29922',
+  tombstone:   '#8b949e',
 }
 
 export const TYPE_LABELS: Record<string, string> = {
@@ -58,6 +59,7 @@ export const TYPE_LABELS: Record<string, string> = {
   keeperLair:  'Keeper Lair',
   energy:      'Energy',
   flag:        'Flag',
+  tombstone:   'Tombstone',
 }
 
 /** Fields we want to surface as key-value rows (exclude noisy / structural ones) */
