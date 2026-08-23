@@ -42,9 +42,9 @@ export function loadDecorationTexture(url: string): Promise<Texture> {
   const src = decorationTextureUrl(url)
   let promise = pending.get(src)
   if (!promise) {
-    const format = src.split('.').pop()
+    const parser = src.toLowerCase().endsWith('.svg') ? 'svg' : 'texture'
     promise = resolveDecorationAssetUrl(url)
-      .then((resolved) => Assets.load<Texture>({ src: resolved, format }))
+      .then((resolved) => Assets.load<Texture>({ src: resolved, parser }))
       .catch((err) => {
         pending.delete(src)
         throw err
