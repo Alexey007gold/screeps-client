@@ -6,7 +6,7 @@ import { UserLink } from '~/components/UserLink.js'
 import { HitsBar } from '~/components/MeterBar.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 import { StoreDetails } from './StoreDetails.js'
-import { BodyParts } from './BodyParts.js'
+import { BodyParts, type BodyPart } from './BodyParts.js'
 import { kvCell, kvGrid } from './shared.js'
 
 export function CreepDetails(props: { item: SelectedObject }) {
@@ -34,7 +34,7 @@ export function CreepDetails(props: { item: SelectedObject }) {
   const fatigue = () => typeof raw().fatigue === 'number' ? (raw().fatigue as number) : null
   const store = () => raw().store as Record<string, number> | undefined
   const storeCapacity = () => typeof raw().storeCapacity === 'number' ? (raw().storeCapacity as number) : null
-  const body = () => (raw().body as Array<{ type: string; hits?: number }> | undefined) ?? []
+  const body = () => (raw().body as BodyPart[] | undefined) ?? []
 
   // Which of the room's creep decorations actually land on this creep. Same owner,
   // same name-filter rules the renderer applies — reusing that keeps the panel from

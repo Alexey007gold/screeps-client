@@ -1,7 +1,8 @@
-import { For, Show } from 'solid-js'
+import { For, Index, Show, createSignal } from 'solid-js'
+import { Portal } from 'solid-js/web'
 
 export const BODY_PART_CSS: Record<string, string> = {
-  tough:         '#4c4c4c',
+  tough:         '#ffffff',
   move:          '#a9b7c6',
   work:          '#ffe56d',
   carry:         '#777777',
@@ -11,11 +12,22 @@ export const BODY_PART_CSS: Record<string, string> = {
   claim:         '#b99cfb',
 }
 
-export function BodyParts(props: { body: Array<{ type: string; hits?: number }> }) {
+export type BodyPart = { type: string; hits?: number; boost?: string | null }
+
+export function BodyParts(props: { body: BodyPart[] }) {
   const bodyGroups = () => {
     const counts = new Map<string, number>()
     for (const part of props.body) counts.set(part.type, (counts.get(part.type) ?? 0) + 1)
     return [...counts.entries()].map(([type, count]) => ({ type, count }))
+  }
+
+  const [hovered, setHovered] = createSignal<{ index: number; x: number; y: number } | null>(null)
+  const hoveredLabel = () => {
+    const h = hovered()
+    const part = h ? props.body[h.index] : undefined
+    if (!part) return null
+    const name = part.type.replace('_', ' ')
+    return part.boost ? `${name} (${part.boost})` : name
   }
 
   return (
@@ -24,29 +36,60 @@ export function BodyParts(props: { body: Array<{ type: string; hits?: number }> 
         <div style={{ padding: '4px 8px', background: '#161b22', color: '#8b949e', 'font-weight': 600 }}>
           Body ({props.body.length})
         </div>
-        <div style={{
-          display: 'flex',
-          'flex-wrap': 'wrap',
-          gap: '3px',
-          padding: '8px',
-          background: '#0d1117',
-        }}>
-          <For each={props.body}>
-            {(part) => (
+        <div
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            display: 'flex',
+            'flex-wrap': 'wrap',
+            gap: '5px',
+            padding: '8px',
+            background: '#0d1117',
+          }}
+        >
+          <Index each={props.body}>
+            {(part, index) => (
               <div
-                title={part.type.replace('_', ' ')}
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setHovered({ index, x: rect.left + rect.width / 2, y: rect.top })
+                }}
+                onMouseLeave={() => setHovered(null)}
                 style={{
                   width: '11px',
                   height: '11px',
                   'border-radius': '50%',
-                  background: BODY_PART_CSS[part.type] ?? '#484f58',
-                  opacity: part.hits === 0 ? 0.25 : 1,
+                  background: BODY_PART_CSS[part().type] ?? '#484f58',
+                  opacity: part().hits === 0 ? 0.25 : 1,
+                  'box-shadow': part().boost ? '0 0 0 2px #ffffff' : undefined,
                   'flex-shrink': 0,
                 }}
               />
             )}
-          </For>
+          </Index>
         </div>
+        <Show when={hoveredLabel()}>
+          {(label) => (
+            <Portal>
+              <div style={{
+                position: 'fixed',
+                left: `${hovered()!.x}px`,
+                top: `${hovered()!.y - 6}px`,
+                transform: 'translate(-50%, -100%)',
+                padding: '2px 6px',
+                background: '#161b22',
+                border: '1px solid #30363d',
+                'border-radius': '4px',
+                color: '#c9d1d9',
+                'font-size': '10px',
+                'white-space': 'nowrap',
+                'pointer-events': 'none',
+                'z-index': 1000,
+              }}>
+                {label()}
+              </div>
+            </Portal>
+          )}
+        </Show>
         <div style={{
           display: 'flex',
           'flex-wrap': 'wrap',
