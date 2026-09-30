@@ -1,7 +1,7 @@
 import { Container, Graphics, Ticker } from 'pixi.js'
 import { TILE_SIZE } from './RoomRenderer.js'
 import { destroyTree } from './destroyTree.js'
-import { ANIM_HARVEST, ANIM_UPGRADE, ANIM_BUILD, ANIM_REPAIR, ANIM_TRANSFER, ANIM_LINK_TRANSFER, ANIM_TOWER_ATTACK, ANIM_TOWER_HEAL, ANIM_TOWER_REPAIR, ANIM_LAB_REACTION } from './colors.js'
+import { ANIM_HARVEST, ANIM_UPGRADE, ANIM_BUILD, ANIM_REPAIR, ANIM_TRANSFER, ANIM_LINK_TRANSFER, ANIM_RANGED_ATTACK, ANIM_ATTACK, ANIM_HEAL, ANIM_DISMANTLE, ANIM_WITHDRAW, ANIM_CLAIM, ANIM_ATTACK_CONTROLLER, ANIM_TOWER_ATTACK, ANIM_TOWER_HEAL, ANIM_TOWER_REPAIR, ANIM_LAB_REACTION } from './colors.js'
 
 interface BeamAnimation {
   fromX: number
@@ -14,6 +14,19 @@ interface BeamAnimation {
   width: number
   glowAtSource?: boolean  // glow the source end instead of the target (harvest points source → creep)
 }
+
+interface WaveAnimation {
+  cx: number
+  cy: number
+  maxRadius: number
+  startTime: number
+  duration: number
+  color: number
+}
+
+const RANGED_MASS_ATTACK_RANGE = 3
+const WAVE_WIDTH = 2
+const WAVE_FILL_ALPHA = 0.12
 
 const BEAM_WIDTH = 2
 const TOWER_BEAM_WIDTH = 3  // tower beams read as a heavier shot than creep action beams
@@ -31,6 +44,7 @@ export class ActionAnimationLayer {
   readonly container: Container
   private graphics: Graphics
   private animations: BeamAnimation[] = []
+  private waves: WaveAnimation[] = []
   private ticker: Ticker | null = null
   private tickerCallback: (() => void) | null = null
 
@@ -159,6 +173,66 @@ export class ActionAnimationLayer {
     })
   }
 
+  private addCreepBeam(fromX: number, fromY: number, toX: number, toY: number, durationMs: number, color: number, glowAtSource = false): void {
+    const from = tileCenter(fromX, fromY)
+    const to = tileCenter(toX, toY)
+    this.animations.push({
+      fromX: from.cx,
+      fromY: from.cy,
+      toX: to.cx,
+      toY: to.cy,
+      startTime: performance.now(),
+      duration: durationMs,
+      color,
+      width: BEAM_WIDTH,
+      glowAtSource,
+    })
+  }
+
+  addRangedAttack(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_RANGED_ATTACK)
+  }
+
+  addAttack(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_ATTACK)
+  }
+
+  addHeal(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_HEAL)
+  }
+
+  addRangedHeal(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_HEAL)
+  }
+
+  addDismantle(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_DISMANTLE)
+  }
+
+  addWithdraw(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_WITHDRAW, true)
+  }
+
+  addReserveController(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_CLAIM)
+  }
+
+  addAttackController(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
+    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_ATTACK_CONTROLLER)
+  }
+
+  addRangedMassAttack(x: number, y: number, durationMs: number): void {
+    const center = tileCenter(x, y)
+    this.waves.push({
+      cx: center.cx,
+      cy: center.cy,
+      maxRadius: (RANGED_MASS_ATTACK_RANGE + 0.5) * TILE_SIZE,
+      startTime: performance.now(),
+      duration: durationMs,
+      color: ANIM_RANGED_ATTACK,
+    })
+  }
+
   private addTowerBeam(fromX: number, fromY: number, toX: number, toY: number, durationMs: number, color: number): void {
     const from = tileCenter(fromX, fromY)
     const to = tileCenter(toX, toY)
@@ -250,6 +324,24 @@ export class ActionAnimationLayer {
       }
     }
 
+    for (let i = this.waves.length - 1; i >= 0; i--) {
+      const wave = this.waves[i]
+      const progress = Math.min(1, (now - wave.startTime) / wave.duration)
+      const eased = 1 - (1 - progress) * (1 - progress)
+      const radius = Math.max(1, wave.maxRadius * eased)
+      const alpha = 1 - progress
+
+      this.graphics.circle(wave.cx, wave.cy, radius)
+      this.graphics.fill({ color: wave.color, alpha: alpha * WAVE_FILL_ALPHA })
+      this.graphics.circle(wave.cx, wave.cy, radius)
+      this.graphics.stroke({ width: WAVE_WIDTH, color: wave.color, alpha })
+      anyActive = true
+
+      if (progress >= 1) {
+        this.waves.splice(i, 1)
+      }
+    }
+
     if (!anyActive) {
       this.graphics.clear()
     }
@@ -257,6 +349,7 @@ export class ActionAnimationLayer {
 
   clear(): void {
     this.animations.length = 0
+    this.waves.length = 0
     this.graphics.clear()
   }
 

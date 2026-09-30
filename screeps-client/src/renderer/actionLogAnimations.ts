@@ -40,6 +40,41 @@ function renderCreepActionBeams(
   if (transfer) {
     animLayer.addTransfer(fromX, fromY, transfer.x, transfer.y, beamDuration)
   }
+  const rangedAttack = actionLog.rangedAttack as { x: number; y: number } | null | undefined
+  if (rangedAttack) {
+    animLayer.addRangedAttack(fromX, fromY, rangedAttack.x, rangedAttack.y, beamDuration)
+  }
+  const attack = actionLog.attack as { x: number; y: number } | null | undefined
+  if (attack) {
+    animLayer.addAttack(fromX, fromY, attack.x, attack.y, beamDuration)
+  }
+  const heal = actionLog.heal as { x: number; y: number } | null | undefined
+  if (heal) {
+    animLayer.addHeal(fromX, fromY, heal.x, heal.y, beamDuration)
+  }
+  const rangedHeal = actionLog.rangedHeal as { x: number; y: number } | null | undefined
+  if (rangedHeal) {
+    animLayer.addRangedHeal(fromX, fromY, rangedHeal.x, rangedHeal.y, beamDuration)
+  }
+  const dismantle = actionLog.dismantle as { x: number; y: number } | null | undefined
+  if (dismantle) {
+    animLayer.addDismantle(fromX, fromY, dismantle.x, dismantle.y, beamDuration)
+  }
+  const withdraw = actionLog.withdraw as { x: number; y: number } | null | undefined
+  if (withdraw) {
+    animLayer.addWithdraw(withdraw.x, withdraw.y, fromX, fromY, beamDuration)
+  }
+  const reserveController = actionLog.reserveController as { x: number; y: number } | null | undefined
+  if (reserveController) {
+    animLayer.addReserveController(fromX, fromY, reserveController.x, reserveController.y, beamDuration)
+  }
+  const attackController = actionLog.attackController as { x: number; y: number } | null | undefined
+  if (attackController) {
+    animLayer.addAttackController(fromX, fromY, attackController.x, attackController.y, beamDuration)
+  }
+  if (actionLog.rangedMassAttack) {
+    animLayer.addRangedMassAttack(fromX, fromY, beamDuration)
+  }
 }
 
 // One attempt at recovering a departed creep's beam from the neighboring room it
