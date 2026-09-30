@@ -1,5 +1,5 @@
 import { createSignal } from 'solid-js'
-import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage } from 'screeps-connectivity'
+import { ScreepsClient, PasswordAuth, TokenAuth, GuestAuth, IndexedDBStorage, SocketAuthError } from 'screeps-connectivity'
 import type { AuthStrategy, StorageAdapter, UserInfo, ServerVersion, WorldInfo, WorldStatus, ApiRoomDecorationsResponse } from 'screeps-connectivity'
 import { addToast } from './toastStore.js'
 import { isEmbedded, embeddedServerUrl, embeddedServerVersion } from '~/utils/embedded.js'
@@ -58,6 +58,7 @@ const [authMethod, setAuthMethod] = createSignal<'password' | 'steam' | 'discord
 const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
 const [userFlags, setUserFlags] = createSignal<Record<string, UserFlag>>({})
 const [worldStatus, setWorldStatus] = createSignal<WorldStatus | null>(null)
+let passwordLoginEmail: string | null = null
 
 // While the user has lost all spawns ('lost') or hasn't placed a first spawn
 // ('empty'), world status only refreshes on the slow idle path, so a respawn or
@@ -305,8 +306,14 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     updateWorldStatusPolling(status)
   })
 
-  await screepsClient.connect()
+  try {
+    await screepsClient.connect()
+  } catch (err) {
+    screepsClient.disconnect()
+    throw err
+  }
   screepsClient.stores.user.subscribeUserStream()
+  passwordLoginEmail = opts.auth === 'password' ? opts.email ?? null : null
   setSession(SS.url, opts.url)
   const resolvedAuthMethod = opts.authMethod ?? opts.auth
   setAuthMethod(resolvedAuthMethod)
@@ -385,16 +392,51 @@ export async function retryConnection(): Promise<boolean> {
     : { url, auth: 'token', token, serverPassword, authMethod: storedAuthMethod ?? 'token' }
 
   try {
-    const screepsClient = await establishClient(opts)
-    setClient(screepsClient)
-    setStatus('connected')
-    setSessionError(null)
-    log(`reconnected to ${url}`)
+    adoptRecoveredClient(url, await establishClient(opts))
     return true
   } catch (err) {
     log('retry failed:', err instanceof Error ? err.message : String(err))
+    if (!(err instanceof SocketAuthError)) return false
+  }
+
+  const reloginOpts = await savedCredentialLogin(url, storedAuthMethod, token, serverPassword)
+  if (!reloginOpts) return false
+  try {
+    adoptRecoveredClient(url, await establishClient(reloginOpts))
+    log(`session token rejected — signed in again with saved ${reloginOpts.auth} credential`)
+    return true
+  } catch (err) {
+    log('re-login with saved credential failed:', err instanceof Error ? err.message : String(err))
     return false
   }
+}
+
+function adoptRecoveredClient(url: string, screepsClient: ScreepsClient): void {
+  setClient(screepsClient)
+  setStatus('connected')
+  setSessionError(null)
+  log(`reconnected to ${url}`)
+}
+
+async function savedCredentialLogin(
+  url: string,
+  storedAuthMethod: string | null,
+  rejectedToken: string,
+  serverPassword: string | undefined,
+): Promise<ConnectOpts | null> {
+  if (!isTauri()) return null
+  if (storedAuthMethod === 'password') {
+    const password = await loadSavedCredential(url, 'password')
+    const login = passwordLoginEmail ?? userInfo()?.username ?? null
+    if (!password || !login) return null
+    return { url, auth: 'password', authMethod: 'password', email: login, password, serverPassword, storage: null }
+  }
+  if (storedAuthMethod === 'token') {
+    const savedToken = await loadSavedCredential(url, 'token')
+    if (!savedToken || savedToken === rejectedToken) return null
+    return { url, auth: 'token', authMethod: 'token', token: savedToken, serverPassword }
+  }
+  return null
 }
 
 export async function tryAutoConnect(): Promise<void> {
@@ -472,6 +514,7 @@ export function disconnect(): void {
   setSessionError(null)
   setRateLimitError(null)
   setUserInfo(null)
+  passwordLoginEmail = null
   setServerVersion(null)
   setGameTime(null)
   setIsGuest(false)
