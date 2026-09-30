@@ -108,7 +108,13 @@ export function formatValue(value: unknown): string | null {
   return null
 }
 
-export const kvCell = (muted = false): Record<string, string> => ({
+export function remainingCooldown(raw: Record<string, unknown>, gameTime: number | null): number | null {
+  if (typeof raw.cooldownTime === 'number') return gameTime !== null ? Math.max(0, raw.cooldownTime - gameTime) : null
+  if (typeof raw.cooldown === 'number') return raw.cooldown
+  return null
+}
+
+export const kvCell =(muted = false): Record<string, string> => ({
   padding: '3px 8px',
   background: '#0d1117',
   color: muted ? '#8b949e' : '#c9d1d9',

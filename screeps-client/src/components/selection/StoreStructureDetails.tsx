@@ -3,13 +3,15 @@ import { formatLargeNumber } from '~/utils/formatNumber.js'
 import { MeterBar, HitsBar } from '~/components/MeterBar.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 import { StoreDetails } from './StoreDetails.js'
-import { kvCell, kvGrid } from './shared.js'
+import { gameTime } from '~/stores/clientStore.js'
+import { kvCell, kvGrid, remainingCooldown } from './shared.js'
 
 export function StoreStructureDetails(props: { item: SelectedObject }) {
   const raw = () => props.item.raw as Record<string, unknown>
 
   const hits = () => typeof raw().hits === 'number' ? (raw().hits as number) : null
   const hitsMax = () => typeof raw().hitsMax === 'number' ? (raw().hitsMax as number) : null
+  const cooldown = () => remainingCooldown(raw(), gameTime())
   const store = () => raw().store as Record<string, number> | undefined
   const capacity = () => {
     if (typeof raw().storeCapacity === 'number') return raw().storeCapacity as number
@@ -32,10 +34,21 @@ export function StoreStructureDetails(props: { item: SelectedObject }) {
 
   return (
     <div>
-      <Show when={hits() !== null && hitsMax() !== null}>
+      <Show when={(hits() !== null && hitsMax() !== null) || cooldown() !== null}>
         <div style={kvGrid}>
-          <div style={kvCell(true)}>Hits</div>
-          <div style={{ ...kvCell(), 'font-variant-numeric': 'tabular-nums' }}>{hits()} / {hitsMax()}</div>
+          <Show when={hits() !== null && hitsMax() !== null}>
+            <>
+              <div style={kvCell(true)}>Hits</div>
+              <div style={{ ...kvCell(), 'font-variant-numeric': 'tabular-nums' }}>{hits()} / {hitsMax()}</div>
+            </>
+          </Show>
+
+          <Show when={cooldown() !== null}>
+            <>
+              <div style={kvCell(true)}>Cooldown</div>
+              <div style={{ ...kvCell(), 'font-variant-numeric': 'tabular-nums' }}>{cooldown()}</div>
+            </>
+          </Show>
         </div>
       </Show>
 
