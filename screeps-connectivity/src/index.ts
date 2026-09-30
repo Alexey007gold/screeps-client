@@ -15,6 +15,8 @@ export { IndexedDBStorage } from './storage/IndexedDBStorage.js'
 export { NullStorage } from './storage/NullStorage.js'
 export type { StorageAdapter } from './storage/StorageAdapter.js'
 
+export { SocketAuthError } from './socket/SocketClient.js'
+
 export { SubscriptionGroup } from './subscription/index.js'
 export type { Subscription } from './subscription/index.js'
 

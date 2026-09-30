@@ -4,6 +4,12 @@ import type { Subscription } from '../subscription/index.js'
 
 type WsConstructor = typeof globalThis.WebSocket
 
+export class SocketAuthError extends Error {
+  constructor() {
+    super('WebSocket auth failed')
+  }
+}
+
 export class SocketClient {
   private readonly wsUrl: string
   private readonly WS: WsConstructor
@@ -57,7 +63,6 @@ export class SocketClient {
       this.ws.onopen = () => {
         this.logger.log('WebSocket opened')
         this._connected = true
-        this.reconnecting = false
         this.rawSend(`auth ${this.token}`)
         this.authSub = this.once('auth', (data) => {
           const cmd = data as { status: string; token?: string }
@@ -78,7 +83,7 @@ export class SocketClient {
             resolve()
           } else {
             this.logger.log('auth failed')
-            reject(new Error('WebSocket auth failed'))
+            reject(new SocketAuthError())
           }
         })
       }
@@ -90,6 +95,7 @@ export class SocketClient {
         this.authSub = null
         const willReconnect = !this._intentionalClose && this.token !== null
         this.emit('disconnected', { willReconnect, intentional: this._intentionalClose })
+        reject(new Error('WebSocket closed before auth completed'))
         void this.scheduleReconnect()
       }
       this.ws.onerror = (err) => {
@@ -207,11 +213,17 @@ export class SocketClient {
           this.ws = null
           return
         }
+        this.reconnecting = false
         for (const channel of this.subs.keys()) {
           this.rawSend(`subscribe ${channel}`)
         }
         return
-      } catch {
+      } catch (err) {
+        if (err instanceof SocketAuthError) {
+          this.disconnect()
+          this.emit('socket:error', err)
+          return
+        }
         retries++
       }
     }

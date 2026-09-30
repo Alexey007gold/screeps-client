@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SocketClient } from '../../src/socket/SocketClient.js'
 
 class MockWS {
@@ -188,5 +188,73 @@ describe('SocketClient', () => {
     ws.simulateClose()
     expect(willReconnect).toBe(true)
     client.disconnect()
+  })
+
+  describe('reconnect', () => {
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+
+    it('emits socket:error and closes the socket when the restarted server rejects the token', async () => {
+      const client = makeClient()
+      const ws = await connectClient(client)
+      const errors: unknown[] = []
+      client.on('socket:error', (err) => errors.push(err))
+
+      ws.simulateClose()
+      await vi.advanceTimersByTimeAsync(100)
+      const retryWs = MockWS.instances[1]
+      retryWs.simulateOpen()
+      retryWs.simulateMessage('auth failed')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(errors).toHaveLength(1)
+      expect(client.isConnected).toBe(false)
+    })
+
+    it('keeps retrying when a reconnect attempt closes before auth completes', async () => {
+      const client = makeClient()
+      const ws = await connectClient(client)
+
+      ws.simulateClose()
+      await vi.advanceTimersByTimeAsync(100)
+      const firstRetry = MockWS.instances[1]
+      firstRetry.simulateOpen()
+      firstRetry.simulateClose()
+      await vi.advanceTimersByTimeAsync(200)
+
+      const secondRetry = MockWS.instances[2]
+      secondRetry.simulateOpen()
+      secondRetry.simulateMessage('auth ok tok2')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(client.isConnected).toBe(true)
+      expect(MockWS.instances).toHaveLength(3)
+      client.disconnect()
+    })
+
+    it('reconnects again after a later drop once a reconnect has succeeded', async () => {
+      const client = makeClient()
+      const ws = await connectClient(client)
+      client.subscribe('room:shard0/W1N1')
+
+      ws.simulateClose()
+      await vi.advanceTimersByTimeAsync(100)
+      const firstRetry = MockWS.instances[1]
+      firstRetry.simulateOpen()
+      firstRetry.simulateMessage('auth ok tok2')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(firstRetry.sent).toContain('subscribe room:shard0/W1N1')
+
+      firstRetry.simulateClose()
+      await vi.advanceTimersByTimeAsync(100)
+      const secondRetry = MockWS.instances[2]
+      secondRetry.simulateOpen()
+      secondRetry.simulateMessage('auth ok tok3')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(client.isConnected).toBe(true)
+      expect(secondRetry.sent).toContain('subscribe room:shard0/W1N1')
+      client.disconnect()
+    })
   })
 })
