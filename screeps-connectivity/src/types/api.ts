@@ -380,8 +380,35 @@ export interface ApiUserMoneyHistoryResponse {
     change: number
     // Shard the transaction occurred on (official multi-shard servers only).
     shard?: string
-    market?: unknown
+    market?: ApiUserMoneyHistoryMarket
   }>
+}
+
+export interface ApiUserMoneyHistoryMarket {
+  resourceType?: string
+  amount?: number
+  price?: number
+  roomName?: string
+  targetRoomName?: string
+  npc?: boolean
+  owner?: string
+  dealer?: string
+  order?: {
+    type?: 'sell' | 'buy'
+    resourceType?: string
+    price?: number
+    totalAmount?: number
+    roomName?: string
+  }
+  extendOrder?: {
+    orderId?: string
+    addAmount?: number
+  }
+  changeOrderPrice?: {
+    orderId?: string
+    oldPrice?: number
+    newPrice?: number
+  }
 }
 
 // Market — a single order from game/market/orders (public) or my-orders (own).

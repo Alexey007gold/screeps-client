@@ -2,11 +2,23 @@ import { createSignal, onMount, For, Show } from 'solid-js'
 import { RefreshCw, ChevronsLeft, ChevronsRight } from 'lucide-solid'
 import type { ApiUserMoneyHistoryResponse } from 'screeps-connectivity'
 import { client } from '~/stores/clientStore.js'
-import { PANEL, BORDER, TEXT, MUTED, POS, NEG, fmtPrice } from './theme.js'
+import { goToMarketResource } from '~/stores/routeStore.js'
+import { resourceDisplayName } from '~/data/resources.js'
+import { ResourceSwatch } from './ResourceSwatch.js'
+import { PANEL, BORDER, TEXT, MUTED, ACCENT, POS, NEG, fmtAmount, fmtPrice } from './theme.js'
 import { Card, rowBg } from './ui.js'
 import { isMultiShard } from './shardState.js'
 
 type Entry = ApiUserMoneyHistoryResponse['list'][number]
+
+function tradedResource(entry: Entry): string | undefined {
+  return entry.market?.resourceType ?? entry.market?.order?.resourceType
+}
+
+function tradedAmount(entry: Entry): number | undefined {
+  const m = entry.market
+  return m?.amount ?? m?.order?.totalAmount ?? m?.extendOrder?.addAmount
+}
 
 // Human-readable description for a credit-ledger entry. Market transactions get
 // explicit copy; anything else falls back to its dotted type made readable.
@@ -92,6 +104,8 @@ export function MarketHistory() {
                 </Show>
                 <th style={{ 'font-weight': 400, padding: '0 0 7px', 'border-bottom': `1px solid ${BORDER}` }}>Tick</th>
                 <th style={{ 'text-align': 'left', 'font-weight': 400, padding: '0 12px 7px', 'border-bottom': `1px solid ${BORDER}` }}>Description</th>
+                <th style={{ 'text-align': 'left', 'font-weight': 400, padding: '0 0 7px', 'border-bottom': `1px solid ${BORDER}` }}>Resource</th>
+                <th style={{ 'font-weight': 400, padding: '0 12px 7px 0', 'border-bottom': `1px solid ${BORDER}` }}>Amount</th>
                 <th style={{ 'font-weight': 400, padding: '0 0 7px', 'border-bottom': `1px solid ${BORDER}` }}>Change</th>
                 <th style={{ 'font-weight': 400, padding: '0 6px 7px 0', 'border-bottom': `1px solid ${BORDER}` }}>Balance</th>
               </tr>
@@ -106,6 +120,23 @@ export function MarketHistory() {
                     </Show>
                     <td style={{ color: MUTED, 'font-variant-numeric': 'tabular-nums', padding: '7px 0' }}>{e.tick}</td>
                     <td style={{ 'text-align': 'left', color: TEXT, padding: '7px 12px' }}>{describe(e)}</td>
+                    <td style={{ 'text-align': 'left', padding: '7px 0' }}>
+                      <Show when={tradedResource(e)} fallback={<span style={{ color: MUTED }}>—</span>}>
+                        {(resourceType) => (
+                          <a
+                            href="#"
+                            onClick={(ev) => { ev.preventDefault(); goToMarketResource(resourceType(), e.shard) }}
+                            style={{ display: 'inline-flex', 'align-items': 'center', gap: '8px', color: ACCENT, 'text-decoration': 'none' }}
+                          >
+                            <ResourceSwatch resourceType={resourceType()} size={16} />
+                            {resourceDisplayName(resourceType())}
+                          </a>
+                        )}
+                      </Show>
+                    </td>
+                    <td style={{ color: tradedAmount(e) == null ? MUTED : TEXT, 'font-variant-numeric': 'tabular-nums', padding: '7px 12px 7px 0' }}>
+                      {fmtAmount(tradedAmount(e))}
+                    </td>
                     <td style={{ color: e.change > 0 ? POS : e.change < 0 ? NEG : MUTED, 'font-variant-numeric': 'tabular-nums', padding: '7px 0' }}>
                       {e.change > 0 ? '+' : ''}{fmtPrice(e.change)}
                     </td>
