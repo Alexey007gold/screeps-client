@@ -154,7 +154,7 @@ export const ST_POWER          = 0xF53547  // power red
 // Canonical resource → display colour. Single source of truth for both the mineral
 // deposit discs and the structure store-fill bands, so a given resource reads the same
 // everywhere. Clean-room approximations of the in-game hues — tuned by eye, not lifted.
-export const ST_RESOURCE_OTHER = 0x6C6C6C  // commodities / unknown fallback
+export const ST_RESOURCE_OTHER = 0xFFFFFF  // commodities / unknown fallback
 export const RESOURCE_COLORS: Record<string, number> = {
   energy: ST_ENERGY,
   power:  ST_POWER,

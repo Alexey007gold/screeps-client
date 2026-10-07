@@ -2,7 +2,7 @@ import { Texture } from 'pixi.js'
 import type { RoomObject } from 'screeps-connectivity'
 import { defaultSpriteTheme } from '../themes/default.js'
 import { TILE_SIZE } from '../RoomRenderer.js'
-import { OBJECT_COLORS, OBJ_DEFAULT, ST_RESOURCE_OTHER, RESOURCE_COLORS } from '../colors.js'
+import { OBJECT_COLORS, OBJ_DEFAULT } from '../colors.js'
 import { type ContainerWithTarget } from './types.js'
 import { destroyTree } from '../destroyTree.js'
 
@@ -32,9 +32,7 @@ export function getObjectColor(type: string): number {
 // ── Terminal / lab / nuker / factory fills ──────────────────────────────────
 // These structures tint their fill by resource type (shared band palette), rather
 // than showing only how full they are.
-export function resourceColor(res: string): number {
-  return RESOURCE_COLORS[res] ?? ST_RESOURCE_OTHER
-}
+export { resourceColor } from '~/data/resources.js'
 
 export function calcCenterFillFraction(used: number, capacity: number): number {
   if (capacity <= 0 || used <= 0) return 0

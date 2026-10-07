@@ -1,6 +1,7 @@
 import { Graphics } from 'pixi.js'
 import type { RoomObject } from 'screeps-connectivity'
-import { ST_ENERGY, ST_RESOURCE_OTHER, RESOURCE_COLORS } from '../colors.js'
+import { ST_ENERGY } from '../colors.js'
+import { resourceColor } from '~/data/resources.js'
 
 // Store-band helpers: break a store into stacked colored resource bands.
 export interface StoreBand { color: number; amount: number }
@@ -12,9 +13,9 @@ export const BAND_ORDER = ['energy', 'power']
 // the band amounts, so callers size the fill from a single total exactly as before;
 // `dominant` is the highest-amount resource (null when empty), for single-tint structures.
 export function getStoreBands(obj: RoomObject): { bands: StoreBand[]; used: number; capacity: number; dominant: string | null } {
-  const capacity = typeof obj.storeCapacity === 'number' ? obj.storeCapacity : 0
-  if (capacity === 0 || !obj.store || typeof obj.store !== 'object') {
-    return { bands: [], used: 0, capacity: 0, dominant: null }
+  const declaredCapacity = typeof obj.storeCapacity === 'number' ? obj.storeCapacity : 0
+  if (!obj.store || typeof obj.store !== 'object') {
+    return { bands: [], used: 0, capacity: declaredCapacity, dominant: null }
   }
   const store = obj.store as Record<string, unknown>
   const entries: Array<[string, number]> = []
@@ -34,9 +35,9 @@ export function getStoreBands(obj: RoomObject): { bands: StoreBand[]; used: numb
   let used = 0
   const bands = entries.map(([res, amount]): StoreBand => {
     used += amount
-    return { color: RESOURCE_COLORS[res] ?? ST_RESOURCE_OTHER, amount }
+    return { color: resourceColor(res), amount }
   })
-  return { bands, used, capacity, dominant }
+  return { bands, used, capacity: declaredCapacity > 0 ? declaredCapacity : used, dominant }
 }
 
 // Stack resource bands bottom-up inside a box. `yBottom` is the box floor; `height` is the
