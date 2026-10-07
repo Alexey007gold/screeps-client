@@ -7,6 +7,7 @@ import { HitsBar } from '~/components/MeterBar.js'
 import type { SelectedObject } from '~/stores/selectionStore.js'
 import { StoreDetails } from './StoreDetails.js'
 import { BodyParts, type BodyPart } from './BodyParts.js'
+import { SpawningDetails } from './SpawningDetails.js'
 import { kvCell, kvGrid } from './shared.js'
 
 export function CreepDetails(props: { item: SelectedObject }) {
@@ -82,6 +83,8 @@ export function CreepDetails(props: { item: SelectedObject }) {
             <div style={{ ...kvCell(), 'font-variant-numeric': 'tabular-nums', color: fatigue()! > 0 ? '#e3b341' : undefined }}>{fatigue()}</div>
           </>
         </Show>
+
+        <SpawningDetails creep={raw()} />
       </div>
 
       <HitsBar hits={hits()} max={hitsMax()} />
