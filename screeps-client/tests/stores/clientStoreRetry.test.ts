@@ -24,7 +24,7 @@ class FakeTokenAuth {
   constructor(public opts: { token: string }) {}
 }
 
-type Failure = 'none' | 'tokenRejected' | 'serverDown'
+type Failure = 'none' | 'tokenRejected' | 'cachedTokenRejected' | 'serverDown'
 
 class FakeScreepsClient {
   static instances: FakeScreepsClient[] = []
@@ -42,6 +42,13 @@ class FakeScreepsClient {
   async connect() {
     if (FakeScreepsClient.failure === 'serverDown') throw new Error('connection refused')
     if (FakeScreepsClient.failure === 'tokenRejected' && this.opts.auth instanceof FakeTokenAuth) {
+      throw new FakeSocketAuthError('WebSocket auth failed')
+    }
+    if (
+      FakeScreepsClient.failure === 'cachedTokenRejected'
+      && this.opts.auth instanceof FakeTokenAuth
+      && this.opts.auth.opts.token === 'cached-session-token'
+    ) {
       throw new FakeSocketAuthError('WebSocket auth failed')
     }
   }
@@ -70,11 +77,13 @@ vi.mock('../../src/utils/keychain.js', () => ({
   deleteServerPasswordForUrl: async () => {},
   loadSavedCredential: async (url: string, type: string) => secrets.get(`${url}:saved:${type}`) ?? null,
   deleteSavedCredential: async (url: string, type: string) => { secrets.delete(`${url}:saved:${type}`) },
+  loadSavedUsername: async (url: string) => secrets.get(`${url}:saved:username`) ?? null,
 }))
 
 const URL = 'http://test-server.local:21025'
 
 beforeEach(() => {
+  vi.resetModules()
   FakeScreepsClient.instances = []
   FakeScreepsClient.failure = 'none'
   secrets.clear()
@@ -126,6 +135,25 @@ describe('retryConnection after the server restarted and rejects the session tok
     expect(client()).toBe(lastInstance())
   })
 
+  it('prefers the saved username over the signed-in display name', async () => {
+    const { tryAutoConnect, retryConnection } = await import('../../src/stores/clientStore.js')
+    secrets.set(`${URL}:saved:password`, 'saved-pw')
+    secrets.set(`${URL}:saved:username`, 'me@mail.test')
+    secrets.set(`${URL}:token`, 'cached-session-token')
+    localStorage.setItem('screeps:url', URL)
+    localStorage.setItem('screeps:authMethod', 'password')
+    await tryAutoConnect()
+    const restored = lastInstance()
+    restored.stores.user.emit('user:me', { username: 'player', _id: 'u1' })
+    restored.stores.server.emit('server:error', { error: new Error('WebSocket auth failed') })
+    FakeScreepsClient.failure = 'tokenRejected'
+
+    const recovered = await retryConnection()
+
+    expect(recovered).toBe(true)
+    expect((lastInstance().opts.auth as FakePasswordAuth).opts).toEqual({ email: 'me@mail.test', password: 'saved-pw' })
+  })
+
   it('does not attempt a password sign-in while the server is still unreachable', async () => {
     const { connect, retryConnection } = await import('../../src/stores/clientStore.js')
     secrets.set(`${URL}:saved:password`, 'saved-pw')
@@ -141,5 +169,70 @@ describe('retryConnection after the server restarted and rejects the session tok
     expect(attempts).toHaveLength(1)
     expect(attempts[0].opts.auth).toBeInstanceOf(FakeTokenAuth)
     expect(attempts[0].disconnectCalls).toBe(1)
+  })
+})
+
+describe('tryAutoConnect on app launch when the cached session token is rejected', () => {
+  function persistSession(authMethod: string) {
+    secrets.set(`${URL}:token`, 'cached-session-token')
+    localStorage.setItem('screeps:url', URL)
+    localStorage.setItem('screeps:authMethod', authMethod)
+  }
+
+  it('signs in with the saved username and password', async () => {
+    const { tryAutoConnect, client, status } = await import('../../src/stores/clientStore.js')
+    secrets.set(`${URL}:saved:password`, 'saved-pw')
+    secrets.set(`${URL}:saved:username`, 'me@mail.test')
+    persistSession('password')
+    FakeScreepsClient.failure = 'tokenRejected'
+
+    await tryAutoConnect()
+
+    const relogin = lastInstance()
+    expect(relogin.opts.auth).toBeInstanceOf(FakePasswordAuth)
+    expect((relogin.opts.auth as FakePasswordAuth).opts).toEqual({ email: 'me@mail.test', password: 'saved-pw' })
+    expect(client()).toBe(relogin)
+    expect(status()).toBe('connected')
+    expect(secrets.get(`${URL}:token`)).toBe('fresh-session-token')
+  })
+
+  it('stays on the login screen when no username was saved with the password', async () => {
+    const { tryAutoConnect, client } = await import('../../src/stores/clientStore.js')
+    secrets.set(`${URL}:saved:password`, 'saved-pw')
+    persistSession('password')
+    FakeScreepsClient.failure = 'tokenRejected'
+
+    await tryAutoConnect()
+
+    expect(FakeScreepsClient.instances).toHaveLength(1)
+    expect(client()).toBe(null)
+  })
+
+  it('signs in with the saved personal token', async () => {
+    const { tryAutoConnect, client } = await import('../../src/stores/clientStore.js')
+    secrets.set(`${URL}:saved:token`, 'personal-token')
+    persistSession('token')
+    FakeScreepsClient.failure = 'cachedTokenRejected'
+
+    await tryAutoConnect()
+
+    expect(FakeScreepsClient.instances).toHaveLength(2)
+    expect((lastInstance().opts.auth as FakeTokenAuth).opts.token).toBe('personal-token')
+    expect(client()).toBe(lastInstance())
+  })
+
+  it('keeps saved credentials and does not re-login while the server is unreachable', async () => {
+    const { tryAutoConnect, client } = await import('../../src/stores/clientStore.js')
+    secrets.set(`${URL}:saved:password`, 'saved-pw')
+    secrets.set(`${URL}:saved:username`, 'me@mail.test')
+    persistSession('password')
+    FakeScreepsClient.failure = 'serverDown'
+
+    await tryAutoConnect()
+
+    expect(FakeScreepsClient.instances).toHaveLength(1)
+    expect(client()).toBe(null)
+    expect(secrets.get(`${URL}:saved:password`)).toBe('saved-pw')
+    expect(secrets.get(`${URL}:saved:username`)).toBe('me@mail.test')
   })
 })

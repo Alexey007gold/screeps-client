@@ -16,6 +16,7 @@ import {
   deleteServerPasswordForUrl,
   loadSavedCredential,
   deleteSavedCredential,
+  loadSavedUsername,
 } from '~/utils/keychain.js'
 
 
@@ -427,7 +428,7 @@ async function savedCredentialLogin(
   if (!isTauri()) return null
   if (storedAuthMethod === 'password') {
     const password = await loadSavedCredential(url, 'password')
-    const login = passwordLoginEmail ?? userInfo()?.username ?? null
+    const login = passwordLoginEmail ?? (await loadSavedUsername(url)) ?? userInfo()?.username ?? null
     if (!password || !login) return null
     return { url, auth: 'password', authMethod: 'password', email: login, password, serverPassword, storage: null }
   }
@@ -472,19 +473,17 @@ export async function tryAutoConnect(): Promise<void> {
     } else {
       removeSession(SS.token)
     }
+    if (!(err instanceof SocketAuthError)) return
   }
 
-  if (isTauri() && storedAuthMethod === 'token') {
-    const savedToken = await loadSavedCredential(url, 'token')
-    if (savedToken && savedToken !== token) {
-      try {
-        await connect({ url, auth: 'token', token: savedToken, serverPassword, authMethod: 'token' })
-        log(`auto-connect recovered using saved token for ${url}`)
-      } catch (err) {
-        log('auto-connect retry with saved token failed:', err instanceof Error ? err.message : String(err))
-        void deleteSavedCredential(url, 'token')
-      }
-    }
+  const reloginOpts = await savedCredentialLogin(url, storedAuthMethod, token, serverPassword)
+  if (!reloginOpts) return
+  try {
+    await connect(reloginOpts)
+    log(`auto-connect recovered using saved ${reloginOpts.auth} credential for ${url}`)
+  } catch (err) {
+    log(`auto-connect retry with saved ${reloginOpts.auth} credential failed:`, err instanceof Error ? err.message : String(err))
+    if (reloginOpts.auth === 'token') void deleteSavedCredential(url, 'token')
   }
 }
 
