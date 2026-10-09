@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
+import { batch, createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
 import { MapRenderer } from '~/renderer/MapRenderer.js'
 import { buildMapDecoration } from '~/renderer/mapDecorations.js'
 import { client, userInfo, isGuest, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
@@ -58,7 +58,7 @@ export function MapViewer(props: MapViewerProps) {
   let renderer: MapRenderer | null = null
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
-  const [zoom, setZoom] = createSignal(1)
+  const [visibleZoom, setVisibleZoom] = createSignal(1)
   // Applied once by onMount; every later value is a browser back/forward landing
   // on a different ?pos=, handled by the effect further down.
   const initialCenterPos = untrack(() => props.centerPos)
@@ -234,7 +234,7 @@ export function MapViewer(props: MapViewerProps) {
             if (canNavigateTo(room)) setTimeout(() => props.onNavigateToRoom(room), 0)
           }
         },
-        onVisibleRoomsChanged: (rooms) => {
+        onVisibleRoomsChanged: (rooms, z) => {
           const isEmpty = rooms.length === 0
           if (lastRoomsEmpty !== isEmpty) {
             lastRoomsEmpty = isEmpty
@@ -244,12 +244,12 @@ export function MapViewer(props: MapViewerProps) {
               log(`zoom in — terrain loading active, ${rooms.length} rooms visible`)
             }
           }
-          setVisibleRooms(rooms)
+          batch(() => {
+            setVisibleRooms(rooms)
+            setVisibleZoom(z)
+          })
         },
-        onZoomChanged: (z) => {
-          setZoom(z)
-          props.onZoomChanged?.(z)
-        },
+        onZoomChanged: (z) => props.onZoomChanged?.(z),
         onCenterChanged: (c) => props.onCenterChanged?.(c),
       })
 
@@ -399,12 +399,12 @@ export function MapViewer(props: MapViewerProps) {
       if (terrainTimer === null) terrainTimer = setTimeout(drainTerrain, 0)
     }
 
-    // Always fetch owner stats — needed for prohibited-room detection and the reveal gate.
+    // Always fetch owner stats — needed for prohibited-room detection.
     c.stores.mapStats.request(rooms, MapStatName.owner, shard ?? undefined)
 
     // Reconcile map2 subscriptions — drop all when zoomed out.
     // The library (MapStore) handles its own per-server limit via a waitlist.
-    const subsActive = zoom() >= 0.4
+    const subsActive = visibleZoom() >= 0.4
     if (subsActive !== lastSubsActive) {
       lastSubsActive = subsActive
       props.onSubscriptionStateChanged?.(subsActive)

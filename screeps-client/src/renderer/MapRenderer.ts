@@ -35,6 +35,7 @@ const LOD_ZOOM_THRESHOLD = 1
 export const NAME_ZOOM_THRESHOLD = 0.5
 // Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
 const CLEAR_PADDING = 50
+const OWNER_FADE_MS = 200
 const POOL_SIZE = 2600 // max visible rooms plus padding
 // Wait this long after the last viewport change before firing onVisibleRoomsChanged
 const VISIBLE_DEBOUNCE_MS = 5
@@ -62,6 +63,8 @@ interface RoomEntry {
   terrainSprite: Sprite
   texLo: RenderTexture | null  // LOD 0
   texHi: RenderTexture | null  // LOD 1
+  lodGen: number
+  lodBaking: [number, number]
   map2Graphics: Graphics
   ownerOverlay: Graphics
   ownerState: 'none' | 'own' | 'other' | 'prohibited'
@@ -83,7 +86,7 @@ interface RoomEntry {
 export interface MapRendererCallbacks {
   onRoomHover: (room: string | null) => void
   onRoomClick: (room: string) => void
-  onVisibleRoomsChanged: (rooms: string[]) => void
+  onVisibleRoomsChanged: (rooms: string[], zoom: number) => void
   onZoomChanged?: (zoom: number) => void
   /**
    * Viewport centre in room units (a whole number is a room corner, `.5` its
@@ -104,7 +107,7 @@ export class MapRenderer {
   private readonly roomPool: RoomEntry[] = []
   private readonly terrainBaked = new Set<string>()
   private readonly terrainData  = new Map<string, Uint8Array>()  // raw bytes kept until texHi is baked
-  private readonly statsApplied = new Set<string>()
+  private readonly fadingOverlays = new Set<Graphics>()
   private readonly roomDecorations = new Map<string, MapDecorationRender>()
   private showDecorations = true
   private worker: Worker
@@ -137,6 +140,8 @@ export class MapRenderer {
   private pinchStartDist = 0
   private pinchStartScale = 0
   private lastVisibleKey = ''
+  private visibleRoomNames: string[] = []
+  private lastAppliedLod = -1
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   // Wheel events fire at native OS rate (WebKit dispatches trackpad scroll/pinch
   // uncoalesced, far faster than Chromium's rAF-aligned coalescing), so raw per-event
@@ -213,7 +218,11 @@ export class MapRenderer {
     this.world.addChild(this.mapVisualLayer.container)
 
     this.setupInteraction()
-    this.app.ticker.add(() => {
+    this.app.ticker.add((ticker) => {
+      for (const g of this.fadingOverlays) {
+        g.alpha = Math.min(1, g.alpha + ticker.deltaMS / OWNER_FADE_MS)
+        if (g.alpha >= 1) this.fadingOverlays.delete(g)
+      }
       if (this.isAnimating) {
         const dx = this.animTargetX - this.world.x
         const dy = this.animTargetY - this.world.y
@@ -245,7 +254,6 @@ export class MapRenderer {
 
   private applyZoomAt(next: number, pivotScreenX: number, pivotScreenY: number): void {
     const scale = this.world.scale.x
-    const prevLOD = this.getLOD()
     const prevAboveLOD = this.zoom >= LOD_ZOOM_THRESHOLD
     const prevAboveName = this.zoom >= NAME_ZOOM_THRESHOLD
 
@@ -255,7 +263,6 @@ export class MapRenderer {
     this.world.x = pivotScreenX - wx * next
     this.world.y = pivotScreenY - wy * next
 
-    if (this.getLOD() !== prevLOD) this.applyLOD()
     if ((next >= LOD_ZOOM_THRESHOLD) !== prevAboveLOD || (next >= NAME_ZOOM_THRESHOLD) !== prevAboveName) this.updateAllNameLabels()
     this.updateAllRoomScales(next)
     this.callbacks.onZoomChanged?.(next)
@@ -402,7 +409,7 @@ export class MapRenderer {
     // while baking, we just baked the other LOD's texture; ensureCurrentLod
     // bakes the missing one from the kept raw bytes so the room is never blank.
     void this.ensureCurrentLod(roomName, entry)
-    this.revealIfReady(roomName, entry)
+    entry.container.visible = true
   }
 
 
@@ -422,12 +429,17 @@ export class MapRenderer {
       entry.terrainSprite.texture = have as unknown as Texture
       return
     }
+    const lod = hi ? 1 : 0
+    if (entry.lodBaking[lod] === entry.lodGen) return
     const raw = this.terrainData.get(roomName)
     if (!raw) return
+    const gen = entry.lodGen
+    entry.lodBaking[lod] = gen
     const decoration = this.showDecorations ? this.roomDecorations.get(roomName) : undefined
-    return this.getTerrainBitmap(roomName, hi ? 1 : 0, raw, decoration).then((bitmap) => {
+    return this.getTerrainBitmap(roomName, lod, raw, decoration).then((bitmap) => {
+      if (entry.lodBaking[lod] === gen) entry.lodBaking[lod] = -1
       if (!bitmap) return
-      if (!this.activeRooms.has(roomName)) { bitmap.close(); return }
+      if (entry.lodGen !== gen || this.activeRooms.get(roomName) !== entry) { bitmap.close(); return }
       const tex = Texture.from(bitmap, true)
       if (hi) entry.texHi = tex as unknown as RenderTexture
       else entry.texLo = tex as unknown as RenderTexture
@@ -435,14 +447,12 @@ export class MapRenderer {
     })
   }
 
-  private async applyLOD(): Promise<void> {
-    const tasks: Promise<void>[] = []
-    for (const [roomName, entry] of this.activeRooms) {
+  private applyLOD(): void {
+    for (const roomName of this.visibleRoomNames) {
       if (!this.terrainBaked.has(roomName)) continue
-      const task = this.ensureCurrentLod(roomName, entry)
-      if (task) tasks.push(task)
+      const entry = this.activeRooms.get(roomName)
+      if (entry) void this.ensureCurrentLod(roomName, entry)
     }
-    await Promise.all(tasks)
   }
 
 
@@ -511,12 +521,15 @@ export class MapRenderer {
   setRoomOwned(roomName: string, state: 'none' | 'own' | 'other' | 'prohibited'): void {
     const entry = this.activeRooms.get(roomName)
     if (!entry) return
-    this.statsApplied.add(roomName)
+    const g = entry.ownerOverlay
     if (entry.ownerState !== state) {
       entry.ownerState = state
       if (entry.lastMap2Data) this.drawMap2(entry, entry.lastMap2Data, entry.lastMap2Source ?? 'live')
+      if (entry.container.visible) {
+        g.alpha = 0
+        this.fadingOverlays.add(g)
+      }
     }
-    const g = entry.ownerOverlay
     g.clear()
     if (state === 'prohibited') {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
@@ -529,7 +542,6 @@ export class MapRenderer {
       g.fill({ color: 0x000066, alpha: 0.35 })
     }
     g.visible = this.ownerOverlayVisible(entry)
-    this.revealIfReady(roomName, entry)
   }
 
   /**
@@ -547,12 +559,6 @@ export class MapRenderer {
     this.showUnclaimableOverlay = show
     for (const entry of this.activeRooms.values()) {
       entry.ownerOverlay.visible = this.ownerOverlayVisible(entry)
-    }
-  }
-
-  private revealIfReady(roomName: string, entry: RoomEntry): void {
-    if (this.terrainBaked.has(roomName) && this.statsApplied.has(roomName)) {
-      entry.container.visible = true
     }
   }
 
@@ -590,6 +596,7 @@ export class MapRenderer {
 
     // Destroy both LOD textures so ensureCurrentLod re-bakes from scratch.
     // Colors are looked up internally from roomDecorations.
+    entry.lodGen++
     for (const lodKey of ['texLo', 'texHi'] as const) {
       const tex = entry[lodKey]
       if (tex && !tex.destroyed) {
@@ -952,9 +959,13 @@ export class MapRenderer {
     if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     entry.texLo = null
     entry.texHi = null
+    entry.lodGen++
     entry.terrainSprite.texture = Texture.EMPTY
     entry.map2Graphics.clear()
     entry.ownerOverlay.clear()
+    entry.ownerOverlay.alpha = 1
+    entry.ownerState = 'none'
+    this.fadingOverlays.delete(entry.ownerOverlay)
     if (entry.badgeSprite) {
       entry.container.removeChild(entry.badgeSprite)
       entry.badgeSprite.destroy()
@@ -973,7 +984,6 @@ export class MapRenderer {
 
     this.terrainBaked.delete(roomName)
     this.terrainData.delete(roomName)
-    this.statsApplied.delete(roomName)
     this.roomDecorations.delete(roomName)
     this.activeRooms.delete(roomName)
 
@@ -1044,7 +1054,7 @@ export class MapRenderer {
     this.roomPool.length = 0
     this.terrainBaked.clear()
     this.terrainData.clear()
-    this.statsApplied.clear()
+    this.fadingOverlays.clear()
     this.roomDecorations.clear()
     this.worker.terminate()
     this.pendingBakes.clear()
@@ -1098,7 +1108,7 @@ export class MapRenderer {
 
       this.world.addChild(container)
 
-      entry = { container, terrainSprite, texLo: null, texHi: null, map2Graphics, ownerOverlay, ownerState: 'none', nameLabel }
+      entry = { container, terrainSprite, texLo: null, texHi: null, lodGen: 0, lodBaking: [-1, -1], map2Graphics, ownerOverlay, ownerState: 'none', nameLabel }
     }
 
     entry.container.x = coord.x * MAP_ROOM_SIZE
@@ -1189,13 +1199,11 @@ export class MapRenderer {
         const newMidY = (pts[0].y + pts[1].y) / 2 - rect.top
         const newDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
         const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinchStartScale * (newDist / this.pinchStartDist)))
-        const prevLOD = this.getLOD()
         const prevAboveLOD = this.zoom >= LOD_ZOOM_THRESHOLD
         const prevAboveName = this.zoom >= NAME_ZOOM_THRESHOLD
         this.world.scale.set(newScale)
         this.world.x = newMidX - this.pinchPivotWorldX * newScale
         this.world.y = newMidY - this.pinchPivotWorldY * newScale
-        if (this.getLOD() !== prevLOD) this.applyLOD()
         if ((newScale >= LOD_ZOOM_THRESHOLD) !== prevAboveLOD || (newScale >= NAME_ZOOM_THRESHOLD) !== prevAboveName) this.updateAllNameLabels()
         this.updateAllRoomScales(newScale)
         this.callbacks.onZoomChanged?.(newScale)
@@ -1422,13 +1430,21 @@ export class MapRenderer {
     }
 
     const key = `${rxMin},${ryMin},${rxMax},${ryMax}`
-    if (key !== this.lastVisibleKey) {
+    const keyChanged = key !== this.lastVisibleKey
+    if (keyChanged) {
       this.lastVisibleKey = key
+      this.visibleRoomNames = visible
       if (this.visibleDebounceTimer !== null) clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = setTimeout(() => {
         this.visibleDebounceTimer = null
-        this.callbacks.onVisibleRoomsChanged(visible)
+        this.callbacks.onVisibleRoomsChanged(visible, scale)
       }, VISIBLE_DEBOUNCE_MS)
+    }
+
+    const lod = this.getLOD()
+    if (keyChanged || lod !== this.lastAppliedLod) {
+      this.lastAppliedLod = lod
+      this.applyLOD()
     }
   }
 }
