@@ -23,7 +23,8 @@ export interface ApiAuthMeResponse {
   gcl: number
   /** Raw accumulated power points; Global Power Level derives from this. Absent on servers without the power system. */
   power?: number
-  credits: number
+  credits?: number
+  money?: number
   badge: import('./game.js').Badge
   password: boolean
 }

@@ -2,7 +2,7 @@ import { TypedStore } from './TypedStore.js'
 import type { Logger } from '../logger.js'
 import type { UserStoreEvents } from '../types/events.js'
 import type { ApiCodeModule } from '../types/api.js'
-import type { UserInfo, CpuStats, ConsoleMessage, WorldStatus } from '../types/game.js'
+import type { UserInfo, CpuStats, UserResources, ConsoleMessage, WorldStatus } from '../types/game.js'
 import type { HttpClient } from '../http/HttpClient.js'
 import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
@@ -16,6 +16,8 @@ export class UserStore extends TypedStore<UserStoreEvents> {
   readonly maxConsoleSize: number
   private _cpu: CpuStats | null = null
   get cpu(): CpuStats | null { return this._cpu }
+  private _resources: UserResources | null = null
+  get resources(): UserResources | null { return this._resources }
   private _userInfo: UserInfo | null = null
   get userInfo(): UserInfo | null { return this._userInfo }
   private _userId: string | null = null
@@ -52,8 +54,8 @@ export class UserStore extends TypedStore<UserStoreEvents> {
       return this._mePromise
     }
     this.logger.log('fetch me')
-    this._mePromise = this.http.auth.me().then((res) => {
-      const user = res as unknown as UserInfo
+    this._mePromise = this.http.auth.me().then(({ money, ...res }) => {
+      const user = { ...res, credits: res.credits ?? money } as unknown as UserInfo
       this._userId = user._id
       this._userInfo = user
       this.cache.set('user/me', user, 60_000)
@@ -92,7 +94,7 @@ export class UserStore extends TypedStore<UserStoreEvents> {
     return this.worldStatus()
   }
 
-  subscribe(channel: 'console' | 'cpu' | 'code' | 'set-active-branch'): Subscription {
+  subscribe(channel: 'console' | 'cpu' | 'resources' | 'code' | 'set-active-branch'): Subscription {
     this.logger.log('subscribe', channel)
 
     // First caller for this channel installs the shared socket subscription + listener; later callers
@@ -114,6 +116,9 @@ export class UserStore extends TypedStore<UserStoreEvents> {
             if (channel === 'cpu') {
               this._cpu = data as CpuStats
               this.emit('user:cpu', this._cpu)
+            } else if (channel === 'resources') {
+              this._resources = data as UserResources
+              this.emit('user:resources', this._resources)
             } else if (channel === 'console') {
               const raw = data as { messages?: ConsoleMessage, error?: string }
               const msg: ConsoleMessage = {

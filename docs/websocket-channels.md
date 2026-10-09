@@ -301,13 +301,16 @@ Observed payload shape:
 ```json
 {
   "credits": <number>,
-  "resources": { ... }
+  "pixel": <number>,
+  "cpuUnlock": <number>,
+  "accessKey": <number>
 }
 ```
 
 Observed behavior:
 
 - Updates the user's credits and resources.
+- `@screeps/backend` pushes it every tick to subscribed connections: the user's `resources` object flattened together with `credits` (`money / 1000`).
 
 ### `user:<userId>/memory/<shard/>?<path>`
 

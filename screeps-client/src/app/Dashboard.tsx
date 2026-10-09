@@ -8,6 +8,7 @@ import type { MultiRoomViewerApi } from '~/components/MultiRoomViewer.js'
 import { ConsolePanel } from '~/components/ConsolePanel.js'
 import { Sidebar } from '~/components/Sidebar/index.js'
 import { StatsBar } from '~/components/StatsBar.js'
+import { CreditsIndicator } from '~/components/CreditsIndicator.js'
 import { SettingsPanel } from '~/components/SettingsPanel.js'
 import { MotdOverlay } from '~/components/MotdOverlay.js'
 import { UserMenu } from '~/components/UserMenu.js'
@@ -788,6 +789,9 @@ export function Dashboard() {
           />
         </Show>
         <div style={{ flex: 1 }} />
+        <Show when={!isGuest()}>
+          <CreditsIndicator />
+        </Show>
         <HeaderButton
           title={route() === 'game' && mapMode() ? 'Close World Map' : 'World Map'}
           active={route() === 'game' && mapMode()}

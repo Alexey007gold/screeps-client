@@ -27,6 +27,15 @@ describe('UserStore', () => {
     expect(user.username).toBe('user')
   })
 
+  it('maps the auth/me money balance onto credits', async () => {
+    const { store, http } = makeStore()
+    const { credits: _credits, ...withoutCredits } = mockUser
+    ;(http.auth.me as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...withoutCredits, money: 1234.567, ok: 1 })
+    const user = await store.me()
+    expect(user.credits).toBe(1234.567)
+    expect(user).not.toHaveProperty('money')
+  })
+
   it('fetches world status from API and emits event', async () => {
     const { store, http } = makeStore()
     const events: Array<{ status: string }> = []
@@ -107,6 +116,24 @@ describe('UserStore', () => {
     handler({ cpu: 42, memory: 1024 })
     expect(store.cpu).toEqual({ cpu: 42, memory: 1024 })
     expect(eventSpy).toHaveBeenCalledWith({ cpu: 42, memory: 1024 })
+  })
+
+  it('resources updates arrive on the user resources channel and fire an event', async () => {
+    const { store, socket } = makeStore()
+    await store.me()
+    let handler: (data: unknown) => void = () => {}
+    ;(socket.on as ReturnType<typeof vi.fn>).mockImplementation((_ch: string, cb: (data: unknown) => void) => {
+      handler = cb
+      return { dispose: vi.fn() }
+    })
+    const eventSpy = vi.fn()
+    store.on('user:resources', eventSpy)
+    store.subscribe('resources')
+    await new Promise(r => setTimeout(r, 0))
+    expect(socket.subscribe).toHaveBeenCalledWith('user:uid1/resources')
+    handler({ credits: 1234.567, pixel: 3 })
+    expect(store.resources).toEqual({ credits: 1234.567, pixel: 3 })
+    expect(eventSpy).toHaveBeenCalledWith({ credits: 1234.567, pixel: 3 })
   })
 
   it('console messages accumulate and emit event', async () => {

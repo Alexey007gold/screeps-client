@@ -392,13 +392,14 @@ userStore.refreshMe(): Promise<UserInfo>
 Busts the cache and re-fetches. Use after profile changes (username, badge, etc.).
 
 ```ts
-userStore.subscribe(channel: 'cpu' | 'console' | 'code' | 'set-active-branch'): Subscription
+userStore.subscribe(channel: 'cpu' | 'resources' | 'console' | 'code' | 'set-active-branch'): Subscription
 ```
 Opens a WebSocket subscription for the given user channel. Lazily resolves the user ID if `me()` has not yet been called.
 
 | Channel | Event emitted | Payload |
 |---|---|---|
 | `cpu` | `user:cpu` | `CpuStats` |
+| `resources` | `user:resources` | `UserResources` |
 | `console` | `user:console` | `{ messages: ConsoleMessage }` |
 | `code` | `user:code` | `{ branch: string; modules: Record<string, string> }` |
 | `set-active-branch` | `user:setActiveBranch` | `{ activeName: 'activeWorld' \| 'activeSim'; branch: string }` |
@@ -409,6 +410,7 @@ Opens a WebSocket subscription for the given user channel. Lazily resolves the u
 |---|---|---|
 | `user:me` | `UserInfo` | After `me()` or `refreshMe()` fetches from the network |
 | `user:cpu` | `CpuStats` | Each WebSocket CPU tick |
+| `user:resources` | `UserResources` | Each tick while subscribed to `resources` |
 | `user:console` | `{ messages: ConsoleMessage }` | Each console message batch |
 | `user:code` | `{ branch: string; modules: Record<string, string> }` | When code is deployed |
 
@@ -1141,7 +1143,7 @@ interface UserInfo {
   email: string
   cpu: number       // CPU limit in ms per tick
   gcl: number       // Global Control Level points
-  credits: number
+  credits?: number  // Credit balance; the server's auth/me `money` field is mapped here
   badge: Badge
 }
 ```
@@ -1152,6 +1154,15 @@ interface UserInfo {
 interface CpuStats {
   cpu: number       // CPU used this tick (ms)
   memory: number    // Heap memory used (bytes)
+}
+```
+
+### `UserResources`
+
+```ts
+interface UserResources {
+  credits?: number
+  [resource: string]: number | undefined  // pixel, cpuUnlock, accessKey, ...
 }
 ```
 

@@ -29,6 +29,7 @@ export type {
   UserInfo,
   NotifyPrefs,
   CpuStats,
+  UserResources,
   WorldStatus,
   ConsoleMessage,
   ServerVersion,

@@ -2,6 +2,7 @@ import type {
     Badge,
     ConsoleMessage,
     CpuStats,
+    UserResources,
     RoomMap2Data,
     RoomObjectDiff,
     RoomObjectMap,
@@ -45,6 +46,7 @@ export interface UserStoreEvents {
     'user:me': UserInfo
     'user:worldStatus': { status: WorldStatus }
     'user:cpu': CpuStats
+    'user:resources': UserResources
     'user:console': { messages: ConsoleMessage }
     'user:code': { branch: string; modules: Record<string, ApiCodeModule> }
     'user:setActiveBranch': { activeName: 'activeWorld' | 'activeSim'; branch: string }
