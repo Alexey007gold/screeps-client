@@ -68,8 +68,9 @@ src/
 │   ├── BadgeTextureCache.ts     # Player badge texture cache
 │   ├── StructureTextureCache.ts # Structure texture cache
 │   ├── AtlasCache.ts            # Spritesheet atlas cache
-│   ├── terrainCache.ts          # Terrain tile texture cache
-│   ├── terrain.worker.ts        # Terrain decode web worker
+│   ├── terrainCache.ts          # Baked terrain image cache (Cache API), keyed per server + shard
+│   ├── sectorTerrain.ts         # 10×10-room sector pixels for the zoomed-out world map
+│   ├── terrain.worker.ts        # Terrain decode web worker (room + sector bakes)
 │   ├── themes/                  # Sprite theme specs (atlas frames per structure)
 │   └── colors.ts                # Renderer color constants (PixiJS palette)
 ├── stores/

@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount } from 'solid-js'
+import { batch, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MultiRoomRenderer, MAP2_MIN_ZOOM, FULL_DETAIL_ZOOM_THRESHOLD } from '~/renderer/MultiRoomRenderer.js'
 import { FullDetailRoomCoordinator } from '~/renderer/FullDetailRoomCoordinator.js'
 import type { SelectionVisual } from '~/renderer/HoverHighlightLayer.js'
@@ -35,7 +35,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
 
   const [visibleRooms, setVisibleRooms] = createSignal<string[]>([])
   const [inViewRooms, setInViewRooms] = createSignal<ReadonlySet<string>>(new Set())
-  const [zoom, setZoom] = createSignal(1)
+  const [visibleZoom, setVisibleZoom] = createSignal(1)
   const origin = () => props.originRoom
   const [selectedRoom, setSelectedRoom] = createSignal<string | null>(origin() ?? null)
   let lastSubsActive: boolean | null = null
@@ -158,7 +158,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
       // (rooms in `rooms` but not `inView`) never gets promoted to full detail.
       const candidates = rooms.filter((r) => inView.has(r))
       let desired: string[] = []
-      if (zoom() >= FULL_DETAIL_ZOOM_THRESHOLD) {
+      if (visibleZoom() >= FULL_DETAIL_ZOOM_THRESHOLD) {
         const cx = candidates.reduce((s, r) => s + (parseRoomName(r)?.x ?? 0), 0) / candidates.length
         const cy = candidates.reduce((s, r) => s + (parseRoomName(r)?.y ?? 0), 0) / candidates.length
         desired = candidates
@@ -322,14 +322,14 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
             .filter((v): v is SelectionVisual => v.visual != null)
           renderer.setFullDetailSelectedObjects(room, visuals)
         },
-        onVisibleRoomsChanged: (rooms, inView) => {
-          setVisibleRooms(rooms)
-          setInViewRooms(inView)
+        onVisibleRoomsChanged: (rooms, inView, z) => {
+          batch(() => {
+            setVisibleRooms(rooms)
+            setInViewRooms(inView)
+            setVisibleZoom(z)
+          })
         },
-        onZoomChanged: (z) => {
-          setZoom(z)
-          props.onZoomChanged?.(z)
-        },
+        onZoomChanged: (z) => props.onZoomChanged?.(z),
       })
 
       await renderer.init(canvasRef!)
@@ -414,7 +414,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
 
     // Reconcile map2 subscriptions — drop all when zoomed too far out.
     // The library (MapStore) handles its own per-server limit via a waitlist.
-    const subsActive = zoom() >= MAP2_MIN_ZOOM
+    const subsActive = visibleZoom() >= MAP2_MIN_ZOOM
     if (subsActive !== lastSubsActive) {
       lastSubsActive = subsActive
       if (!subsActive) renderer?.clearAllMap2()

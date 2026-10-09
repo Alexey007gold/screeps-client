@@ -1,14 +1,31 @@
 import { createLogger } from '~/utils/log.js'
+import { SS, getSession } from '~/utils/storage.js'
 
 const { warn } = createLogger('terrainCache')
 
-const CACHE_NAME = 'screeps-terrain-v1'
+const CACHE_NAME = 'screeps-terrain-v2'
+const LEGACY_CACHE_NAMES = ['screeps-terrain-v1']
 
-export async function getTerrainCacheBlob(shard: string, roomName: string, lod: number): Promise<Blob | null> {
+let legacyCleanup: Promise<void> | null = null
+
+function openTerrainCache(): Promise<Cache> {
+  legacyCleanup ??= Promise.all(LEGACY_CACHE_NAMES.map((name) => caches.delete(name)))
+    .then(() => undefined, () => undefined)
+  return caches.open(CACHE_NAME)
+}
+
+export function terrainCacheScope(shard: string): string {
+  return `${getSession(SS.url) ?? ''}|${shard}`
+}
+
+export function terrainCacheKey(scope: string, roomName: string, lod: number): string {
+  return `/terrain/${encodeURIComponent(scope)}/${roomName}_z${lod}.webp`
+}
+
+export async function getTerrainCacheBlob(scope: string, roomName: string, lod: number): Promise<Blob | null> {
   try {
-    const cache = await caches.open(CACHE_NAME)
-    const key = `/terrain/${shard}_${roomName}_z${lod}.webp`
-    const req = new Request(key)
+    const cache = await openTerrainCache()
+    const req = new Request(terrainCacheKey(scope, roomName, lod))
     const res = await cache.match(req)
     if (res) {
       // WebKit taints blobs handed out by Response.blob() from the Cache API: the
@@ -26,11 +43,10 @@ export async function getTerrainCacheBlob(shard: string, roomName: string, lod: 
   return null
 }
 
-export async function saveTerrainCacheBlob(shard: string, roomName: string, lod: number, blob: Blob): Promise<void> {
+export async function saveTerrainCacheBlob(scope: string, roomName: string, lod: number, blob: Blob): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME)
-    const key = `/terrain/${shard}_${roomName}_z${lod}.webp`
-    const req = new Request(key)
+    const cache = await openTerrainCache()
+    const req = new Request(terrainCacheKey(scope, roomName, lod))
     const res = new Response(blob)
     await cache.put(req, res)
   } catch (err) {

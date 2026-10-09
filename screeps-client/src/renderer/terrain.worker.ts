@@ -1,5 +1,6 @@
 import { TerrainType } from 'screeps-connectivity'
 import { decorationTextureUrl } from './decorationTextureUrl.js'
+import { SECTOR_PX, sectorPixels } from './sectorTerrain.js'
 import {
   MINIMAP_PLAIN as TERRAIN_PLAIN,
   MINIMAP_WALL as TERRAIN_WALL,
@@ -258,13 +259,35 @@ async function drawGraffiti(
   }
 }
 
+async function bakeSector(id: number, raws: (Uint8Array | null)[], scope: string, cacheName: string) {
+  try {
+    const pixels = sectorPixels(raws, { plain: TERRAIN_PLAIN, wall: TERRAIN_WALL, swamp: TERRAIN_SWAMP })
+    const image = new ImageData(new Uint8ClampedArray(pixels.buffer), SECTOR_PX, SECTOR_PX)
+    const bitmap = await createImageBitmap(image)
+    self.postMessage({ kind: 'bitmap', id, bitmap }, { transfer: [bitmap] })
+    const canvas = new OffscreenCanvas(SECTOR_PX, SECTOR_PX)
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D
+    ctx.putImageData(image, 0, 0)
+    const blob = await canvas.convertToBlob({ type: 'image/webp' })
+    const cacheBytes = await blob.arrayBuffer()
+    self.postMessage({ kind: 'cache', scope, roomName: cacheName, lod: 0, cacheBytes, cacheType: blob.type }, { transfer: [cacheBytes] })
+  } catch {
+    self.postMessage({ kind: 'bitmap', id, bitmap: null })
+  }
+}
+
 self.onmessage = async (e: MessageEvent) => {
-  const { id, roomName, lod, raw, shard, decoration } = e.data as {
+  if (e.data.kind === 'sector') {
+    const { id, raws, scope, cacheName } = e.data as { id: number, raws: (Uint8Array | null)[], scope: string, cacheName: string }
+    await bakeSector(id, raws, scope, cacheName)
+    return
+  }
+  const { id, roomName, lod, raw, scope, decoration } = e.data as {
     id: number,
     roomName: string,
     lod: number,
     raw: Uint8Array,
-    shard: string,
+    scope: string,
     decoration?: DecorationMessage
   }
   const colors = decoration?.colors
@@ -314,7 +337,7 @@ self.onmessage = async (e: MessageEvent) => {
       const blob = await canvas.convertToBlob({ type: 'image/webp' })
       const cacheBytes = await blob.arrayBuffer()
       self.postMessage(
-        { kind: 'cache', shard, roomName, lod, cacheBytes, cacheType: blob.type },
+        { kind: 'cache', scope, roomName, lod, cacheBytes, cacheType: blob.type },
         { transfer: [cacheBytes] },
       )
     } catch {

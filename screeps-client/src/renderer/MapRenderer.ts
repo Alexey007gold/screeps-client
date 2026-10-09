@@ -7,7 +7,9 @@ import { ContextRecovery } from './ContextRecovery.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
-import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap } from './terrainCache.js'
+import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, terrainCacheScope } from './terrainCache.js'
+import { SECTOR_MAX_ROOM_SCREEN_PX } from './sectorTerrain.js'
+import { SectorTerrainLayer, expandToSectors } from './SectorTerrainLayer.js'
 import { resolveDecorationAssetUrl } from './decorationTextures.js'
 import TerrainWorker from './terrain.worker.ts?worker'
 import { TERRAIN_WALL, TERRAIN_BORDER } from '~/renderer/colors.js'
@@ -32,6 +34,7 @@ export const BADGE_SIZES = [50, 60, 70, 80, 90, 100, 105, 120]
 // LOD 1 (zoom ≥ 1): zoomed in, crisp at native and above
 // LOD_TEXTURE_SIZES moved to worker
 const LOD_ZOOM_THRESHOLD = 1
+const SECTOR_MODE = -1
 export const NAME_ZOOM_THRESHOLD = 0.5
 // Rooms within this many cells beyond the visible viewport are kept in memory (scroll buffer)
 const CLEAR_PADDING = 50
@@ -72,6 +75,7 @@ interface RoomEntry {
   lastMap2Source?: 'cache' | 'live'
   badgeSprite?: Sprite
   badgeLevel?: number
+  badgeKey?: string
   nameLabel: Text
   allianceOverlay?: Graphics
   allianceLabel?: Text
@@ -111,7 +115,9 @@ export class MapRenderer {
   private readonly roomDecorations = new Map<string, MapDecorationRender>()
   private showDecorations = true
   private worker: Worker
-  private pendingBakes = new Map<number, { roomName: string, lod: number, resolve: (bmp: ImageBitmap) => void, reject: (err: unknown) => void }>()
+  private pendingBakes = new Map<number, { roomName: string, lod: number, resolve: (bmp: ImageBitmap | null) => void, reject: (err: unknown) => void }>()
+  private readonly sectorLayer: SectorTerrainLayer
+  private sectorsDirty = false
   private nextBakeId = 0
   public currentShard: string = 'shard0'
   private readonly callbacks: MapRendererCallbacks
@@ -141,7 +147,7 @@ export class MapRenderer {
   private pinchStartScale = 0
   private lastVisibleKey = ''
   private visibleRoomNames: string[] = []
-  private lastAppliedLod = -1
+  private lastTerrainMode: number | null = null
   private visibleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   // Wheel events fire at native OS rate (WebKit dispatches trackpad scroll/pinch
   // uncoalesced, far faster than Chromium's rAF-aligned coalescing), so raw per-event
@@ -158,12 +164,20 @@ export class MapRenderer {
   constructor(callbacks: MapRendererCallbacks) {
     this.app = new Application()
     this.callbacks = callbacks
+    this.sectorLayer = new SectorTerrainLayer({
+      roomSize: MAP_ROOM_SIZE,
+      isRoomFetched: (room) => this.terrainBaked.has(room),
+      roomTerrain: (room) => this.terrainData.get(room) ?? null,
+      worldBounds: () => this.worldBoundsSet,
+      cacheScope: () => terrainCacheScope(this.currentShard),
+      bake: (raws, scope, cacheName) => this.bakeSectorBitmap(raws, scope, cacheName),
+    })
     this.worker = new TerrainWorker()
     this.worker.onmessage = (e) => {
       const d = e.data
       if (d.kind === 'cache') {
         // Cache copy encoded by the worker; persist the bytes (cheap, async).
-        saveTerrainCacheBlob(d.shard, d.roomName, d.lod, new Blob([d.cacheBytes], { type: d.cacheType || 'image/webp' }))
+        saveTerrainCacheBlob(d.scope, d.roomName, d.lod, new Blob([d.cacheBytes], { type: d.cacheType || 'image/webp' }))
         return
       }
       const pending = this.pendingBakes.get(d.id)
@@ -205,6 +219,8 @@ export class MapRenderer {
     this.world = new Container()
     this.app.stage.addChild(this.world)
 
+    this.world.addChild(this.sectorLayer.container)
+
     this.boundsGraphics = new Graphics()
     this.world.addChild(this.boundsGraphics)
 
@@ -236,7 +252,15 @@ export class MapRenderer {
         }
       }
       this.checkVisibleRooms()
+      if (this.sectorsDirty) {
+        this.sectorsDirty = false
+        if (this.sectorMode && this.lastVisibleBounds) this.sectorLayer.update(this.lastVisibleBounds)
+      }
     })
+  }
+
+  private get sectorMode(): boolean {
+    return MAP_ROOM_SIZE * this.zoom < SECTOR_MAX_ROOM_SCREEN_PX
   }
 
   get zoom(): number {
@@ -323,23 +347,23 @@ export class MapRenderer {
   }
 
   private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array, decoration?: MapDecorationRender): Promise<ImageBitmap | null> {
-    const shard = this.currentShard
+    const scope = terrainCacheScope(this.currentShard)
     try {
       // Only hit the bitmap cache when using default colors — decorated bakes
       // must not overwrite the cached default, and we want the default restored
       // from cache instantly when decorations are removed.
       if (!decoration) {
-        const cachedBlob = await getTerrainCacheBlob(shard, roomName, lod)
+        const cachedBlob = await getTerrainCacheBlob(scope, roomName, lod)
         if (cachedBlob) {
           return await blobToImageBitmap(cachedBlob)
         }
       }
 
       const id = this.nextBakeId++
-      const promise = new Promise<ImageBitmap>((resolve, reject) => {
+      const promise = new Promise<ImageBitmap | null>((resolve, reject) => {
         this.pendingBakes.set(id, { roomName, lod, resolve, reject })
       })
-      this.worker.postMessage({ id, roomName, lod, raw, shard, decoration: decoration && await this.resolveDecorationUrls(decoration) })
+      this.worker.postMessage({ id, roomName, lod, raw, scope, decoration: decoration && await this.resolveDecorationUrls(decoration) })
 
       return await promise
     } catch (e) {
@@ -357,6 +381,7 @@ export class MapRenderer {
     for (let i = 0; i < raw.length; i++) {
       if (raw[i] !== 0) { hasContent = true; break }
     }
+    this.sectorsDirty = true
     if (!hasContent) {
       this.terrainBaked.add(roomName)
       return
@@ -371,38 +396,48 @@ export class MapRenderer {
     // this bake is in flight.
     this.terrainData.set(roomName, raw)
 
-    const bitmap = await this.getTerrainBitmap(roomName, lod, raw)
+    if (this.sectorMode) {
+      this.terrainBaked.add(roomName)
+      entry.container.visible = true
+      return
+    }
+
+    const decoration = this.showDecorations ? this.roomDecorations.get(roomName) : undefined
+    const gen = entry.lodGen
+    const bitmap = await this.getTerrainBitmap(roomName, lod, raw, decoration)
     if (!bitmap) return
 
     // Re-check if room was cleared while we were waiting
-    if (!this.activeRooms.has(roomName)) {
+    if (this.activeRooms.get(roomName) !== entry) {
       bitmap.close()
       return
     }
 
-    // skipCache: true — a freshly-baked bitmap is never reused, so without this
-    // PixiJS's global Texture.from cache would keep every baked terrain texture
-    // (and its backing pixel buffer) alive forever, even after destroy(true).
-    const tex = Texture.from(bitmap, true)
-
-    if (lod === 0) {
-      if (entry.texLo && !entry.texLo.destroyed) {
-        // Guard: if sprite still references the old texture, clear it before destroying
-        // to avoid rendering a texture with a null source (crash on alphaMode read).
-        if ((entry.terrainSprite.texture as unknown) === entry.texLo) entry.terrainSprite.texture = Texture.EMPTY
-        entry.texLo.destroy(true)
-      }
-      entry.texLo = tex as unknown as RenderTexture
+    if (entry.lodGen !== gen) {
+      bitmap.close()
     } else {
-      if (entry.texHi && !entry.texHi.destroyed) {
-        if ((entry.terrainSprite.texture as unknown) === entry.texHi) entry.terrainSprite.texture = Texture.EMPTY
-        entry.texHi.destroy(true)
+      // skipCache: true — a freshly-baked bitmap is never reused, so without this
+      // PixiJS's global Texture.from cache would keep every baked terrain texture
+      // (and its backing pixel buffer) alive forever, even after destroy(true).
+      const tex = Texture.from(bitmap, true)
+
+      if (lod === 0) {
+        if (entry.texLo && !entry.texLo.destroyed) {
+          // Guard: if sprite still references the old texture, clear it before destroying
+          // to avoid rendering a texture with a null source (crash on alphaMode read).
+          if ((entry.terrainSprite.texture as unknown) === entry.texLo) entry.terrainSprite.texture = Texture.EMPTY
+          entry.texLo.destroy(true)
+        }
+        entry.texLo = tex as unknown as RenderTexture
+      } else {
+        if (entry.texHi && !entry.texHi.destroyed) {
+          if ((entry.terrainSprite.texture as unknown) === entry.texHi) entry.terrainSprite.texture = Texture.EMPTY
+          entry.texHi.destroy(true)
+        }
+        entry.texHi = tex as unknown as RenderTexture
       }
-      entry.texHi = tex as unknown as RenderTexture
     }
 
-    entry.terrainSprite.width  = MAP_ROOM_SIZE
-    entry.terrainSprite.height = MAP_ROOM_SIZE
     this.terrainBaked.add(roomName)
 
     // Apply the texture for whatever LOD is current *now*. If the zoom changed
@@ -423,6 +458,7 @@ export class MapRenderer {
   // (the zoom may have changed mid-flight) and whenever the LOD changes. Returns
   // a promise only when a bake was needed, so callers can await pending work.
   private ensureCurrentLod(roomName: string, entry: RoomEntry): Promise<void> | void {
+    if (this.sectorMode) return
     const hi = this.getLOD() === 1
     const have = hi ? entry.texHi : entry.texLo
     if (have && !have.destroyed) {
@@ -453,6 +489,20 @@ export class MapRenderer {
       const entry = this.activeRooms.get(roomName)
       if (entry) void this.ensureCurrentLod(roomName, entry)
     }
+  }
+
+  private setSectorMode(on: boolean): void {
+    this.sectorLayer.container.visible = on
+    for (const entry of this.activeRooms.values()) entry.terrainSprite.visible = !on
+  }
+
+  private bakeSectorBitmap(raws: (Uint8Array | null)[], scope: string, cacheName: string): Promise<ImageBitmap | null> {
+    const id = this.nextBakeId++
+    const promise = new Promise<ImageBitmap | null>((resolve, reject) => {
+      this.pendingBakes.set(id, { roomName: cacheName, lod: SECTOR_MODE, resolve, reject })
+    })
+    this.worker.postMessage({ kind: 'sector', id, raws, scope, cacheName })
+    return promise
   }
 
 
@@ -613,6 +663,10 @@ export class MapRenderer {
     const entry = this.activeRooms.get(roomName)
     if (!entry) return
 
+    const key = badge ? `${JSON.stringify(badge)}|${level ?? ''}` : ''
+    if (entry.badgeKey === key) return
+    entry.badgeKey = key
+
     if (!badge) {
       if (entry.badgeSprite) {
         entry.container.removeChild(entry.badgeSprite)
@@ -624,18 +678,10 @@ export class MapRenderer {
     }
 
     try {
-      // Avoid flicker/reload if the same badge is already shown.
-      // We compare texture references as a fast path.
       const texture = await this.badgeCache.getOrCreate(badge)
-      if (!this.activeRooms.has(roomName)) return // room was cleared while loading
+      if (this.activeRooms.get(roomName) !== entry || entry.badgeKey !== key) return
 
       if (entry.badgeSprite) {
-        if (entry.badgeSprite.texture === texture) {
-          entry.badgeLevel = level
-          this.applyBadgeSize(entry, this.zoom)
-          this.applyOverlayMode(entry)
-          return
-        }
         entry.badgeSprite.texture = texture
       } else {
         const sprite = new Sprite(texture)
@@ -650,6 +696,7 @@ export class MapRenderer {
       this.applyBadgeSize(entry, this.zoom)
       this.applyOverlayMode(entry)
     } catch (err) {
+      if (entry.badgeKey === key) entry.badgeKey = undefined
       warn('failed to load badge for', roomName, err)
     }
   }
@@ -971,6 +1018,7 @@ export class MapRenderer {
       entry.badgeSprite.destroy()
       entry.badgeSprite = undefined
     }
+    entry.badgeKey = undefined
     if (entry.mineralSprite) {
       entry.container.removeChild(entry.mineralSprite)
       entry.mineralSprite.destroy()
@@ -1006,6 +1054,8 @@ export class MapRenderer {
     for (const name of [...this.activeRooms.keys()]) {
       this.clearRoom(name)
     }
+    this.terrainBaked.clear()
+    this.sectorLayer.clear()
   }
 
   clearInvisibleRooms(visibleSet: ReadonlySet<string>): void {
@@ -1020,6 +1070,7 @@ export class MapRenderer {
       }
       this.clearRoom(name)
     }
+    if (b) this.sectorLayer.evictOutside(b, CLEAR_PADDING)
   }
 
   destroy(): void {
@@ -1052,6 +1103,7 @@ export class MapRenderer {
       if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     }
     this.roomPool.length = 0
+    this.sectorLayer.clear()
     this.terrainBaked.clear()
     this.terrainData.clear()
     this.fadingOverlays.clear()
@@ -1091,6 +1143,8 @@ export class MapRenderer {
       container.cullable = true
 
       const terrainSprite = new Sprite(Texture.EMPTY)
+      terrainSprite.width  = MAP_ROOM_SIZE
+      terrainSprite.height = MAP_ROOM_SIZE
       const map2Graphics  = new Graphics()
       const ownerOverlay  = new Graphics()
       container.addChild(terrainSprite)
@@ -1114,6 +1168,7 @@ export class MapRenderer {
     entry.container.x = coord.x * MAP_ROOM_SIZE
     entry.container.y = coord.y * MAP_ROOM_SIZE
     entry.container.visible = false
+    entry.terrainSprite.visible = !this.sectorMode
     entry.nameLabel.text = roomName
     entry.nameLabel.visible = this.showRoomNames && this.zoom >= NAME_ZOOM_THRESHOLD && this.nameLabelShouldShow(coord.x, coord.y)
     this.updateNameLabelScale(entry, this.zoom)
@@ -1410,10 +1465,12 @@ export class MapRenderer {
     const right  = (this.app.screen.width  - worldX) / scale
     const bottom = (this.app.screen.height - worldY) / scale
 
-    const rxMin = Math.floor(left   / MAP_ROOM_SIZE) - 1
-    const rxMax = Math.ceil (right  / MAP_ROOM_SIZE)
-    const ryMin = Math.floor(top    / MAP_ROOM_SIZE) - 1
-    const ryMax = Math.ceil (bottom / MAP_ROOM_SIZE)
+    let rxMin = Math.floor(left   / MAP_ROOM_SIZE) - 1
+    let rxMax = Math.ceil (right  / MAP_ROOM_SIZE)
+    let ryMin = Math.floor(top    / MAP_ROOM_SIZE) - 1
+    let ryMax = Math.ceil (bottom / MAP_ROOM_SIZE)
+    const sectorMode = this.sectorMode
+    if (sectorMode) ({ rxMin, rxMax, ryMin, ryMax } = expandToSectors({ rxMin, rxMax, ryMin, ryMax }))
     this.lastVisibleBounds = { rxMin, rxMax, ryMin, ryMax }
 
     const visible: string[] = []
@@ -1441,10 +1498,15 @@ export class MapRenderer {
       }, VISIBLE_DEBOUNCE_MS)
     }
 
-    const lod = this.getLOD()
-    if (keyChanged || lod !== this.lastAppliedLod) {
-      this.lastAppliedLod = lod
-      this.applyLOD()
+    const mode = sectorMode ? SECTOR_MODE : this.getLOD()
+    const modeChanged = mode !== this.lastTerrainMode
+    if (modeChanged) {
+      this.lastTerrainMode = mode
+      this.setSectorMode(sectorMode)
+    }
+    if (keyChanged || modeChanged) {
+      if (sectorMode) this.sectorLayer.update(this.lastVisibleBounds)
+      else this.applyLOD()
     }
   }
 }

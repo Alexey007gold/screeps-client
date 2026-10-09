@@ -7,7 +7,9 @@ import type { RoomDecoration } from './roomDecorations.js'
 import type { SelectionVisual } from './HoverHighlightLayer.js'
 import { TILE_SIZE } from './RoomRenderer.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
-import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap } from './terrainCache.js'
+import { getTerrainCacheBlob, saveTerrainCacheBlob, blobToImageBitmap, terrainCacheScope } from './terrainCache.js'
+import { SECTOR_MAX_ROOM_SCREEN_PX } from './sectorTerrain.js'
+import { SectorTerrainLayer, expandToSectors, type RoomBounds } from './SectorTerrainLayer.js'
 import TerrainWorker from './terrain.worker.ts?worker'
 import { TERRAIN_WALL, TERRAIN_BORDER } from '~/renderer/colors.js'
 import {
@@ -30,6 +32,7 @@ const MAP2_DOT_SCALE = MAP2_TILE / MINIMAP_TILE
 // texture is never upscaled below the full-detail threshold (~0.6): at zoom
 // 0.6 a room is 360px on screen, comfortably under 512.
 const LOD_ZOOM_THRESHOLD = 0.3
+const SECTOR_MODE = -1
 
 export const MIN_ZOOM = 0.03
 export const MAX_ZOOM = 2
@@ -51,6 +54,8 @@ interface CellEntry {
   terrainSprite: Sprite
   texLo: RenderTexture | null // LOD 0 (128px)
   texHi: RenderTexture | null // LOD 1 (512px)
+  lodGen: number
+  lodBaking: [number, number]
   map2Graphics: Graphics
   ownerState: 'none' | 'own' | 'other' | 'prohibited'
   lastMap2Data?: Partial<RoomMap2Data>
@@ -69,7 +74,7 @@ export interface MultiRoomRendererCallbacks {
   // `inView` is the subset of `rooms` that's actually on screen right now
   // (excludes the scroll-ahead buffer) — lets the full-detail promotion
   // logic prefer truly-visible rooms over buffered-but-off-screen ones.
-  onVisibleRoomsChanged: (rooms: string[], inView: ReadonlySet<string>) => void
+  onVisibleRoomsChanged: (rooms: string[], inView: ReadonlySet<string>, zoom: number) => void
   onZoomChanged?: (zoom: number) => void
 }
 
@@ -83,7 +88,10 @@ export class MultiRoomRenderer {
   private readonly terrainBaked = new Set<string>()
   private readonly terrainData = new Map<string, Uint8Array>() // raw bytes kept for lazy other-LOD bakes
   private worker: Worker
-  private pendingBakes = new Map<number, { resolve: (bmp: ImageBitmap) => void, reject: (err: unknown) => void }>()
+  private pendingBakes = new Map<number, { resolve: (bmp: ImageBitmap | null) => void, reject: (err: unknown) => void }>()
+  private readonly sectorLayer: SectorTerrainLayer
+  private sectorsDirty = false
+  private lastTerrainMode: number | null = null
   private nextBakeId = 0
   public currentShard: string = 'shard0'
   private readonly callbacks: MultiRoomRendererCallbacks
@@ -93,17 +101,24 @@ export class MultiRoomRenderer {
   private worldBoundsSet: WorldCameraBounds | null = null
   private lastVisibleBounds: VisibleBounds | null = null
   private currentUserId: string | null = null
-  private currentLOD = 0
   private hoveredFullDetailRoom: string | null = null
 
   constructor(callbacks: MultiRoomRendererCallbacks) {
     this.app = new Application()
     this.callbacks = callbacks
+    this.sectorLayer = new SectorTerrainLayer({
+      roomSize: ROOM_WORLD_SIZE,
+      isRoomFetched: (room) => this.terrainBaked.has(room),
+      roomTerrain: (room) => this.terrainData.get(room) ?? null,
+      worldBounds: () => this.worldBoundsSet,
+      cacheScope: () => terrainCacheScope(this.currentShard),
+      bake: (raws, scope, cacheName) => this.bakeSectorBitmap(raws, scope, cacheName),
+    })
     this.worker = new TerrainWorker()
     this.worker.onmessage = (e) => {
       const d = e.data
       if (d.kind === 'cache') {
-        saveTerrainCacheBlob(d.shard, d.roomName, d.lod, new Blob([d.cacheBytes], { type: d.cacheType || 'image/webp' }))
+        saveTerrainCacheBlob(d.scope, d.roomName, d.lod, new Blob([d.cacheBytes], { type: d.cacheType || 'image/webp' }))
         return
       }
       const pending = this.pendingBakes.get(d.id)
@@ -156,8 +171,15 @@ export class MultiRoomRenderer {
       onZoomChanged: (zoom) => this.handleZoomChanged(zoom),
     })
 
+    this.camera.world.addChildAt(this.sectorLayer.container, 0)
     this.boundsGraphics = new Graphics()
     this.camera.world.addChild(this.boundsGraphics)
+
+    this.app.ticker.add(() => {
+      if (!this.sectorsDirty) return
+      this.sectorsDirty = false
+      if (this.sectorMode && this.lastVisibleBounds) this.sectorLayer.update(this.lastVisibleBounds)
+    })
   }
 
   isContextLost(): boolean {
@@ -213,26 +235,55 @@ export class MultiRoomRenderer {
     return this.zoom < LOD_ZOOM_THRESHOLD ? 0 : 1
   }
 
+  private get sectorMode(): boolean {
+    return ROOM_WORLD_SIZE * this.zoom < SECTOR_MAX_ROOM_SCREEN_PX
+  }
+
   private handleZoomChanged(zoom: number): void {
-    const lod = zoom < LOD_ZOOM_THRESHOLD ? 0 : 1
-    if (lod !== this.currentLOD) {
-      this.currentLOD = lod
-      void this.applyLOD()
-    }
+    this.applyTerrainMode(this.screenRoomBounds(), false)
     this.callbacks.onZoomChanged?.(zoom)
   }
 
+  private screenRoomBounds(): RoomBounds {
+    const tl = this.camera.screenToCell(0, 0)
+    const br = this.camera.screenToCell(this.app.screen.width, this.app.screen.height)
+    return { rxMin: tl.cx, rxMax: br.cx, ryMin: tl.cy, ryMax: br.cy }
+  }
+
+  private applyTerrainMode(bounds: RoomBounds, boundsChanged: boolean): void {
+    const sectorMode = this.sectorMode
+    const mode = sectorMode ? SECTOR_MODE : this.getLOD()
+    const modeChanged = mode !== this.lastTerrainMode
+    if (modeChanged) {
+      this.lastTerrainMode = mode
+      this.sectorLayer.container.visible = sectorMode
+      for (const entry of this.activeRooms.values()) entry.terrainSprite.visible = !sectorMode
+    }
+    if (!boundsChanged && !modeChanged) return
+    if (sectorMode) this.sectorLayer.update(expandToSectors(bounds))
+    else this.applyLOD(bounds)
+  }
+
+  private bakeSectorBitmap(raws: (Uint8Array | null)[], scope: string, cacheName: string): Promise<ImageBitmap | null> {
+    const id = this.nextBakeId++
+    const promise = new Promise<ImageBitmap | null>((resolve, reject) => {
+      this.pendingBakes.set(id, { resolve, reject })
+    })
+    this.worker.postMessage({ kind: 'sector', id, raws, scope, cacheName })
+    return promise
+  }
+
   private async getTerrainBitmap(roomName: string, lod: number, raw: Uint8Array): Promise<ImageBitmap | null> {
-    const shard = this.currentShard
+    const scope = terrainCacheScope(this.currentShard)
     try {
-      const cachedBlob = await getTerrainCacheBlob(shard, roomName, lod)
+      const cachedBlob = await getTerrainCacheBlob(scope, roomName, lod)
       if (cachedBlob) return await blobToImageBitmap(cachedBlob)
 
       const id = this.nextBakeId++
-      const promise = new Promise<ImageBitmap>((resolve, reject) => {
+      const promise = new Promise<ImageBitmap | null>((resolve, reject) => {
         this.pendingBakes.set(id, { resolve, reject })
       })
-      this.worker.postMessage({ id, roomName, lod, raw, shard })
+      this.worker.postMessage({ id, roomName, lod, raw, scope })
       return await promise
     } catch {
       return null
@@ -246,6 +297,7 @@ export class MultiRoomRenderer {
     for (let i = 0; i < raw.length; i++) {
       if (raw[i] !== 0) { hasContent = true; break }
     }
+    this.sectorsDirty = true
     if (!hasContent) {
       this.terrainBaked.add(roomName)
       return
@@ -255,35 +307,44 @@ export class MultiRoomRenderer {
     const lod = this.getLOD()
     this.terrainData.set(roomName, raw)
 
+    if (this.sectorMode) {
+      this.terrainBaked.add(roomName)
+      entry.container.visible = true
+      return
+    }
+
+    const gen = entry.lodGen
     const bitmap = await this.getTerrainBitmap(roomName, lod, raw)
     if (!bitmap) return
 
-    if (!this.activeRooms.has(roomName)) {
+    if (this.activeRooms.get(roomName) !== entry) {
       bitmap.close()
       return
     }
 
-    // skipCache: true — a freshly-baked bitmap is never reused, so without this
-    // PixiJS's global Texture.from cache would keep every baked terrain texture
-    // (and its backing pixel buffer) alive forever, even after destroy(true).
-    const tex = Texture.from(bitmap, true)
-
-    if (lod === 0) {
-      if (entry.texLo && !entry.texLo.destroyed) {
-        if ((entry.terrainSprite.texture as unknown) === entry.texLo) entry.terrainSprite.texture = Texture.EMPTY
-        entry.texLo.destroy(true)
-      }
-      entry.texLo = tex as unknown as RenderTexture
+    if (entry.lodGen !== gen) {
+      bitmap.close()
     } else {
-      if (entry.texHi && !entry.texHi.destroyed) {
-        if ((entry.terrainSprite.texture as unknown) === entry.texHi) entry.terrainSprite.texture = Texture.EMPTY
-        entry.texHi.destroy(true)
+      // skipCache: true — a freshly-baked bitmap is never reused, so without this
+      // PixiJS's global Texture.from cache would keep every baked terrain texture
+      // (and its backing pixel buffer) alive forever, even after destroy(true).
+      const tex = Texture.from(bitmap, true)
+
+      if (lod === 0) {
+        if (entry.texLo && !entry.texLo.destroyed) {
+          if ((entry.terrainSprite.texture as unknown) === entry.texLo) entry.terrainSprite.texture = Texture.EMPTY
+          entry.texLo.destroy(true)
+        }
+        entry.texLo = tex as unknown as RenderTexture
+      } else {
+        if (entry.texHi && !entry.texHi.destroyed) {
+          if ((entry.terrainSprite.texture as unknown) === entry.texHi) entry.terrainSprite.texture = Texture.EMPTY
+          entry.texHi.destroy(true)
+        }
+        entry.texHi = tex as unknown as RenderTexture
       }
-      entry.texHi = tex as unknown as RenderTexture
     }
 
-    entry.terrainSprite.width = ROOM_WORLD_SIZE
-    entry.terrainSprite.height = ROOM_WORLD_SIZE
     this.terrainBaked.add(roomName)
 
     void this.ensureCurrentLod(roomName, entry)
@@ -291,17 +352,23 @@ export class MultiRoomRenderer {
   }
 
   private ensureCurrentLod(roomName: string, entry: CellEntry): Promise<void> | void {
+    if (this.sectorMode) return
     const hi = this.getLOD() === 1
     const have = hi ? entry.texHi : entry.texLo
     if (have && !have.destroyed) {
       entry.terrainSprite.texture = have as unknown as Texture
       return
     }
+    const lod = hi ? 1 : 0
+    if (entry.lodBaking[lod] === entry.lodGen) return
     const raw = this.terrainData.get(roomName)
     if (!raw) return
-    return this.getTerrainBitmap(roomName, hi ? 1 : 0, raw).then((bitmap) => {
+    const gen = entry.lodGen
+    entry.lodBaking[lod] = gen
+    return this.getTerrainBitmap(roomName, lod, raw).then((bitmap) => {
+      if (entry.lodBaking[lod] === gen) entry.lodBaking[lod] = -1
       if (!bitmap) return
-      if (!this.activeRooms.has(roomName)) { bitmap.close(); return }
+      if (entry.lodGen !== gen || this.activeRooms.get(roomName) !== entry) { bitmap.close(); return }
       const tex = Texture.from(bitmap, true)
       if (hi) entry.texHi = tex as unknown as RenderTexture
       else entry.texLo = tex as unknown as RenderTexture
@@ -309,14 +376,15 @@ export class MultiRoomRenderer {
     })
   }
 
-  private async applyLOD(): Promise<void> {
-    const tasks: Promise<void>[] = []
-    for (const [roomName, entry] of this.activeRooms) {
-      if (!this.terrainBaked.has(roomName)) continue
-      const task = this.ensureCurrentLod(roomName, entry)
-      if (task) tasks.push(task)
+  private applyLOD(b: RoomBounds): void {
+    for (let ry = b.ryMin; ry <= b.ryMax; ry++) {
+      for (let rx = b.rxMin; rx <= b.rxMax; rx++) {
+        const roomName = formatRoomName(rx, ry)
+        if (!roomName || !this.terrainBaked.has(roomName)) continue
+        const entry = this.activeRooms.get(roomName)
+        if (entry) void this.ensureCurrentLod(roomName, entry)
+      }
     }
-    await Promise.all(tasks)
   }
 
   // ── map2 low-detail overlay (Phase 1) ────────────────────────────────────
@@ -488,6 +556,7 @@ export class MultiRoomRenderer {
     if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     entry.texLo = null
     entry.texHi = null
+    entry.lodGen++
     entry.terrainSprite.texture = Texture.EMPTY
     entry.map2Graphics.clear()
     entry.ownerState = 'none'
@@ -513,6 +582,8 @@ export class MultiRoomRenderer {
     for (const name of [...this.activeRooms.keys()]) {
       this.clearRoom(name)
     }
+    this.terrainBaked.clear()
+    this.sectorLayer.clear()
   }
 
   clearInvisibleRooms(visibleSet: ReadonlySet<string>): void {
@@ -527,6 +598,7 @@ export class MultiRoomRenderer {
       }
       this.clearRoom(name)
     }
+    if (b) this.sectorLayer.evictOutside(b, CLEAR_PADDING)
   }
 
   destroy(): void {
@@ -548,6 +620,7 @@ export class MultiRoomRenderer {
       if (entry.texHi && !entry.texHi.destroyed) entry.texHi.destroy(true)
     }
     this.roomPool.length = 0
+    this.sectorLayer.clear()
     this.terrainBaked.clear()
     this.terrainData.clear()
     this.worker.terminate()
@@ -578,25 +651,30 @@ export class MultiRoomRenderer {
       container.cullable = true
 
       const terrainSprite = new Sprite(Texture.EMPTY)
+      terrainSprite.width = ROOM_WORLD_SIZE
+      terrainSprite.height = ROOM_WORLD_SIZE
       const map2Graphics  = new Graphics()
       container.addChild(terrainSprite)
       container.addChild(map2Graphics)
 
       this.camera.world.addChild(container)
 
-      entry = { container, terrainSprite, texLo: null, texHi: null, map2Graphics, ownerState: 'none' }
+      entry = { container, terrainSprite, texLo: null, texHi: null, lodGen: 0, lodBaking: [-1, -1], map2Graphics, ownerState: 'none' }
     }
 
     entry.container.x = coord.x * ROOM_WORLD_SIZE
     entry.container.y = coord.y * ROOM_WORLD_SIZE
     entry.container.visible = false
+    entry.terrainSprite.visible = !this.sectorMode
 
     this.activeRooms.set(roomName, entry)
     return entry
   }
 
-  private handleVisibleBoundsChanged(bounds: VisibleBounds): void {
+  private handleVisibleBoundsChanged(cameraBounds: VisibleBounds): void {
+    const bounds = this.sectorMode ? { ...cameraBounds, ...expandToSectors(cameraBounds) } : cameraBounds
     this.lastVisibleBounds = bounds
+    this.applyTerrainMode(bounds, true)
     const { rxMin, rxMax, ryMin, ryMax, strictRxMin, strictRxMax, strictRyMin, strictRyMax } = bounds
     const visible: string[] = []
     const inView = new Set<string>()
@@ -613,7 +691,7 @@ export class MultiRoomRenderer {
         if (rx >= strictRxMin && rx <= strictRxMax && ry >= strictRyMin && ry <= strictRyMax) inView.add(name)
       }
     }
-    this.callbacks.onVisibleRoomsChanged(visible, inView)
+    this.callbacks.onVisibleRoomsChanged(visible, inView, this.zoom)
   }
 
   // Tile-local (0..49) coords within `room` for a screen point already known

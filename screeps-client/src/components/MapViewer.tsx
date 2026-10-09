@@ -76,10 +76,6 @@ export function MapViewer(props: MapViewerProps) {
   // Precomputed unclaimable state per room — survives the stats-before-terrain race.
   const roomUnclaimable = new Map<string, 'none' | 'own' | 'other' | 'prohibited'>()
 
-  // Fast change-detection for badges: roomName → JSON key of last seen badge.
-  // If the key hasn't changed we skip re-rendering the badge entirely.
-  const roomBadgeKeys = new Map<string, string>()
-
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
     if (!bounds) return true // server doesn't provide world-size → allow all
@@ -183,7 +179,10 @@ export function MapViewer(props: MapViewerProps) {
           const unclaimable = roomUnclaimable.get(room)
           if (unclaimable !== undefined) renderer?.setRoomOwned(room, unclaimable)
           const stat = roomStats.get(room)
-          if (stat) renderer?.setRoomMineral(room, stat.mineral, stat.density)
+          if (stat) {
+            renderer?.setRoomMineral(room, stat.mineral, stat.density)
+            void renderer?.setRoomBadge(room, stat.badge, stat.own?.level)
+          }
           applyAlliance(room)
         }
         for (const room of batch) {
@@ -605,12 +604,7 @@ export function MapViewer(props: MapViewerProps) {
 
         renderer?.setRoomDecoration(room, stat.decorations ? buildMapDecoration(stat.decorations) : undefined)
 
-        // Badge change-check: cheap string comparison, runs only on event, never per tick.
-        const badgeKey = stat.badge ? JSON.stringify(stat.badge) : ''
-        if (roomBadgeKeys.get(room) !== badgeKey) {
-          roomBadgeKeys.set(room, badgeKey)
-          renderer?.setRoomBadge(room, stat.badge, stat.own?.level)
-        }
+        void renderer?.setRoomBadge(room, stat.badge, stat.own?.level)
       }
 
       const sel = selectedRoom()
