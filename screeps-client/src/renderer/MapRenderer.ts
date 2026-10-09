@@ -61,6 +61,8 @@ const ALLIANCE_FILL_ALPHA = 0.3
 // World-space gap between the label baseline and the room's bottom edge.
 const ALLIANCE_LABEL_MARGIN = 5
 
+export type RoomOwnerState = 'none' | 'own' | 'other' | 'prohibited' | 'respawn'
+
 interface RoomEntry {
   container: Container
   terrainSprite: Sprite
@@ -70,7 +72,7 @@ interface RoomEntry {
   lodBaking: [number, number]
   map2Graphics: Graphics
   ownerOverlay: Graphics
-  ownerState: 'none' | 'own' | 'other' | 'prohibited'
+  ownerState: RoomOwnerState
   lastMap2Data?: Partial<RoomMap2Data>
   lastMap2Source?: 'cache' | 'live'
   badgeSprite?: Sprite
@@ -568,7 +570,7 @@ export class MapRenderer {
     }
   }
 
-  setRoomOwned(roomName: string, state: 'none' | 'own' | 'other' | 'prohibited'): void {
+  setRoomOwned(roomName: string, state: RoomOwnerState): void {
     const entry = this.activeRooms.get(roomName)
     if (!entry) return
     const g = entry.ownerOverlay
@@ -587,6 +589,9 @@ export class MapRenderer {
     } else if (state === 'other') {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
       g.fill({ color: 0x990000, alpha: 0.18 })
+    } else if (state === 'respawn') {
+      g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
+      g.fill({ color: 0x0066ff, alpha: 0.18 })
     } else if (state === 'own') {
       g.rect(0, 0, MAP_ROOM_SIZE, MAP_ROOM_SIZE)
       g.fill({ color: 0x000066, alpha: 0.35 })

@@ -1,5 +1,5 @@
 import { batch, createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
-import { MapRenderer } from '~/renderer/MapRenderer.js'
+import { MapRenderer, type RoomOwnerState } from '~/renderer/MapRenderer.js'
 import { buildMapDecoration } from '~/renderer/mapDecorations.js'
 import { client, userInfo, isGuest, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
 import { showMapRoomNames, showUnclaimableRooms, showMapVisuals, showRoomDecorations } from '~/stores/settingsStore.js'
@@ -74,7 +74,7 @@ export function MapViewer(props: MapViewerProps) {
   const roomStats = new Map<string, { own?: { user: string; level: number }; mineral?: string; density?: number; username?: string; safeMode?: boolean; badge?: import('screeps-connectivity').Badge; sign?: { user: string; text: string; datetime: number; username?: string; badge?: import('screeps-connectivity').Badge } }>()
 
   // Precomputed unclaimable state per room — survives the stats-before-terrain race.
-  const roomUnclaimable = new Map<string, 'none' | 'own' | 'other' | 'prohibited'>()
+  const roomUnclaimable = new Map<string, RoomOwnerState>()
 
   const canNavigateTo = (room: string): boolean => {
     const bounds = worldBounds()
@@ -587,7 +587,8 @@ export function MapViewer(props: MapViewerProps) {
         const prohibited = stat.status === 'out of borders'
         const ownRoom = !!(stat.own && stat.own.user === me)
         const enemyOwned = !!(stat.own && stat.own.user !== me)
-        const unclaimableState: 'none' | 'own' | 'other' | 'prohibited' = ownRoom ? 'own' : prohibited ? 'prohibited' : (structurallyUnclaimable || enemyOwned) ? 'other' : 'none'
+        const respawnArea = (stat.respawnAreaUntil ?? 0) > Date.now()
+        const unclaimableState: RoomOwnerState = ownRoom ? 'own' : prohibited ? 'prohibited' : (structurallyUnclaimable || enemyOwned) ? 'other' : respawnArea ? 'respawn' : 'none'
         roomUnclaimable.set(room, unclaimableState)
         if (visibleSet.has(room)) {
           renderer?.setRoomOwned(room, unclaimableState)

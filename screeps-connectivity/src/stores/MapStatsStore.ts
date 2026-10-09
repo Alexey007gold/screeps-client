@@ -79,6 +79,7 @@ export interface MapStatsRoomData {
   safeMode?: boolean
   badge?: ApiMapStatsBadge
   status?: string
+  respawnAreaUntil?: number
   /**
    * Controller sign. `user` is the raw signer id; `username`/`badge` are resolved from the
    * response's user map and may be absent if the signer isn't included there.
@@ -291,6 +292,7 @@ export class MapStatsStore extends TypedStore<MapStatsStoreEvents> {
       safeMode: stat.safeMode,
       badge: ownerId ? userMap[ownerId]?.badge : undefined,
       status: stat.status,
+      respawnAreaUntil: num(stat.respawnArea, 0) || undefined,
       sign: stat.sign
         ? {
             user: stat.sign.user,
