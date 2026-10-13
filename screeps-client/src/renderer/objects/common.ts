@@ -51,13 +51,17 @@ export function onCooldown(obj: RoomObject): boolean {
   return typeof obj.cooldown === 'number' && obj.cooldown > 0
 }
 
+export function isCreepType(type: string | undefined): boolean {
+  return type === 'creep' || type === 'powerCreep'
+}
+
 // Tier-based zIndex: structures=0, creeps=100, flags=200; each spec adds an offset
 // within its tier. A spawning creep sits on its spawn's tile, so it drops below
 // structures (the spawn body + progress ring then render over it) instead of popping
 // on top. Other creeps stay above structures. Re-applied on update so the born
 // transition (spawning → false) restores the normal creep tier.
 export function computeZIndex(obj: RoomObject): number {
-  const baseZ = obj.type === 'creep' ? (obj.spawning ? -1 : 100) : obj.type === 'flag' ? 200 : 0
+  const baseZ = isCreepType(obj.type) ? (obj.spawning ? -1 : 100) : obj.type === 'flag' ? 200 : 0
   const specZ = obj.type === 'flag' ? (defaultSpriteTheme.flag?.zIndex ?? 0)
     : obj.type === 'controller' ? (defaultSpriteTheme.controller?.zIndex ?? 0)
     : obj.type === 'tombstone' ? TOMBSTONE_Z_INDEX

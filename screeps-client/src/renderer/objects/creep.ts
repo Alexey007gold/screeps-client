@@ -184,8 +184,56 @@ export function buildSayBubble(message: string): Container {
   bubble.pivot.set(0, bh / 2 + SAY_TAIL_H)
   return bubble
 }
+export function attachCreepCore(ctx: VisualBuildContext, bodyContainer: Container, isForeign: boolean): void {
+  const { obj, container, badgeCache, users } = ctx
+  const creepUserId = typeof obj.user === 'string' ? obj.user : undefined
+  const creepBadge = creepUserId ? users?.[creepUserId]?.badge : undefined
+  if (creepBadge && badgeCache) {
+    const badgeSprite = new Sprite()
+    badgeSprite.anchor.set(0.5, 0.5)
+    const size = CREEP_INNER_R * 2
+    badgeSprite.width = size
+    badgeSprite.height = size
+    badgeSprite.rotation = -CREEP_IDLE_FACING
+    bodyContainer.addChild(badgeSprite)
+    ;(container as ContainerWithTarget).__creepBadgeSprite = badgeSprite
+    badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
+      if (!badgeSprite.destroyed) {
+        badgeSprite.texture = texture
+      }
+    }).catch(err => logError('atlas/badge texture load failed', err))
+  } else if (isForeign) {
+    const markG = new Graphics()
+    markG.circle(0, 0, CREEP_INNER_R * 0.82)
+    markG.fill({ color: OBJ_FOREIGN, alpha: 0.9 })
+    bodyContainer.addChild(markG)
+    ;(container as ContainerWithTarget).__creepForeignMark = markG
+  }
+
+  const { used, capacity } = getCreepStore(obj)
+  const fillRadius = calcCreepFillRadius(used, capacity)
+  const fillG = new Graphics()
+  if (fillRadius > 0) {
+    fillG.circle(0, 0, fillRadius)
+    fillG.fill(ENERGY_FILL)
+  }
+  bodyContainer.addChild(fillG)
+  ;(container as ContainerWithTarget).__creepFillGraphics = fillG
+  ;(container as ContainerWithTarget).__creepUsed = used
+  ;(container as ContainerWithTarget).__creepCapacity = capacity
+
+  const midR   = (CREEP_OUTER_R + CREEP_INNER_R) / 2
+  const halfH  = (CREEP_OUTER_R - CREEP_INNER_R) * 0.45
+  const notchG = new Graphics()
+  notchG.moveTo(CREEP_OUTER_R, 0)
+  notchG.lineTo(midR, -halfH)
+  notchG.lineTo(midR,  halfH)
+  notchG.closePath()
+  notchG.fill(CREEP_NOTCH)
+  bodyContainer.addChild(notchG)
+}
 export function buildCreepBody(ctx: VisualBuildContext): void {
-  const { obj, container, cx, cy, currentUserId, badgeCache, users } = ctx
+  const { obj, container, cx, cy, currentUserId, users } = ctx
   // Invaders and Source Keepers both render as the red gem.
   if (npcCreepName(obj, users)) {
     drawInvaderCreep(container as ContainerWithTarget)
@@ -292,54 +340,7 @@ export function buildCreepBody(ctx: VisualBuildContext): void {
   innerG.fill(BG_DARK)
   bodyContainer.addChild(innerG)
 
-  // Center indicator: owner's badge if available, red fill for foreign/NPC without badge
-  const creepUserId = typeof obj.user === 'string' ? obj.user : undefined
-  const creepBadge = creepUserId ? users?.[creepUserId]?.badge : undefined
-  if (creepBadge && badgeCache) {
-    const badgeSprite = new Sprite()
-    badgeSprite.anchor.set(0.5, 0.5)
-    const size = CREEP_INNER_R * 2
-    badgeSprite.width = size
-    badgeSprite.height = size
-    badgeSprite.rotation = -CREEP_IDLE_FACING
-    bodyContainer.addChild(badgeSprite)
-    ;(container as ContainerWithTarget).__creepBadgeSprite = badgeSprite
-    badgeCache.getOrCreate(creepBadge as Badge).then((texture) => {
-      if (!badgeSprite.destroyed) {
-        badgeSprite.texture = texture
-      }
-    }).catch(err => logError('atlas/badge texture load failed', err))
-  } else if (isForeign) {
-    const markG = new Graphics()
-    markG.circle(0, 0, CREEP_INNER_R * 0.82)
-    markG.fill({ color: OBJ_FOREIGN, alpha: 0.9 })
-    bodyContainer.addChild(markG)
-    ;(container as ContainerWithTarget).__creepForeignMark = markG
-  }
-
-  // Store fill (animated, updated on store changes)
-  const { used, capacity } = getCreepStore(obj)
-  const fillRadius = calcCreepFillRadius(used, capacity)
-  const fillG = new Graphics()
-  if (fillRadius > 0) {
-    fillG.circle(0, 0, fillRadius)
-    fillG.fill(ENERGY_FILL)
-  }
-  bodyContainer.addChild(fillG)
-  ;(container as ContainerWithTarget).__creepFillGraphics = fillG
-  ;(container as ContainerWithTarget).__creepUsed = used
-  ;(container as ContainerWithTarget).__creepCapacity = capacity
-
-  // Direction indicator (notch pointing right = local angle 0)
-  const midR   = (CREEP_OUTER_R + CREEP_INNER_R) / 2
-  const halfH  = (CREEP_OUTER_R - CREEP_INNER_R) * 0.45
-  const notchG = new Graphics()
-  notchG.moveTo(CREEP_OUTER_R, 0)
-  notchG.lineTo(midR, -halfH)
-  notchG.lineTo(midR,  halfH)
-  notchG.closePath()
-  notchG.fill(CREEP_NOTCH)
-  bodyContainer.addChild(notchG)
+  attachCreepCore(ctx, bodyContainer, isForeign)
 
   container.addChild(bodyContainer)
   ;(container as ContainerWithTarget).__bodyContainer = bodyContainer

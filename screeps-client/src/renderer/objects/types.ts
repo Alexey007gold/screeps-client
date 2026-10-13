@@ -24,6 +24,8 @@ export type ContainerWithTarget = Container & {
   __creepBorderG?: Graphics
   __creepBadgeSprite?: Sprite
   __creepForeignMark?: Graphics
+  __powerRingGraphics?: Graphics
+  __powerHitsRatio?: number
   __towerFillGraphics?: Graphics
   __towerEnergy?: number
   __towerCapacity?: number

@@ -9,6 +9,7 @@ import { OBJ_FOREIGN, ST_OUTLINE } from '../colors.js'
 import { computeZIndex, getObjectColor } from './common.js'
 import type { VisualBuildContext } from './types.js'
 import { createCreepVisual } from './creep.js'
+import { createPowerCreepVisual } from './powerCreep.js'
 import { createExtensionVisual } from './extension.js'
 import { createSpawnVisual } from './spawn.js'
 import { createPowerSpawnVisual } from './powerSpawn.js'
@@ -42,6 +43,7 @@ import {
 
 const CREATORS: Record<string, (ctx: VisualBuildContext) => void> = {
   creep: createCreepVisual,
+  powerCreep: createPowerCreepVisual,
   extension: createExtensionVisual,
   spawn: createSpawnVisual,
   powerSpawn: createPowerSpawnVisual,

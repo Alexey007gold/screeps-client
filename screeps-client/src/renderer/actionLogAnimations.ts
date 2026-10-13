@@ -1,6 +1,7 @@
 import type { RoomObjectMap } from 'screeps-connectivity'
 import type { ActionAnimationLayer } from './ActionAnimationLayer.js'
 import type { ObjectLayer, EdgeExitTile } from './ObjectLayer.js'
+import { isCreepType } from './objects/common.js'
 
 // Queries a neighboring room (multi-room grid only) for the actionLog a creep carried
 // when it arrived there this tick, so a departure can recover its own beam — see the
@@ -154,7 +155,7 @@ export function applyActionLogAnimations(
       continue
     }
 
-    if (obj.type !== 'creep') continue
+    if (!isCreepType(obj.type)) continue
 
     // A creep that just crossed into this room this tick still carries the actionLog
     // entry from whatever it did in the room it left — the target coordinates belong

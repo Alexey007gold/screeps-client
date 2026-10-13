@@ -15,6 +15,7 @@ import {
   computeZIndex,
   cooldownEnd,
   destroyVisual,
+  isCreepType,
   lerpColor,
   onCooldown,
   resourceColor,
@@ -48,6 +49,7 @@ import {
   setCreepFacing,
   updateCreepFill,
 } from './objects/creep.js'
+import { drawPowerCreepRing, powerCreepHitsRatio } from './objects/powerCreep.js'
 import { calcExtensionFillRadius, getExtensionEnergy, updateExtensionFill } from './objects/extension.js'
 import { EXTRACTOR_RING_SPEED } from './objects/extractor.js'
 import {
@@ -789,7 +791,7 @@ export class ObjectLayer {
   private updateExistingVisual(id: string, obj: RoomObject, existing: ContainerWithTarget, fullReconcile: boolean): void {
     const tx = obj.x * TILE_SIZE
     const ty = obj.y * TILE_SIZE
-    if (obj.type === 'creep') {
+    if (isCreepType(obj.type)) {
       const dx = obj.x - (existing.__tileX ?? obj.x)
       const dy = obj.y - (existing.__tileY ?? obj.y)
       if (dx !== 0 || dy !== 0) {
@@ -825,6 +827,13 @@ export class ObjectLayer {
       if (existing.zIndex !== cz) existing.zIndex = cz
       // Creep decorations skip spawning creeps, so that transition changes what applies.
       if (existing.__decoSpawning !== (obj.spawning === true)) this.decorate(existing, obj)
+      if (existing.__powerRingGraphics) {
+        const ratio = powerCreepHitsRatio(obj)
+        if (existing.__powerHitsRatio !== ratio) {
+          drawPowerCreepRing(existing.__powerRingGraphics, ratio)
+          existing.__powerHitsRatio = ratio
+        }
+      }
     } else if (obj.type === 'flag') {
       const newColorIdx = typeof obj.color === 'number' ? obj.color : 0
       const newSecColorIdx = typeof obj.secondaryColor === 'number' ? obj.secondaryColor : 0
@@ -1107,7 +1116,7 @@ export class ObjectLayer {
               // Leave the in-progress hop alone; it'll finish and clean up itself.
               continue
             }
-            const exitTile = oldObj?.type === 'creep' && !diedNearby(oldObj, tombstonesThisTick)
+            const exitTile = oldObj && isCreepType(oldObj.type) && !diedNearby(oldObj, tombstonesThisTick)
               ? extrapolateEdgeExit(oldObj) : null
             if (exitTile) {
               this.freshDepartures.set(id, exitTile)
@@ -1169,7 +1178,7 @@ export class ObjectLayer {
             // still, instead of snapping in at full opacity and duplicating the
             // origin's visual. The single-room view never shows that origin
             // room, so there it just fades in immediately.
-            if (obj.type === 'creep' && isEdgeTile(obj.x, obj.y)) {
+            if (isCreepType(obj.type) && isEdgeTile(obj.x, obj.y)) {
               visual.alpha = 0
               visual.__fadeStartT = this.splitEdgeHandoff ? this.lastTickAt + this.tickMs / 2 : performance.now()
               visual.__fadeDur = FADE_MS
@@ -1710,7 +1719,7 @@ export class ObjectLayer {
     if (!this.currentUserId) return
     for (const [id, visual] of this.objects) {
       const obj = this.rawObjects.get(id)
-      if (!obj || obj.type !== 'creep') continue
+      if (!obj || !isCreepType(obj.type)) continue
       if (!visual.__nameLabel) continue
       if (!isForeignCreep(obj, this.currentUserId)) continue
       const userId = typeof obj.user === 'string' ? obj.user : undefined
@@ -1730,7 +1739,7 @@ export class ObjectLayer {
     if (!this.currentUserId) return
     for (const [id, visual] of this.objects) {
       const obj = this.rawObjects.get(id)
-      if (!obj || obj.type !== 'creep') continue
+      if (!obj || !isCreepType(obj.type)) continue
       if (!isForeignCreep(obj, this.currentUserId)) continue
       if (visual.__creepBadgeSprite) continue  // badge already wired up
       const creepUserId = typeof obj.user === 'string' ? obj.user : undefined

@@ -1,5 +1,6 @@
 import { Container, Graphics, Ticker } from 'pixi.js'
 import { TILE_SIZE } from './RoomRenderer.js'
+import { isCreepType } from './objects/common.js'
 
 export interface SelectionVisual {
   id: string
@@ -85,7 +86,7 @@ export class HoverHighlightLayer {
       this.selectionTypes.set(id, type)
       this.selectionVisuals.set(id, visual)
 
-      if (type === 'creep') {
+      if (isCreepType(type)) {
         // Draw ring at current position immediately; ticker will update it
         this.drawCreepRing(g, visual.x, visual.y)
       } else {
@@ -157,7 +158,7 @@ export class HoverHighlightLayer {
   private trackCreepRings(): void {
     if (this.isContextLost()) return
     for (const [id, g] of this.selectionGraphics) {
-      if (this.selectionTypes.get(id) !== 'creep') continue
+      if (!isCreepType(this.selectionTypes.get(id))) continue
       const visual = this.selectionVisuals.get(id)
       if (!visual || visual.destroyed) continue
       this.drawCreepRing(g, visual.x, visual.y)
