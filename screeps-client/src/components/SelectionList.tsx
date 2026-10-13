@@ -12,6 +12,7 @@ import { CustomObjectActions } from '~/components/Sidebar/CustomObjectActions.js
 import type { SelectedObject } from '~/stores/selectionStore.js'
 import { OBJECT_COLORS, TYPE_LABELS } from './selection/shared.js'
 import { CUSTOM_DETAILS, DefaultDetails } from './selection/registry.js'
+import { EffectsDetails } from './selection/EffectsDetails.js'
 
 const { error } = createLogger('SelectionList')
 
@@ -276,6 +277,8 @@ function SelectionItem(props: { item: SelectedObject }) {
       </div>
 
       <Dynamic component={detailsComponent()} item={props.item} />
+
+      <EffectsDetails raw={props.item.raw as Record<string, unknown>} />
 
       <CustomObjectActions item={props.item} />
 
