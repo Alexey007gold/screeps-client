@@ -11,11 +11,13 @@ import { PowerBankDetails } from './PowerBankDetails.js'
 import { RuinDetails } from './RuinDetails.js'
 import { PortalDetails } from './PortalDetails.js'
 import { TombstoneDetails } from './TombstoneDetails.js'
+import { PowerCreepDetails } from './PowerCreepDetails.js'
 
 export { DefaultDetails }
 
 export const CUSTOM_DETAILS: Record<string, (props: { item: SelectedObject }) => JSX.Element> = {
   creep: CreepDetails,
+  powerCreep: PowerCreepDetails,
   flag: FlagDetails,
   controller: ControllerDetails,
   spawn: ExtensionDetails,

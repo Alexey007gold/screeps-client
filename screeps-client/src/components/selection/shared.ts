@@ -3,6 +3,7 @@
 // Mirror the palette from ObjectLayer so colors match
 export const OBJECT_COLORS: Record<string, string> = {
   creep:       '#f0883e',
+  powerCreep:  '#f0883e',
   spawn:       '#58a6ff',
   extension:   '#79c0ff',
   tower:       '#3fb950',
@@ -33,6 +34,7 @@ export const OBJECT_COLORS: Record<string, string> = {
 
 export const TYPE_LABELS: Record<string, string> = {
   creep:       'Creep',
+  powerCreep:  'Power Creep',
   spawn:       'Spawn',
   extension:   'Extension',
   tower:       'Tower',

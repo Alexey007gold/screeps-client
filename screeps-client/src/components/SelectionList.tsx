@@ -27,7 +27,7 @@ function SelectionItem(props: { item: SelectedObject }) {
     return uid !== null && uid === userInfo()?._id
   }
   const isOwnStructure = () => {
-    if (isCreep() || isFlag() || props.item.type === 'controller') return false
+    if (isCreep() || isFlag() || props.item.type === 'controller' || props.item.type === 'powerCreep') return false
     const raw = props.item.raw as Record<string, unknown>
     const uid = typeof raw.user === 'string' ? raw.user : null
     if (uid !== null) return uid === userInfo()?._id
