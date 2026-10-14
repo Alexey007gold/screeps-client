@@ -1,5 +1,5 @@
 import type { RoomObjectMap } from 'screeps-connectivity'
-import type { ActionAnimationLayer } from './ActionAnimationLayer.js'
+import type { ActionAnimationLayer, BeamAnchor } from './ActionAnimationLayer.js'
 import type { ObjectLayer, EdgeExitTile } from './ObjectLayer.js'
 import { isCreepType } from './objects/common.js'
 
@@ -8,74 +8,78 @@ import { isCreepType } from './objects/common.js'
 // recovery pass at the end of applyActionLogAnimations.
 export type NeighborActionLogLookup = (creepId: string, dirX: number, dirY: number) => Record<string, unknown> | null
 
-// Draws whichever of the five creep target-beams are present in actionLog, from
-// (fromX, fromY) — the creep's position in the frame these coordinates belong to.
+// Draws whichever of the creep target-beams are present in actionLog, from
+// actor — the creep's position in the frame these coordinates belong to.
 // Shared by the live per-tick loop and the cross-room recovery pass below, which
 // draws using a departed creep's exit tile instead of its (foreign-room) obj.x/y.
 function renderCreepActionBeams(
   actionLog: Record<string, unknown>,
-  fromX: number,
-  fromY: number,
+  actor: BeamAnchor,
   animLayer: ActionAnimationLayer,
   objLayer: ObjectLayer,
   beamDuration: number,
 ): void {
+  const target = (pos: { x: number; y: number }) => targetAnchor(pos, objLayer)
   const harvest = actionLog.harvest as { x: number; y: number } | null | undefined
   if (harvest) {
-    animLayer.addHarvest(harvest.x, harvest.y, fromX, fromY, beamDuration)
+    animLayer.addHarvest(target(harvest), actor, beamDuration)
   }
   const upgrade = actionLog.upgradeController as { x: number; y: number } | null | undefined
   if (upgrade) {
-    animLayer.addUpgradeController(fromX, fromY, upgrade.x, upgrade.y, beamDuration)
+    animLayer.addUpgradeController(actor, target(upgrade), beamDuration)
   }
   const build = actionLog.build as { x: number; y: number } | null | undefined
   if (build) {
-    animLayer.addBuild(fromX, fromY, build.x, build.y, beamDuration)
+    animLayer.addBuild(actor, target(build), beamDuration)
     objLayer.triggerBuildAt(build.x, build.y, beamDuration)
   }
   const repair = actionLog.repair as { x: number; y: number } | null | undefined
   if (repair) {
-    animLayer.addRepair(fromX, fromY, repair.x, repair.y, beamDuration)
+    animLayer.addRepair(actor, target(repair), beamDuration)
   }
   const transfer = actionLog.transfer as { x: number; y: number } | null | undefined
   if (transfer) {
-    animLayer.addTransfer(fromX, fromY, transfer.x, transfer.y, beamDuration)
+    animLayer.addTransfer(actor, target(transfer), beamDuration)
   }
   const rangedAttack = actionLog.rangedAttack as { x: number; y: number } | null | undefined
   if (rangedAttack) {
-    animLayer.addRangedAttack(fromX, fromY, rangedAttack.x, rangedAttack.y, beamDuration)
+    animLayer.addRangedAttack(actor, target(rangedAttack), beamDuration)
   }
   const attack = actionLog.attack as { x: number; y: number } | null | undefined
   if (attack) {
-    animLayer.addAttack(fromX, fromY, attack.x, attack.y, beamDuration)
+    animLayer.addAttack(actor, target(attack), beamDuration)
   }
   const heal = actionLog.heal as { x: number; y: number } | null | undefined
   if (heal) {
-    animLayer.addHeal(fromX, fromY, heal.x, heal.y, beamDuration)
+    animLayer.addHeal(actor, target(heal), beamDuration)
   }
   const rangedHeal = actionLog.rangedHeal as { x: number; y: number } | null | undefined
   if (rangedHeal) {
-    animLayer.addRangedHeal(fromX, fromY, rangedHeal.x, rangedHeal.y, beamDuration)
+    animLayer.addRangedHeal(actor, target(rangedHeal), beamDuration)
   }
   const dismantle = actionLog.dismantle as { x: number; y: number } | null | undefined
   if (dismantle) {
-    animLayer.addDismantle(fromX, fromY, dismantle.x, dismantle.y, beamDuration)
+    animLayer.addDismantle(actor, target(dismantle), beamDuration)
   }
   const withdraw = actionLog.withdraw as { x: number; y: number } | null | undefined
   if (withdraw) {
-    animLayer.addWithdraw(withdraw.x, withdraw.y, fromX, fromY, beamDuration)
+    animLayer.addWithdraw(target(withdraw), actor, beamDuration)
   }
   const reserveController = actionLog.reserveController as { x: number; y: number } | null | undefined
   if (reserveController) {
-    animLayer.addReserveController(fromX, fromY, reserveController.x, reserveController.y, beamDuration)
+    animLayer.addReserveController(actor, target(reserveController), beamDuration)
   }
   const attackController = actionLog.attackController as { x: number; y: number } | null | undefined
   if (attackController) {
-    animLayer.addAttackController(fromX, fromY, attackController.x, attackController.y, beamDuration)
+    animLayer.addAttackController(actor, target(attackController), beamDuration)
   }
   if (actionLog.rangedMassAttack) {
-    animLayer.addRangedMassAttack(fromX, fromY, beamDuration)
+    animLayer.addRangedMassAttack(actor, beamDuration)
   }
+}
+
+function targetAnchor(pos: { x: number; y: number }, objLayer: ObjectLayer): BeamAnchor {
+  return { x: pos.x, y: pos.y, sprite: objLayer.findCreepSpriteAt(pos.x, pos.y) }
 }
 
 // One attempt at recovering a departed creep's beam from the neighboring room it
@@ -93,7 +97,7 @@ export function tryRecoverDepartureBeam(
 ): boolean {
   const actionLog = getNeighborActionLog(creepId, exitTile.dirX, exitTile.dirY)
   if (!actionLog) return false
-  renderCreepActionBeams(actionLog, exitTile.x, exitTile.y, animLayer, objLayer, beamDuration)
+  renderCreepActionBeams(actionLog, { x: exitTile.x, y: exitTile.y, sprite: objLayer.getVisualById(creepId) }, animLayer, objLayer, beamDuration)
   return true
 }
 
@@ -124,9 +128,10 @@ export function applyActionLogAnimations(
       const attack = actionLog.attack as { x: number; y: number } | null | undefined
       const heal = actionLog.heal as { x: number; y: number } | null | undefined
       const repair = actionLog.repair as { x: number; y: number } | null | undefined
-      if (attack) animLayer.addTowerAttack(obj.x, obj.y, attack.x, attack.y, beamDuration)
-      if (heal) animLayer.addTowerHeal(obj.x, obj.y, heal.x, heal.y, beamDuration)
-      if (repair) animLayer.addTowerRepair(obj.x, obj.y, repair.x, repair.y, beamDuration)
+      const tower = { x: obj.x, y: obj.y }
+      if (attack) animLayer.addTowerAttack(tower, targetAnchor(attack, objLayer), beamDuration)
+      if (heal) animLayer.addTowerHeal(tower, targetAnchor(heal, objLayer), beamDuration)
+      if (repair) animLayer.addTowerRepair(tower, targetAnchor(repair, objLayer), beamDuration)
       // Aim the barrel at whichever action fired this tick (one action per tick).
       const aim = attack ?? heal ?? repair
       if (aim) objLayer.triggerTowerAim(id, aim.x, aim.y, beamDuration)
@@ -137,7 +142,7 @@ export function applyActionLogAnimations(
       // Source link records the destination position in actionLog.transferEnergy; the
       // receiving link gets no entry, so this fires exactly once per transfer.
       const linkTransfer = actionLog.transferEnergy as { x: number; y: number } | null | undefined
-      if (linkTransfer) animLayer.addLinkTransfer(obj.x, obj.y, linkTransfer.x, linkTransfer.y, beamDuration)
+      if (linkTransfer) animLayer.addLinkTransfer({ x: obj.x, y: obj.y }, linkTransfer, beamDuration)
       continue
     }
 
@@ -149,8 +154,9 @@ export function applyActionLogAnimations(
       const reaction = (actionLog.runReaction ?? actionLog.reverseReaction) as
         { x1: number; y1: number; x2: number; y2: number } | null | undefined
       if (reaction) {
-        animLayer.addLabReaction(reaction.x1, reaction.y1, obj.x, obj.y, beamDuration)
-        animLayer.addLabReaction(reaction.x2, reaction.y2, obj.x, obj.y, beamDuration)
+        const output = { x: obj.x, y: obj.y }
+        animLayer.addLabReaction({ x: reaction.x1, y: reaction.y1 }, output, beamDuration)
+        animLayer.addLabReaction({ x: reaction.x2, y: reaction.y2 }, output, beamDuration)
       }
       continue
     }
@@ -168,7 +174,7 @@ export function applyActionLogAnimations(
     const freshArrival = objLayer.getFreshArrival(id) != null
 
     if (!freshArrival) {
-      renderCreepActionBeams(actionLog, obj.x, obj.y, animLayer, objLayer, beamDuration)
+      renderCreepActionBeams(actionLog, { x: obj.x, y: obj.y, sprite: objLayer.getVisualById(id) }, animLayer, objLayer, beamDuration)
     }
 
     const say = actionLog.say as { message?: unknown; isPublic?: boolean } | null | undefined

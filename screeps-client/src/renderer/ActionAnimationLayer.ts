@@ -3,21 +3,30 @@ import { TILE_SIZE } from './RoomRenderer.js'
 import { destroyTree } from './destroyTree.js'
 import { ANIM_HARVEST, ANIM_UPGRADE, ANIM_BUILD, ANIM_REPAIR, ANIM_TRANSFER, ANIM_LINK_TRANSFER, ANIM_RANGED_ATTACK, ANIM_ATTACK, ANIM_HEAL, ANIM_DISMANTLE, ANIM_WITHDRAW, ANIM_CLAIM, ANIM_ATTACK_CONTROLLER, ANIM_TOWER_ATTACK, ANIM_TOWER_HEAL, ANIM_TOWER_REPAIR, ANIM_LAB_REACTION } from './colors.js'
 
+export interface BeamAnchor {
+  x: number
+  y: number
+  sprite?: Container | null
+}
+
+interface TrackedPoint {
+  sprite: Container | null
+  px: number
+  py: number
+}
+
 interface BeamAnimation {
-  fromX: number
-  fromY: number
-  toX: number
-  toY: number
+  from: TrackedPoint
+  to: TrackedPoint
   startTime: number
   duration: number
   color: number
   width: number
-  glowAtSource?: boolean  // glow the source end instead of the target (harvest points source → creep)
+  glowAtSource: boolean  // glow the source end instead of the target (harvest points source → creep)
 }
 
 interface WaveAnimation {
-  cx: number
-  cy: number
+  center: TrackedPoint
   maxRadius: number
   startTime: number
   duration: number
@@ -33,11 +42,25 @@ const TOWER_BEAM_WIDTH = 3  // tower beams read as a heavier shot than creep act
 const GLOW_RADIUS = TILE_SIZE * 0.45  // base impact-glow radius; tower beams scale it up by their wider stroke
 const GLOW_ALPHA = 0.55               // peak opacity of the impact-glow core
 
-function tileCenter(x: number, y: number): { cx: number; cy: number } {
-  return {
-    cx: x * TILE_SIZE + TILE_SIZE / 2,
-    cy: y * TILE_SIZE + TILE_SIZE / 2,
+function trackPoint(anchor: BeamAnchor): TrackedPoint {
+  const point: TrackedPoint = {
+    sprite: anchor.sprite ?? null,
+    px: anchor.x * TILE_SIZE + TILE_SIZE / 2,
+    py: anchor.y * TILE_SIZE + TILE_SIZE / 2,
   }
+  followSprite(point)
+  return point
+}
+
+function followSprite(point: TrackedPoint): void {
+  const sprite = point.sprite
+  if (!sprite) return
+  if (sprite.destroyed) {
+    point.sprite = null
+    return
+  }
+  point.px = sprite.x + TILE_SIZE / 2
+  point.py = sprite.y + TILE_SIZE / 2
 }
 
 export class ActionAnimationLayer {
@@ -60,172 +83,88 @@ export class ActionAnimationLayer {
     }
   }
 
-  addHarvest(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
+  private addBeam(from: BeamAnchor, to: BeamAnchor, durationMs: number, color: number, width = BEAM_WIDTH, glowAtSource = false): void {
     this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
+      from: trackPoint(from),
+      to: trackPoint(to),
       startTime: performance.now(),
       duration: durationMs,
-      color: ANIM_HARVEST,
-      width: BEAM_WIDTH,
-      glowAtSource: true,  // harvest points source → creep; glow the source, not the creep
+      color,
+      width,
+      glowAtSource,
     })
   }
 
-  addUpgradeController(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_UPGRADE,
-      width: BEAM_WIDTH,
-    })
+  addHarvest(source: BeamAnchor, creep: BeamAnchor, durationMs: number): void {
+    this.addBeam(source, creep, durationMs, ANIM_HARVEST, BEAM_WIDTH, true)
   }
 
-  addTransfer(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_TRANSFER,
-      width: BEAM_WIDTH,
-    })
+  addUpgradeController(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_UPGRADE)
   }
 
-  addBuild(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_BUILD,
-      width: BEAM_WIDTH,
-    })
+  addTransfer(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_TRANSFER)
+  }
+
+  addBuild(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_BUILD)
   }
 
   // Creep repair: same build/hold/dissolve beam as the build action, driven by the
   // creep's actionLog.repair (target structure position).
-  addRepair(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_REPAIR,
-      width: BEAM_WIDTH,
-    })
+  addRepair(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_REPAIR)
   }
 
   // Link-to-link energy transfer: source link → destination link. Same build/hold/dissolve
   // beam as the build action, driven by the source link's actionLog.transferEnergy.
-  addLinkTransfer(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_LINK_TRANSFER,
-      width: BEAM_WIDTH,
-    })
+  addLinkTransfer(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_LINK_TRANSFER)
   }
 
   // Lab reaction: a short beam from an input lab into the producing lab, glowing the
   // producing (target) end where the compound forms. Fired twice — once per input lab —
   // so the two streams converge on the output lab. Same build/hold/dissolve motion as build.
-  addLabReaction(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color: ANIM_LAB_REACTION,
-      width: BEAM_WIDTH,
-    })
+  addLabReaction(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_LAB_REACTION)
   }
 
-  private addCreepBeam(fromX: number, fromY: number, toX: number, toY: number, durationMs: number, color: number, glowAtSource = false): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color,
-      width: BEAM_WIDTH,
-      glowAtSource,
-    })
+  addRangedAttack(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_RANGED_ATTACK)
   }
 
-  addRangedAttack(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_RANGED_ATTACK)
+  addAttack(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_ATTACK)
   }
 
-  addAttack(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_ATTACK)
+  addHeal(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_HEAL)
   }
 
-  addHeal(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_HEAL)
+  addRangedHeal(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_HEAL)
   }
 
-  addRangedHeal(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_HEAL)
+  addDismantle(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_DISMANTLE)
   }
 
-  addDismantle(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_DISMANTLE)
+  addWithdraw(target: BeamAnchor, creep: BeamAnchor, durationMs: number): void {
+    this.addBeam(target, creep, durationMs, ANIM_WITHDRAW, BEAM_WIDTH, true)
   }
 
-  addWithdraw(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_WITHDRAW, true)
+  addReserveController(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_CLAIM)
   }
 
-  addReserveController(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_CLAIM)
+  addAttackController(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_ATTACK_CONTROLLER)
   }
 
-  addAttackController(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addCreepBeam(fromX, fromY, toX, toY, durationMs, ANIM_ATTACK_CONTROLLER)
-  }
-
-  addRangedMassAttack(x: number, y: number, durationMs: number): void {
-    const center = tileCenter(x, y)
+  addRangedMassAttack(center: BeamAnchor, durationMs: number): void {
     this.waves.push({
-      cx: center.cx,
-      cy: center.cy,
+      center: trackPoint(center),
       maxRadius: (RANGED_MASS_ATTACK_RANGE + 0.5) * TILE_SIZE,
       startTime: performance.now(),
       duration: durationMs,
@@ -233,31 +172,16 @@ export class ActionAnimationLayer {
     })
   }
 
-  private addTowerBeam(fromX: number, fromY: number, toX: number, toY: number, durationMs: number, color: number): void {
-    const from = tileCenter(fromX, fromY)
-    const to = tileCenter(toX, toY)
-    this.animations.push({
-      fromX: from.cx,
-      fromY: from.cy,
-      toX: to.cx,
-      toY: to.cy,
-      startTime: performance.now(),
-      duration: durationMs,
-      color,
-      width: TOWER_BEAM_WIDTH,
-    })
+  addTowerAttack(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_TOWER_ATTACK, TOWER_BEAM_WIDTH)
   }
 
-  addTowerAttack(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addTowerBeam(fromX, fromY, toX, toY, durationMs, ANIM_TOWER_ATTACK)
+  addTowerHeal(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_TOWER_HEAL, TOWER_BEAM_WIDTH)
   }
 
-  addTowerHeal(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addTowerBeam(fromX, fromY, toX, toY, durationMs, ANIM_TOWER_HEAL)
-  }
-
-  addTowerRepair(fromX: number, fromY: number, toX: number, toY: number, durationMs: number): void {
-    this.addTowerBeam(fromX, fromY, toX, toY, durationMs, ANIM_TOWER_REPAIR)
+  addTowerRepair(from: BeamAnchor, to: BeamAnchor, durationMs: number): void {
+    this.addBeam(from, to, durationMs, ANIM_TOWER_REPAIR, TOWER_BEAM_WIDTH)
   }
 
   private animate(): void {
@@ -270,6 +194,13 @@ export class ActionAnimationLayer {
       const elapsed = now - anim.startTime
       const progress = Math.min(1, elapsed / anim.duration)
 
+      followSprite(anim.from)
+      followSprite(anim.to)
+      const fromX = anim.from.px
+      const fromY = anim.from.py
+      const toX = anim.to.px
+      const toY = anim.to.py
+
       let startX: number
       let startY: number
       let endX: number
@@ -281,23 +212,23 @@ export class ActionAnimationLayer {
       if (progress < buildRatio) {
         // Build phase: beam grows from source toward target
         const p = progress / buildRatio
-        startX = anim.fromX
-        startY = anim.fromY
-        endX = anim.fromX + (anim.toX - anim.fromX) * p
-        endY = anim.fromY + (anim.toY - anim.fromY) * p
+        startX = fromX
+        startY = fromY
+        endX = fromX + (toX - fromX) * p
+        endY = fromY + (toY - fromY) * p
       } else if (progress < buildRatio + holdRatio) {
         // Hold phase: full beam visible
-        startX = anim.fromX
-        startY = anim.fromY
-        endX = anim.toX
-        endY = anim.toY
+        startX = fromX
+        startY = fromY
+        endX = toX
+        endY = toY
       } else {
         // Dissolve phase: beam shrinks from the source (back) toward target
         const p = (progress - buildRatio - holdRatio) / (1 - buildRatio - holdRatio)
-        startX = anim.fromX + (anim.toX - anim.fromX) * p
-        startY = anim.fromY + (anim.toY - anim.fromY) * p
-        endX = anim.toX
-        endY = anim.toY
+        startX = fromX + (toX - fromX) * p
+        startY = fromY + (toY - fromY) * p
+        endX = toX
+        endY = toY
       }
 
       this.graphics.moveTo(startX, startY)
@@ -310,8 +241,8 @@ export class ActionAnimationLayer {
         const impactT = (progress - buildRatio) / (1 - buildRatio)
         const glowAlpha = (1 - impactT) * GLOW_ALPHA
         const glowRadius = (anim.width / BEAM_WIDTH) * GLOW_RADIUS * (0.7 + 0.5 * impactT)
-        const glowX = anim.glowAtSource ? anim.fromX : anim.toX
-        const glowY = anim.glowAtSource ? anim.fromY : anim.toY
+        const glowX = anim.glowAtSource ? fromX : toX
+        const glowY = anim.glowAtSource ? fromY : toY
         this.graphics.circle(glowX, glowY, glowRadius)
         this.graphics.fill({ color: anim.color, alpha: glowAlpha * 0.4 })
         this.graphics.circle(glowX, glowY, glowRadius * 0.55)
@@ -331,9 +262,11 @@ export class ActionAnimationLayer {
       const radius = Math.max(1, wave.maxRadius * eased)
       const alpha = 1 - progress
 
-      this.graphics.circle(wave.cx, wave.cy, radius)
+      followSprite(wave.center)
+      const { px, py } = wave.center
+      this.graphics.circle(px, py, radius)
       this.graphics.fill({ color: wave.color, alpha: alpha * WAVE_FILL_ALPHA })
-      this.graphics.circle(wave.cx, wave.cy, radius)
+      this.graphics.circle(px, py, radius)
       this.graphics.stroke({ width: WAVE_WIDTH, color: wave.color, alpha })
       anyActive = true
 

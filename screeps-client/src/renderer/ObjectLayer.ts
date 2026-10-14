@@ -1946,6 +1946,17 @@ export class ObjectLayer {
     return this.objects.get(id)
   }
 
+  findCreepSpriteAt(tileX: number, tileY: number): ContainerWithTarget | undefined {
+    let movedInto: ContainerWithTarget | undefined
+    for (const [id, visual] of this.objects) {
+      const obj = this.rawObjects.get(id)
+      if (!obj || !isCreepType(obj.type)) continue
+      if (Math.round(visual.x / TILE_SIZE) === tileX && Math.round(visual.y / TILE_SIZE) === tileY) return visual
+      if (!movedInto && obj.x === tileX && obj.y === tileY) movedInto = visual
+    }
+    return movedInto
+  }
+
   clear(): void {
     for (const visual of this.objects.values()) {
       destroyVisual(visual)
