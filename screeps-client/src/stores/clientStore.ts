@@ -5,6 +5,7 @@ import { addToast } from './toastStore.js'
 import { isEmbedded, embeddedServerUrl, embeddedServerVersion } from '~/utils/embedded.js'
 import { isTauri } from '~/utils/tauri.js'
 import { isProxy, toProxyUrl } from '~/utils/proxy.js'
+import { isLocalServerUrl } from '~/utils/localServer.js'
 import { createLogger } from '~/utils/log.js'
 import { SS, getSession, setSession, removeSession } from '~/utils/storage.js'
 import {
@@ -59,6 +60,7 @@ const [authMethod, setAuthMethod] = createSignal<'password' | 'steam' | 'discord
 const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
 const [userFlags, setUserFlags] = createSignal<Record<string, UserFlag>>({})
 const [worldStatus, setWorldStatus] = createSignal<WorldStatus | null>(null)
+const [terrainRevision, setTerrainRevision] = createSignal(0)
 let passwordLoginEmail: string | null = null
 
 // While the user has lost all spawns ('lost') or hasn't placed a first spawn
@@ -144,7 +146,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus }
+export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus, terrainRevision }
 
 /**
  * Popout windows install an RPC-backed client shim instead of connecting
@@ -232,6 +234,7 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     debug: false,
     serverPassword: opts.serverPassword,
     initialVersion: embeddedServerVersion() ?? undefined,
+    persistTerrain: !isLocalServerUrl(opts.url),
   })
 
   screepsClient.http.on('http:tokenRefresh', ({ token }) => {
@@ -258,8 +261,12 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     if (!silent) addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
   })
 
+  const reloadsTerrainOnReconnect = isLocalServerUrl(opts.url)
+  let connectionDropped = false
+
   screepsClient.stores.server.on('server:disconnected', (data) => {
     log(`server disconnected (willReconnect: ${data.willReconnect}, intentional: ${data.intentional})`)
+    if (data.willReconnect) connectionDropped = true
     // An intentional close (user logged out or a guest hit Login) fires the
     // socket's async onclose after disconnect() has already torn the session
     // down. Treating that as a fatal error would pop the "Connection lost"
@@ -280,6 +287,12 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
 
   screepsClient.stores.server.on('server:connected', () => {
     setSessionError(null)
+    if (connectionDropped && reloadsTerrainOnReconnect) {
+      log('local server reconnected — reloading terrain')
+      screepsClient.stores.room.resetTerrain()
+      setTerrainRevision((r) => r + 1)
+    }
+    connectionDropped = false
   })
 
   screepsClient.stores.user.on('user:me', (info) => {

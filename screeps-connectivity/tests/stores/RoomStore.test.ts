@@ -2,13 +2,18 @@ import { describe, it, expect, vi } from 'vitest'
 import { RoomStore } from '../../src/stores/RoomStore.js'
 import { Cache } from '../../src/cache/Cache.js'
 import { TerrainType } from '../../src/types/game.js'
+import type { StorageAdapter } from '../../src/storage/StorageAdapter.js'
 
-function makeStore() {
+function makeStore(opts: { storage?: StorageAdapter; persistTerrain?: boolean } = {}) {
   const http = {
     game: {
       roomTerrain: vi.fn().mockResolvedValue({
         ok: 1,
         terrain: [{ _id: 'id', room: 'W7N7', terrain: '0'.repeat(2500), type: 'terrain' }],
+      }),
+      roomsTerrain: vi.fn().mockResolvedValue({
+        ok: 1,
+        rooms: [{ _id: 'id', room: 'W7N7', terrain: '0'.repeat(2500), type: 'terrain' }],
       }),
       roomObjects: vi.fn().mockResolvedValue({ ok: 1, objects: [], users: {} }),
     },
@@ -19,9 +24,18 @@ function makeStore() {
     on: vi.fn().mockReturnValue({ dispose: vi.fn() }),
   } as unknown as import('../../src/socket/SocketClient.js').SocketClient
 
-  const cache = new Cache('test', null)
-  const store = new RoomStore(http, socket, cache)
+  const cache = new Cache('test', opts.storage ?? null)
+  const store = new RoomStore(http, socket, cache, undefined, { persistTerrain: opts.persistTerrain })
   return { store, http, socket, cache }
+}
+
+function storedWallTerrain(): StorageAdapter {
+  return {
+    get: vi.fn().mockResolvedValue(new Uint8Array(2500).fill(TerrainType.Wall)),
+    set: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined),
+    clear: vi.fn().mockResolvedValue(undefined),
+  }
 }
 
 describe('RoomStore', () => {
@@ -37,6 +51,61 @@ describe('RoomStore', () => {
     await store.terrain('W7N7', 'shard0')
     await store.terrain('W7N7', 'shard0')
     expect(http.game.roomTerrain).toHaveBeenCalledOnce()
+  })
+
+  it('serves terrain from persistent storage by default', async () => {
+    const storage = storedWallTerrain()
+    const { store, http } = makeStore({ storage })
+    const terrain = await store.terrain('W7N7', 'shard0')
+    expect(terrain.get(0, 0)).toBe(TerrainType.Wall)
+    expect(http.game.roomTerrain).not.toHaveBeenCalled()
+  })
+
+  it('ignores persistent storage for terrain() when persistTerrain is false', async () => {
+    const storage = storedWallTerrain()
+    const { store, http } = makeStore({ storage, persistTerrain: false })
+    const terrain = await store.terrain('W7N7', 'shard0')
+    expect(terrain.get(0, 0)).toBe(TerrainType.Plain)
+    expect(http.game.roomTerrain).toHaveBeenCalledOnce()
+    expect(storage.get).not.toHaveBeenCalled()
+    expect(storage.set).not.toHaveBeenCalled()
+  })
+
+  it('ignores persistent storage for terrainBulk() when persistTerrain is false', async () => {
+    const storage = storedWallTerrain()
+    const { store, http } = makeStore({ storage, persistTerrain: false })
+    const result = await store.terrainBulk(['W7N7'], 'shard0')
+    expect(result.get('W7N7')?.get(0, 0)).toBe(TerrainType.Plain)
+    expect(http.game.roomsTerrain).toHaveBeenCalledOnce()
+    expect(storage.get).not.toHaveBeenCalled()
+    expect(storage.set).not.toHaveBeenCalled()
+  })
+
+  it('keeps terrain in memory for the session when persistTerrain is false', async () => {
+    const { store, http } = makeStore({ storage: storedWallTerrain(), persistTerrain: false })
+    await store.terrain('W7N7', 'shard0')
+    await store.terrainBulk(['W7N7'], 'shard0')
+    expect(http.game.roomTerrain).toHaveBeenCalledOnce()
+    expect(http.game.roomsTerrain).not.toHaveBeenCalled()
+  })
+
+  it('resetTerrain() makes the next terrain() and terrainBulk() refetch from the server', async () => {
+    const { store, http } = makeStore()
+    await store.terrain('W7N7', 'shard0')
+    store.resetTerrain()
+    await store.terrain('W7N7', 'shard0')
+    expect(http.game.roomTerrain).toHaveBeenCalledTimes(2)
+
+    store.resetTerrain()
+    await store.terrainBulk(['W7N7'], 'shard0')
+    expect(http.game.roomsTerrain).toHaveBeenCalledOnce()
+  })
+
+  it('resetTerrain() keeps other in-memory cache entries', () => {
+    const { store, cache } = makeStore()
+    cache.set('other/key', 1)
+    store.resetTerrain()
+    expect(cache.get('other/key')).toBe(1)
   })
 
   it('objects() returns null before any subscription updates', () => {

@@ -56,6 +56,7 @@ export interface ScreepsClientOptions {
    * the payload into the page. Falls back to a normal fetch if omitted.
    */
   initialVersion?: ServerVersion
+  persistTerrain?: boolean
 }
 
 export class ScreepsClient {
@@ -101,7 +102,7 @@ export class ScreepsClient {
       maxEntries: opts.map2?.maxCacheEntries ?? 10000,
     })
     this.stores = {
-      room: new RoomStore(this.http, this.socket, this.cache, this.logger.child('room')),
+      room: new RoomStore(this.http, this.socket, this.cache, this.logger.child('room'), { persistTerrain: opts.persistTerrain }),
       user: new UserStore(this.http, this.socket, this.cache, this.logger.child('user')),
       server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server')),
       map: new MapStore(this.socket, map2Storage, { maxSubscriptions: opts.map2?.maxSubscriptions ?? 500 }, this.logger.child('map')),

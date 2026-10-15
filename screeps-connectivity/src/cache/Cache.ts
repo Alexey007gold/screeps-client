@@ -59,6 +59,13 @@ export class Cache {
     this.memory.clear()
   }
 
+  deleteMemoryPrefix(prefix: string): void {
+    const fullPrefix = this.memKey(prefix)
+    for (const key of [...this.memory.keys()]) {
+      if (key.startsWith(fullPrefix)) this.memory.delete(key)
+    }
+  }
+
   async clearPersistent(): Promise<void> {
     if (!this.storage) return
     await this.storage.clear()

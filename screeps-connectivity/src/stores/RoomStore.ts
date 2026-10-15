@@ -68,6 +68,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
   private readonly http: HttpClient
   private readonly socket: SocketClient
   private readonly cache: Cache
+  private readonly persistTerrain: boolean
   private readonly roomObjects = new Map<string, RoomObjectMap>()
   private readonly roomUsers = new Map<string, Record<string, { _id: string; username: string; badge?: Badge }>>()
   private readonly roomSubCount = new Map<string, number>()
@@ -100,11 +101,24 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     return result
   }
 
-  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger) {
+  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, opts?: { persistTerrain?: boolean }) {
     super(logger)
     this.http = http
     this.socket = socket
     this.cache = cache
+    this.persistTerrain = opts?.persistTerrain ?? true
+  }
+
+  resetTerrain(): void {
+    this.cache.deleteMemoryPrefix('terrain/')
+  }
+
+  private async readPersistedTerrain(key: string): Promise<Uint8Array | null> {
+    return this.persistTerrain ? this.cache.getPersistent(key) : null
+  }
+
+  private async writePersistedTerrain(key: string, raw: Uint8Array): Promise<void> {
+    if (this.persistTerrain) await this.cache.setPersistent(key, raw)
   }
 
   async terrain(room: string, shard: string | null, opts?: { silent?: boolean }): Promise<RoomTerrain> {
@@ -116,7 +130,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       return cached
     }
 
-    const persisted = await this.cache.getPersistent(key)
+    const persisted = await this.readPersistedTerrain(key)
     if (persisted) {
       this.logger.log('terrain', room, shard, '(persistent cache hit)')
       const terrain = new RoomTerrain(persisted)
@@ -131,7 +145,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const terrain = RoomTerrain.fromEncodedString(entry.terrain)
 
     this.cache.set(key, terrain)
-    await this.cache.setPersistent(key, terrain.raw)
+    await this.writePersistedTerrain(key, terrain.raw)
     this.emit('room:terrainavailable', { room, shard, terrain })
 
     return terrain
@@ -155,7 +169,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
     const needFetch: string[] = []
     await Promise.all(needPersistentCheck.map(async (room) => {
       const key = `terrain/${shard}/${room}`
-      const persisted = await this.cache.getPersistent(key)
+      const persisted = await this.readPersistedTerrain(key)
       if (persisted) {
         const terrain = new RoomTerrain(persisted)
         this.cache.set(key, terrain)
@@ -174,7 +188,7 @@ export class RoomStore extends TypedStore<RoomStoreEvents> {
       const terrain = RoomTerrain.fromEncodedString(entry.terrain)
       const key = `terrain/${shard}/${entry.room}`
       this.cache.set(key, terrain)
-      await this.cache.setPersistent(key, terrain.raw)
+      await this.writePersistedTerrain(key, terrain.raw)
       this.emit('room:terrainavailable', { room: entry.room, shard, terrain })
       result.set(entry.room, terrain)
     }))

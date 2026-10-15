@@ -1,5 +1,6 @@
 import { createLogger } from '~/utils/log.js'
 import { SS, getSession } from '~/utils/storage.js'
+import { isLocalServerUrl } from '~/utils/localServer.js'
 
 const { warn } = createLogger('terrainCache')
 
@@ -18,11 +19,16 @@ export function terrainCacheScope(shard: string): string {
   return `${getSession(SS.url) ?? ''}|${shard}`
 }
 
+function scopeIsLocalServer(scope: string): boolean {
+  return isLocalServerUrl(scope.slice(0, scope.lastIndexOf('|')))
+}
+
 export function terrainCacheKey(scope: string, roomName: string, lod: number): string {
   return `/terrain/${encodeURIComponent(scope)}/${roomName}_z${lod}.webp`
 }
 
 export async function getTerrainCacheBlob(scope: string, roomName: string, lod: number): Promise<Blob | null> {
+  if (scopeIsLocalServer(scope)) return null
   try {
     const cache = await openTerrainCache()
     const req = new Request(terrainCacheKey(scope, roomName, lod))
@@ -44,6 +50,7 @@ export async function getTerrainCacheBlob(scope: string, roomName: string, lod: 
 }
 
 export async function saveTerrainCacheBlob(scope: string, roomName: string, lod: number, blob: Blob): Promise<void> {
+  if (scopeIsLocalServer(scope)) return
   try {
     const cache = await openTerrainCache()
     const req = new Request(terrainCacheKey(scope, roomName, lod))

@@ -1,7 +1,7 @@
-import { batch, createEffect, createSignal, onCleanup, onMount, untrack } from 'solid-js'
+import { batch, createEffect, createSignal, on, onCleanup, onMount, untrack } from 'solid-js'
 import { MapRenderer, type RoomOwnerState } from '~/renderer/MapRenderer.js'
 import { buildMapDecoration } from '~/renderer/mapDecorations.js'
-import { client, userInfo, isGuest, worldBounds, setWorldBounds } from '~/stores/clientStore.js'
+import { client, userInfo, isGuest, worldBounds, setWorldBounds, terrainRevision } from '~/stores/clientStore.js'
 import { showMapRoomNames, showUnclaimableRooms, showMapVisuals, showRoomDecorations } from '~/stores/settingsStore.js'
 import { mapOverlayMode } from '~/stores/mapOverlayStore.js'
 import { allianceMembers, loadAlliances, setAllianceRoomCounts } from '~/stores/allianceStore.js'
@@ -212,6 +212,12 @@ export function MapViewer(props: MapViewerProps) {
     renderer?.clearAllRooms()
   })
 
+  createEffect(on(terrainRevision, () => {
+    terrainQueue = []
+    requested.clear()
+    renderer?.clearAllRooms()
+  }, { defer: true }))
+
   onMount(() => {
     if (!canvasRef) return
 
@@ -380,6 +386,7 @@ export function MapViewer(props: MapViewerProps) {
     const c = client()
     const rooms = visibleRooms()
     const shard = props.shard
+    terrainRevision()
     if (!c || rooms.length === 0) return
 
     const visibleSet = new Set(rooms)

@@ -93,7 +93,11 @@ export class RoomScene {
   // Bakes with whatever decoration has already arrived (order vs. applyDecoration
   // isn't guaranteed — applyDecoration rebakes if it arrives after terrain).
   applyTerrain(terrain: RoomTerrain, rendererGpu: Renderer): void {
-    if (this.terrainLayer) return // already applied; RoomScene is one-shot per mount
+    if (this.terrainLayer && this.rawTerrain === terrain) return
+    if (this.terrainLayer) {
+      this.root.removeChild(this.terrainLayer)
+      this.terrainLayer.destroy()
+    }
     this.rawTerrain = terrain
     this.rendererGpu = rendererGpu
     this.terrainLayer = createTerrainLayer(terrain, this.decoration?.terrain, this.lighting)

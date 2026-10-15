@@ -22,8 +22,9 @@ class FakeScreepsClient {
   stores = {
     server: new FakeStore(),
     user: new FakeStore(),
+    room: { resetTerrain: vi.fn() },
   }
-  constructor() {
+  constructor(readonly opts: { url: string; persistTerrain?: boolean }) {
     FakeScreepsClient.instances.push(this)
   }
   async connect() {}
@@ -39,6 +40,70 @@ vi.mock('screeps-connectivity', () => ({
 }))
 
 beforeEach(() => { FakeScreepsClient.instances = [] })
+
+describe('clientStore terrain persistence', () => {
+  it('persists terrain for remote servers', async () => {
+    const { connect } = await import('../../src/stores/clientStore.js')
+    await connect({ url: 'https://screeps.com', auth: 'password', email: 'a@b.c', password: 'pw' })
+    expect(FakeScreepsClient.instances[0].opts.persistTerrain).toBe(true)
+  })
+
+  it.each(['http://localhost:21025', 'http://192.168.1.20:21025'])('reloads terrain on every connection to %s', async (url) => {
+    const { connect } = await import('../../src/stores/clientStore.js')
+    await connect({ url, auth: 'password', email: 'a@b.c', password: 'pw' })
+    expect(FakeScreepsClient.instances[0].opts.persistTerrain).toBe(false)
+  })
+})
+
+describe('clientStore terrain reset on reconnect', () => {
+  async function connectTo(url: string) {
+    const store = await import('../../src/stores/clientStore.js')
+    await store.connect({ url, auth: 'password', email: 'a@b.c', password: 'pw' })
+    return { instance: FakeScreepsClient.instances[0], terrainRevision: store.terrainRevision }
+  }
+
+  it('drops terrain when a local server comes back after a dropped connection', async () => {
+    const { instance, terrainRevision } = await connectTo('http://localhost:21025')
+    const before = terrainRevision()
+
+    instance.stores.server.emit('server:disconnected', { willReconnect: true, intentional: false })
+    instance.stores.server.emit('server:connected', {})
+
+    expect(instance.stores.room.resetTerrain).toHaveBeenCalledOnce()
+    expect(terrainRevision()).toBe(before + 1)
+  })
+
+  it('keeps terrain on the initial connection to a local server', async () => {
+    const { instance, terrainRevision } = await connectTo('http://localhost:21025')
+    const before = terrainRevision()
+
+    instance.stores.server.emit('server:connected', {})
+
+    expect(instance.stores.room.resetTerrain).not.toHaveBeenCalled()
+    expect(terrainRevision()).toBe(before)
+  })
+
+  it('resets only once per dropped connection', async () => {
+    const { instance } = await connectTo('http://127.0.0.1:21025')
+
+    instance.stores.server.emit('server:disconnected', { willReconnect: true, intentional: false })
+    instance.stores.server.emit('server:connected', {})
+    instance.stores.server.emit('server:connected', {})
+
+    expect(instance.stores.room.resetTerrain).toHaveBeenCalledOnce()
+  })
+
+  it('keeps terrain when a remote server reconnects', async () => {
+    const { instance, terrainRevision } = await connectTo('https://screeps.com')
+    const before = terrainRevision()
+
+    instance.stores.server.emit('server:disconnected', { willReconnect: true, intentional: false })
+    instance.stores.server.emit('server:connected', {})
+
+    expect(instance.stores.room.resetTerrain).not.toHaveBeenCalled()
+    expect(terrainRevision()).toBe(before)
+  })
+})
 
 describe('clientStore fatal-disconnect handling', () => {
   it('disconnects the underlying client when the server reports an unrecoverable disconnect', async () => {

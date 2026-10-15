@@ -43,6 +43,19 @@ describe('Cache — memory tier', () => {
   })
 })
 
+describe('Cache — memory prefix deletion', () => {
+  it('deleteMemoryPrefix drops only entries whose key starts with the prefix', () => {
+    const cache = new Cache('myns', null)
+    cache.set('terrain/shard0/W1N1', 'a')
+    cache.set('terrain/null/W2N2', 'b')
+    cache.set('rooms/shard0', 'c')
+    cache.deleteMemoryPrefix('terrain/')
+    expect(cache.get('terrain/shard0/W1N1')).toBeUndefined()
+    expect(cache.get('terrain/null/W2N2')).toBeUndefined()
+    expect(cache.get('rooms/shard0')).toBe('c')
+  })
+})
+
 describe('Cache — persistent tier', () => {
   it('delegates getPersistent with namespaced key', async () => {
     const storage = new NullStorage()

@@ -47,3 +47,11 @@ export function toProxyUrl(url: string): string {
   if (url.startsWith(`${origin}/(`)) return url
   return `${origin}/(${url.replace(/\/$/, '')})`
 }
+
+export function fromProxyUrl(url: string): string {
+  if (!isProxy()) return url
+  const pinned = proxyPinnedBackend()
+  if (pinned) return pinned
+  const prefix = `${window.location.origin}/(`
+  return url.startsWith(prefix) && url.endsWith(')') ? url.slice(prefix.length, -1) : url
+}
