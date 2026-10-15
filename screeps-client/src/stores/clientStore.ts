@@ -60,8 +60,42 @@ const [authMethod, setAuthMethod] = createSignal<'password' | 'steam' | 'discord
 const [worldBounds, setWorldBounds] = createSignal<WorldInfo | null>(null)
 const [userFlags, setUserFlags] = createSignal<Record<string, UserFlag>>({})
 const [worldStatus, setWorldStatus] = createSignal<WorldStatus | null>(null)
-const [terrainRevision, setTerrainRevision] = createSignal(0)
 let passwordLoginEmail: string | null = null
+
+export const LOCAL_SERVER_LOST = 'The local server stopped. Reconnecting as soon as it is back…'
+export const LIVENESS_PROBE_MS = 1000
+const LIVENESS_TIMEOUT_MS = 3000
+let livenessTimer: ReturnType<typeof setInterval> | null = null
+
+function stopLivenessProbe(): void {
+  if (livenessTimer === null) return
+  clearInterval(livenessTimer)
+  livenessTimer = null
+}
+
+function startLivenessProbe(screepsClient: ScreepsClient, onLost: () => void): void {
+  stopLivenessProbe()
+  let probing = false
+  const timer = setInterval(() => {
+    if (probing) return
+    probing = true
+    void screepsClient.http.isReachable(LIVENESS_TIMEOUT_MS).then((reachable) => {
+      probing = false
+      if (!reachable && livenessTimer === timer) onLost()
+    })
+  }, LIVENESS_PROBE_MS)
+  livenessTimer = timer
+}
+
+const LOCAL_RETRY_MS = 1000
+const REMOTE_RETRY_BASE_MS = 3000
+const REMOTE_RETRY_MAX_MS = 30_000
+
+export function sessionRetryDelayMs(attempt: number): number {
+  const url = isEmbedded() ? embeddedServerUrl() : getSession(SS.url)
+  if (isLocalServerUrl(url)) return LOCAL_RETRY_MS
+  return Math.min(REMOTE_RETRY_BASE_MS * 2 ** attempt, REMOTE_RETRY_MAX_MS)
+}
 
 // While the user has lost all spawns ('lost') or hasn't placed a first spawn
 // ('empty'), world status only refreshes on the slow idle path, so a respawn or
@@ -146,7 +180,7 @@ export const isPrivateServer = () => {
   return (v.serverData?.shards?.length ?? 0) === 0
 }
 
-export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus, terrainRevision }
+export { client, status, error, sessionError, rateLimitError, setRateLimitError, userInfo, serverVersion, gameTime, setGameTime, tickDuration, setTickDuration, isGuest, authMethod, worldBounds, setWorldBounds, userFlags, worldStatus }
 
 /**
  * Popout windows install an RPC-backed client shim instead of connecting
@@ -261,38 +295,38 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     if (!silent) addToast(`Request failed: ${method} ${path} — ${error.message}`, 'error', 6000)
   })
 
-  const reloadsTerrainOnReconnect = isLocalServerUrl(opts.url)
-  let connectionDropped = false
+  const localServer = isLocalServerUrl(opts.url)
+  let established = false
+
+  const dropSession = (message: string) => {
+    stopLivenessProbe()
+    worldStatusPollUntil = 0
+    updateWorldStatusPolling(null)
+    setSessionError(message)
+    screepsClient.disconnect()
+  }
 
   screepsClient.stores.server.on('server:disconnected', (data) => {
     log(`server disconnected (willReconnect: ${data.willReconnect}, intentional: ${data.intentional})`)
-    if (data.willReconnect) connectionDropped = true
+    if (data.intentional) return
     // An intentional close (user logged out or a guest hit Login) fires the
     // socket's async onclose after disconnect() has already torn the session
     // down. Treating that as a fatal error would pop the "Connection lost"
     // modal over the login screen — so only surface genuinely lost sessions.
-    if (!data.willReconnect && !data.intentional) {
-      worldStatusPollUntil = 0
-      updateWorldStatusPolling(null)
-      setSessionError('Lost connection to the server.')
-      screepsClient.disconnect()
+    if (localServer) {
+      if (established) dropSession(LOCAL_SERVER_LOST)
+    } else if (!data.willReconnect) {
+      dropSession('Lost connection to the server.')
     }
   })
 
   screepsClient.stores.server.on('server:error', (data) => {
     log('server error:', data.error.message)
-    setSessionError(data.error.message)
-    screepsClient.disconnect()
+    dropSession(data.error.message)
   })
 
   screepsClient.stores.server.on('server:connected', () => {
     setSessionError(null)
-    if (connectionDropped && reloadsTerrainOnReconnect) {
-      log('local server reconnected — reloading terrain')
-      screepsClient.stores.room.resetTerrain()
-      setTerrainRevision((r) => r + 1)
-    }
-    connectionDropped = false
   })
 
   screepsClient.stores.user.on('user:me', (info) => {
@@ -353,6 +387,9 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
       removeSession(SS.serverPassword)
     }
   }
+
+  established = true
+  if (localServer) startLivenessProbe(screepsClient, () => dropSession(LOCAL_SERVER_LOST))
 
   return screepsClient
 }
@@ -516,6 +553,7 @@ export function disconnect(): void {
       // leave it in the keychain so it survives logout.
     }
   }
+  stopLivenessProbe()
   const c = client()
   if (c) {
     c.disconnect()

@@ -1,8 +1,8 @@
-import { batch, createEffect, createSignal, on, onCleanup, onMount } from 'solid-js'
+import { batch, createEffect, createSignal, onCleanup, onMount } from 'solid-js'
 import { MultiRoomRenderer, MAP2_MIN_ZOOM, FULL_DETAIL_ZOOM_THRESHOLD } from '~/renderer/MultiRoomRenderer.js'
 import { FullDetailRoomCoordinator } from '~/renderer/FullDetailRoomCoordinator.js'
 import type { SelectionVisual } from '~/renderer/HoverHighlightLayer.js'
-import { client, userInfo, worldBounds, setWorldBounds, tickDuration, setGameTime, recordGameTime, isPrivateServer, terrainRevision } from '~/stores/clientStore.js'
+import { client, userInfo, worldBounds, setWorldBounds, tickDuration, setGameTime, recordGameTime, isPrivateServer } from '~/stores/clientStore.js'
 import { showCreepLabels, showRoomVisuals, roomDarkOverlay, showRoomDecorations } from '~/stores/settingsStore.js'
 import { parseRoomDecorations } from '~/renderer/roomDecorations.js'
 import { selection, setSelection, createSelectedObject, updateSelectionWithDiff, updateSelectionFromObjects } from '~/stores/selectionStore.js'
@@ -238,6 +238,7 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
   createEffect(() => {
     client()
     void props.shard
+    terrainQueue = []
     requested.clear()
     for (const sub of map2Subs.values()) sub.dispose()
     map2Subs.clear()
@@ -250,20 +251,6 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
     renderer?.clearAllRooms()
     props.onFullDetailCountChanged?.(fullDetailSet.size)
   })
-
-  createEffect(on(terrainRevision, () => {
-    terrainQueue = []
-    requested.clear()
-    renderer?.clearAllRooms()
-    const c = client()
-    if (!c) return
-    const shard = props.shard
-    for (const room of fullDetailSet) {
-      c.stores.room.terrain(room, shard, { silent: true })
-        .then((t) => { if (fullDetailSet.has(room)) renderer?.applyFullDetailTerrain(room, t) })
-        .catch(() => {})
-    }
-  }, { defer: true }))
 
   // Moves the "room of interest" (info panel + object selection ownership) to
   // a new room. Clears the old room's selection outline and the previous
@@ -400,7 +387,6 @@ export function MultiRoomViewer(props: MultiRoomViewerProps) {
     let rooms = visibleRooms()
     const inView = inViewRooms()
     const shard = props.shard
-    terrainRevision()
     if (!c || rooms.length === 0) return
 
     // Filter out rooms outside world bounds (important for private servers with smaller maps)

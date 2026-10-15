@@ -94,6 +94,21 @@ export class HttpClient extends EventTarget {
     this.token = token
   }
 
+  async isReachable(timeoutMs: number): Promise<boolean> {
+    const headers: Record<string, string> = {}
+    if (this.serverPassword) headers['X-Server-Password'] = this.serverPassword
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      await getFetch()(new URL('api/version', this.baseUrl).toString(), { method: 'GET', headers, signal: controller.signal })
+      return true
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async request<T>(method: string, path: string, body?: Record<string, unknown>, opts: RequestOptions = {}): Promise<T> {
     this.logger.log(method, path)
     const url = new URL(path.startsWith('/') ? path.slice(1) : path, this.baseUrl)

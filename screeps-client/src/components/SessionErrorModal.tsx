@@ -1,8 +1,5 @@
 import { Show, createSignal, createEffect, onCleanup } from 'solid-js'
-import { sessionError, disconnect, retryConnection } from '~/stores/clientStore.js'
-
-const AUTO_RETRY_BASE_MS = 3_000
-const AUTO_RETRY_MAX_MS = 30_000
+import { sessionError, disconnect, retryConnection, sessionRetryDelayMs } from '~/stores/clientStore.js'
 
 // Shown over the Dashboard when the active session hits a fatal error (socket
 // gave up reconnecting, or the server closed the connection for good). Rather
@@ -42,7 +39,7 @@ export function SessionErrorModal() {
   }
 
   const scheduleAutoRetry = () => {
-    const delay = Math.min(AUTO_RETRY_BASE_MS * 2 ** attempt, AUTO_RETRY_MAX_MS)
+    const delay = sessionRetryDelayMs(attempt)
     attempt += 1
     timer = setTimeout(() => {
       timer = null

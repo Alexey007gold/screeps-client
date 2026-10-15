@@ -1029,6 +1029,14 @@ client.http.request<T>(method, path, body?): Promise<T>
 
 Sends an authenticated HTTP request. Handles token refresh on 401, gzip decompression of `data` fields, and rate-limit tracking.
 
+### Liveness probe
+
+```ts
+client.http.isReachable(timeoutMs): Promise<boolean>
+```
+
+Sends `GET /api/version` without the session token, so it never rotates it. Resolves `true` when the server answers with any status, and `false` on a network failure or once `timeoutMs` elapses. It never emits `http:error`. Use it to spot a server that stopped while its WebSocket stayed open.
+
 ---
 
 ## Storage

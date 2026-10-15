@@ -229,3 +229,64 @@ describe('HttpClient', () => {
     expect(arg.error).toBeInstanceOf(Error)
   })
 })
+
+describe('HttpClient.isReachable', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reports a responding server as reachable', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    expect(await http.isReachable(1000)).toBe(true)
+    expect(fetchMock.mock.calls[0][0]).toBe('http://test.local/api/version')
+  })
+
+  it('reports a server answering with an error status as reachable', async () => {
+    fetchMock.mockResolvedValue(new Response('down for maintenance', { status: 503 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    expect(await http.isReachable(1000)).toBe(true)
+  })
+
+  it('reports a refused connection as unreachable without emitting http:error', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+    const errorSpy = vi.fn()
+    http.on('http:error', errorSpy)
+    expect(await http.isReachable(1000)).toBe(false)
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports a server that never answers as unreachable once the timeout elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      }))
+      const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 't' }) })
+      const result = http.isReachable(1000)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(await result).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not send the session token, so probing never rotates it', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ ok: 1 }))
+    const http = new HttpClient({ url: 'http://test.local', auth: new TokenAuth({ token: 'tok123' }), serverPassword: 'secret' })
+    await http.authenticate()
+    await http.isReachable(1000)
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect(headers['X-Token']).toBeUndefined()
+    expect(headers['X-Server-Password']).toBe('secret')
+  })
+})

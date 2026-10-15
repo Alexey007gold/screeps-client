@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack, Show } from 'solid-js'
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, Show } from 'solid-js'
 import { RoomRenderer, TILE_SIZE, Z } from '~/renderer/RoomRenderer.js'
 import { createTerrainLayer, setTerrainEffectsVisible, type TerrainDecoration } from '~/renderer/TerrainLayer.js'
 import { parseRoomDecorations, mergeDecorationItems, type RoomDecoration } from '~/renderer/roomDecorations.js'
@@ -8,7 +8,7 @@ import { ObjectLayer } from '~/renderer/ObjectLayer.js'
 import { ActionAnimationLayer } from '~/renderer/ActionAnimationLayer.js'
 import { applyActionLogAnimations } from '~/renderer/actionLogAnimations.js'
 import { VisualLayer } from '~/renderer/VisualLayer.js'
-import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo, worldStatus, serverVersion, isPrivateServer, terrainRevision } from '~/stores/clientStore.js'
+import { client, gameTime, setGameTime, recordGameTime, tickDuration, worldBounds, userInfo, worldStatus, serverVersion, isPrivateServer } from '~/stores/clientStore.js'
 import { showCreepLabels, terrainEffects, showRoomVisuals, showRoomDecorations, roomDarkOverlay, smoothAnimations } from '~/stores/settingsStore.js'
 import { setSelection, clearSelection, selection, updateSelectionWithDiff, updateSelectionFromObjects, createSelectedObject } from '~/stores/selectionStore.js'
 import { addToast } from '~/stores/toastStore.js'
@@ -198,25 +198,6 @@ export function RoomViewer(props: RoomViewerProps) {
 
     onCleanup(() => { cancelled = true })
   })
-
-  createEffect(on(terrainRevision, () => {
-    const c = client()
-    if (!c) return
-    const room = props.room
-    const shard = props.shard
-    let cancelled = false
-    c.stores.room.terrain(room, shard)
-      .then((t) => {
-        if (!cancelled) {
-          log(`terrain reloaded — ${room}`)
-          terrainLayerRef?.destroy()
-          terrainLayerRef = null
-          setTerrain({ room, data: t })
-        }
-      })
-      .catch((err) => { if (!cancelled) error(`terrain reload failed for ${room}:`, err) })
-    onCleanup(() => { cancelled = true })
-  }, { defer: true }))
 
   // Decorations are fetched in their own effect so that switching the setting back on
   // re-fetches immediately instead of waiting for the next room change.
@@ -533,6 +514,7 @@ export function RoomViewer(props: RoomViewerProps) {
     const r = renderer()
     if (!r) return
 
+    void client()
     void props.room
     void props.shard
 
