@@ -4,6 +4,7 @@ import type { MapDecorationRender } from './mapDecorations.js'
 import { BadgeTextureCache } from './BadgeTextureCache.js'
 import { MapVisualLayer } from './MapVisualLayer.js'
 import { ContextRecovery } from './ContextRecovery.js'
+import { KeyboardPan, clampPan } from './KeyboardPan.js'
 import { sharedAtlasCache } from './AtlasCache.js'
 import { defaultSpriteTheme } from './themes/default.js'
 import { parseRoomName, formatRoomName } from '~/utils/roomName.js'
@@ -147,6 +148,7 @@ export class MapRenderer {
   private pinchPivotWorldY = 0
   private pinchStartDist = 0
   private pinchStartScale = 0
+  private readonly keyboardPan = new KeyboardPan()
   private lastVisibleKey = ''
   private visibleRoomNames: string[] = []
   private lastTerrainMode: number | null = null
@@ -241,6 +243,7 @@ export class MapRenderer {
         g.alpha = Math.min(1, g.alpha + ticker.deltaMS / OWNER_FADE_MS)
         if (g.alpha >= 1) this.fadingOverlays.delete(g)
       }
+      this.applyKeyboardPan(ticker.deltaMS)
       if (this.isAnimating) {
         const dx = this.animTargetX - this.world.x
         const dy = this.animTargetY - this.world.y
@@ -1081,6 +1084,7 @@ export class MapRenderer {
   destroy(): void {
     if (this._destroyed) return
     this._destroyed = true
+    this.keyboardPan.destroy()
     this.resizeObserver?.disconnect()
     this.resizeObserver = null
     this.contextRecovery?.dispose()
@@ -1276,16 +1280,10 @@ export class MapRenderer {
         const rawDx = e.clientX - this.dragStartX
         const rawDy = e.clientY - this.dragStartY
         if (Math.abs(rawDx) > 3 || Math.abs(rawDy) > 3) this.hasDragged = true
-        const b = this.worldBoundsSet
-        if (b) {
-          const scale = this.world.scale.x
-          const MARGIN = 50
-          const minX = MARGIN - (b.maxX + 1) * MAP_ROOM_SIZE * scale
-          const maxX = this.app.screen.width  - MARGIN - b.minX * MAP_ROOM_SIZE * scale
-          const minY = MARGIN - (b.maxY + 1) * MAP_ROOM_SIZE * scale
-          const maxY = this.app.screen.height - MARGIN - b.minY * MAP_ROOM_SIZE * scale
-          this.world.x = this.rubberBand(this.dragWorldX + rawDx, minX, maxX)
-          this.world.y = this.rubberBand(this.dragWorldY + rawDy, minY, maxY)
+        const limits = this.panLimits()
+        if (limits) {
+          this.world.x = this.rubberBand(this.dragWorldX + rawDx, limits.minX, limits.maxX)
+          this.world.y = this.rubberBand(this.dragWorldY + rawDy, limits.minY, limits.maxY)
         } else {
           this.world.x = this.dragWorldX + rawDx
           this.world.y = this.dragWorldY + rawDy
@@ -1394,6 +1392,30 @@ export class MapRenderer {
     }
     const excess = x - upper
     return upper + (1 - 1 / (excess * c / size + 1)) * size * c
+  }
+
+  private panLimits(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+    const b = this.worldBoundsSet
+    if (!b) return null
+    const scale = this.world.scale.x
+    const MARGIN = 50
+    return {
+      minX: MARGIN - (b.maxX + 1) * MAP_ROOM_SIZE * scale,
+      maxX: this.app.screen.width  - MARGIN - b.minX * MAP_ROOM_SIZE * scale,
+      minY: MARGIN - (b.maxY + 1) * MAP_ROOM_SIZE * scale,
+      maxY: this.app.screen.height - MARGIN - b.minY * MAP_ROOM_SIZE * scale,
+    }
+  }
+
+  private applyKeyboardPan(deltaMS: number): void {
+    const step = this.keyboardPan.step(deltaMS)
+    if (!step || this.isDragging || this.isPinching) return
+    this.isAnimating = false
+    const x = this.world.x + step.dx
+    const y = this.world.y + step.dy
+    const limits = this.panLimits()
+    this.world.x = limits ? clampPan(x, this.world.x, limits.minX, limits.maxX) : x
+    this.world.y = limits ? clampPan(y, this.world.y, limits.minY, limits.maxY) : y
   }
 
   // After drag: animate world back if the world has been pulled mostly off-screen.

@@ -5,6 +5,7 @@ import { LightingLayer } from './LightingLayer.js'
 import { buildLights } from './objectLights.js'
 import { destroyTree } from './destroyTree.js'
 import { ContextRecovery } from './ContextRecovery.js'
+import { KeyboardPan } from './KeyboardPan.js'
 
 export const TILE_SIZE = 12
 export const ROOM_SIZE = 50 * TILE_SIZE
@@ -39,6 +40,7 @@ export class RoomRenderer {
   private onContextRestoredCallback: (() => void) | null = null
   private destroyed = false
   private canDrag = false
+  private readonly keyboardPan = new KeyboardPan()
   private container: HTMLElement
   private resizeObserver: ResizeObserver | null = null
   private bounceRaf: number | null = null
@@ -291,6 +293,13 @@ export class RoomRenderer {
     let pinchStartDist = 0
     let pinchStartScale = 0
 
+    this.app.ticker.add((ticker) => {
+      const step = this.keyboardPan.step(ticker.deltaMS)
+      if (!step || dragging || pinching || this.cameraLocked || !this.canDrag || this.bounceRaf !== null) return
+      this.world.x += step.dx
+      this.world.y += step.dy
+      this.clampView()
+    })
 
     canvas.addEventListener('pointerdown', (e) => {
       // Primary button (or touch/pen) only: right/middle clicks must not pan, pinch,
@@ -692,6 +701,7 @@ export class RoomRenderer {
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    this.keyboardPan.destroy()
     this.cancelBounce()
     this.cancelWheelTimeout()
     this.resizeObserver?.disconnect()

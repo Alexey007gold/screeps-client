@@ -1,4 +1,5 @@
 import { Application, Container } from 'pixi.js'
+import { KeyboardPan, clampPan } from './KeyboardPan.js'
 
 // Generic pan/zoom/pinch camera over a grid of equally-sized square cells.
 // Extracted and parametrized from MapRenderer's camera code (cellSize was
@@ -82,6 +83,7 @@ export class WorldCamera {
   private lastCheckScale = 0
 
   private readonly activePointers = new Map<number, { x: number; y: number }>()
+  private readonly keyboardPan = new KeyboardPan()
   private readonly canvas: HTMLCanvasElement
   private readonly tickerFn: () => void
   private readonly onPointerMove: (e: PointerEvent) => void
@@ -188,6 +190,7 @@ export class WorldCamera {
     if (this.destroyed) return
     this.destroyed = true
     this.app.ticker.remove(this.tickerFn)
+    this.keyboardPan.destroy()
     if (this.visibleDebounceTimer !== null) {
       clearTimeout(this.visibleDebounceTimer)
       this.visibleDebounceTimer = null
@@ -241,16 +244,10 @@ export class WorldCamera {
       const rawDx = e.clientX - this.dragStartX
       const rawDy = e.clientY - this.dragStartY
       if (Math.abs(rawDx) > 3 || Math.abs(rawDy) > 3) this.hasDragged = true
-      const b = this.boundsSet
-      if (b) {
-        const scale = this.world.scale.x
-        const MARGIN = this.dragMargin
-        const minX = MARGIN - (b.maxX + 1) * this.cellSize * scale
-        const maxX = this.app.screen.width  - MARGIN - b.minX * this.cellSize * scale
-        const minY = MARGIN - (b.maxY + 1) * this.cellSize * scale
-        const maxY = this.app.screen.height - MARGIN - b.minY * this.cellSize * scale
-        this.world.x = this.rubberBand(this.dragWorldX + rawDx, minX, maxX)
-        this.world.y = this.rubberBand(this.dragWorldY + rawDy, minY, maxY)
+      const limits = this.panLimits()
+      if (limits) {
+        this.world.x = this.rubberBand(this.dragWorldX + rawDx, limits.minX, limits.maxX)
+        this.world.y = this.rubberBand(this.dragWorldY + rawDy, limits.minY, limits.maxY)
       } else {
         this.world.x = this.dragWorldX + rawDx
         this.world.y = this.dragWorldY + rawDy
@@ -332,6 +329,30 @@ export class WorldCamera {
     this.applyZoomAt(next, e.offsetX, e.offsetY)
   }
 
+  private panLimits(): WorldCameraBounds | null {
+    const b = this.boundsSet
+    if (!b) return null
+    const scale = this.world.scale.x
+    const MARGIN = this.dragMargin
+    return {
+      minX: MARGIN - (b.maxX + 1) * this.cellSize * scale,
+      maxX: this.app.screen.width  - MARGIN - b.minX * this.cellSize * scale,
+      minY: MARGIN - (b.maxY + 1) * this.cellSize * scale,
+      maxY: this.app.screen.height - MARGIN - b.minY * this.cellSize * scale,
+    }
+  }
+
+  private applyKeyboardPan(): void {
+    const step = this.keyboardPan.step(this.app.ticker.deltaMS)
+    if (!step || this.isDragging || this.isPinching) return
+    this.isAnimating = false
+    const x = this.world.x + step.dx
+    const y = this.world.y + step.dy
+    const limits = this.panLimits()
+    this.world.x = limits ? clampPan(x, this.world.x, limits.minX, limits.maxX) : x
+    this.world.y = limits ? clampPan(y, this.world.y, limits.minY, limits.maxY) : y
+  }
+
   // iOS-style rubber-band: full movement within [lower, upper], decelerating damping outside.
   private rubberBand(x: number, lower: number, upper: number): number {
     const size = upper - lower
@@ -381,6 +402,7 @@ export class WorldCamera {
   }
 
   private tick(): void {
+    this.applyKeyboardPan()
     if (this.isAnimating) {
       const dx = this.animTargetX - this.world.x
       const dy = this.animTargetY - this.world.y
