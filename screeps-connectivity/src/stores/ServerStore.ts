@@ -7,6 +7,18 @@ import type { SocketClient } from '../socket/SocketClient.js'
 import type { Cache } from '../cache/Cache.js'
 import type { Subscription } from '../subscription/index.js'
 
+function roomNameAt(x: number, y: number): string {
+  return `${x < 0 ? `W${-x - 1}` : `E${x}`}${y < 0 ? `N${-y - 1}` : `S${y}`}`
+}
+
+function roomCoordOf(name: string): [number, number] | null {
+  const m = name.match(/^([WE])(\d+)([NS])(\d+)$/)
+  if (!m) return null
+  const x = m[1] === 'W' ? -Number(m[2]) - 1 : Number(m[2])
+  const y = m[3] === 'N' ? -Number(m[4]) - 1 : Number(m[4])
+  return [x, y]
+}
+
 export class ServerStore extends TypedStore<ServerStoreEvents> {
   private readonly http: HttpClient
   private readonly cache: Cache
@@ -20,10 +32,13 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
   private _shards: ShardInfo[] | null = null
   get shardList(): ShardInfo[] | null { return this._shards }
 
-  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger) {
+  private readonly exactWorldBounds: boolean
+
+  constructor(http: HttpClient, socket: SocketClient, cache: Cache, logger?: Logger, opts?: { exactWorldBounds?: boolean }) {
     super(logger)
     this.http = http
     this.cache = cache
+    this.exactWorldBounds = opts?.exactWorldBounds ?? false
 
     this.socketSubs.push(socket.on('connected', () => {
       this.emit('server:connected', {})
@@ -148,10 +163,37 @@ export class ServerStore extends TypedStore<ServerStoreEvents> {
       this.logger.log('worldInfo corner probe failed — keeping W/N defaults:', e)
     }
 
+    if (this.exactWorldBounds) {
+      const exact = await this.scanWorldBounds(width, height, params)
+      if (exact) ({ minX, maxX, minY, maxY } = exact)
+    }
+
     this.logger.log(`worldInfo computed bounds — x: [${minX}, ${maxX}]  y: [${minY}, ${maxY}]`)
     const info: WorldInfo = { shard: shard ?? null, width, height, minX, maxX, minY, maxY }
     this.cache.set(cacheKey, info, 10 * 60_000)
     return info
+  }
+
+  private async scanWorldBounds(width: number, height: number, params: Record<string, string>):
+    Promise<Pick<WorldInfo, 'minX' | 'maxX' | 'minY' | 'maxY'> | null> {
+    const rooms: string[] = []
+    for (let x = -width; x < width; x++) {
+      for (let y = -height; y < height; y++) rooms.push(roomNameAt(x, y))
+    }
+    try {
+      const res = await this.http.request<{ ok: number; stats: Record<string, unknown> }>(
+        'POST', '/api/game/map-stats', { rooms, statName: 'owner0', ...params }
+      )
+      const coords = Object.keys(res.stats ?? {}).map(roomCoordOf).filter((c): c is [number, number] => !!c)
+      this.logger.log(`worldInfo room scan — ${coords.length} of ${rooms.length} rooms exist`)
+      if (!coords.length) return null
+      const xs = coords.map(([x]) => x)
+      const ys = coords.map(([, y]) => y)
+      return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
+    } catch (e) {
+      this.logger.log('worldInfo room scan failed — keeping probed bounds:', e)
+      return null
+    }
   }
 
   invalidateWorldInfo(shard?: string): void {

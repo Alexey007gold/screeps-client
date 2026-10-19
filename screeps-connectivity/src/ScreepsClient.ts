@@ -57,6 +57,7 @@ export interface ScreepsClientOptions {
    */
   initialVersion?: ServerVersion
   persistTerrain?: boolean
+  exactWorldBounds?: boolean
 }
 
 export class ScreepsClient {
@@ -104,7 +105,7 @@ export class ScreepsClient {
     this.stores = {
       room: new RoomStore(this.http, this.socket, this.cache, this.logger.child('room'), { persistTerrain: opts.persistTerrain }),
       user: new UserStore(this.http, this.socket, this.cache, this.logger.child('user')),
-      server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server')),
+      server: new ServerStore(this.http, this.socket, this.cache, this.logger.child('server'), { exactWorldBounds: opts.exactWorldBounds }),
       map: new MapStore(this.socket, map2Storage, { maxSubscriptions: opts.map2?.maxSubscriptions ?? 500 }, this.logger.child('map')),
       mapStats: new MapStatsStore(this.http, 100, 100, this.logger.child('mapStats')),
       navigation: new NavigationStore(50, this.logger.child('navigation')),

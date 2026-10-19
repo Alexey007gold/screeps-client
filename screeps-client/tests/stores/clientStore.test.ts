@@ -25,7 +25,7 @@ class FakeScreepsClient {
     user: new FakeStore(),
     room: { resetTerrain: vi.fn() },
   }
-  constructor(readonly opts: { url: string; persistTerrain?: boolean }) {
+  constructor(readonly opts: { url: string; persistTerrain?: boolean; exactWorldBounds?: boolean }) {
     FakeScreepsClient.instances.push(this)
   }
   async connect() {
@@ -60,6 +60,20 @@ describe('clientStore terrain persistence', () => {
     const { connect } = await import('../../src/stores/clientStore.js')
     await connect({ url, auth: 'password', email: 'a@b.c', password: 'pw' })
     expect(FakeScreepsClient.instances[0].opts.persistTerrain).toBe(false)
+  })
+})
+
+describe('clientStore world bounds', () => {
+  it('keeps probed world bounds for remote servers', async () => {
+    const { connect } = await import('../../src/stores/clientStore.js')
+    await connect({ url: 'https://screeps.com', auth: 'password', email: 'a@b.c', password: 'pw' })
+    expect(FakeScreepsClient.instances[0].opts.exactWorldBounds).toBe(false)
+  })
+
+  it.each(['http://localhost:21025', 'http://192.168.1.20:21025'])('scans exact world bounds on %s', async (url) => {
+    const { connect } = await import('../../src/stores/clientStore.js')
+    await connect({ url, auth: 'password', email: 'a@b.c', password: 'pw' })
+    expect(FakeScreepsClient.instances[0].opts.exactWorldBounds).toBe(true)
   })
 })
 

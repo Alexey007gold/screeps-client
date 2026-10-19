@@ -269,6 +269,7 @@ async function establishClient(rawOpts: ConnectOpts): Promise<ScreepsClient> {
     serverPassword: opts.serverPassword,
     initialVersion: embeddedServerVersion() ?? undefined,
     persistTerrain: !isLocalServerUrl(opts.url),
+    exactWorldBounds: isLocalServerUrl(opts.url),
   })
 
   screepsClient.http.on('http:tokenRefresh', ({ token }) => {
