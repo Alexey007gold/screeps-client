@@ -10,9 +10,11 @@ const SPEED_OPTIONS = [0.5, 1, 2, 5, 10, 20] as const
 const STEP_BUTTONS_LEFT = [
   { delta: -100, label: '-100' },
   { delta: -10, label: '-10' },
+  { delta: -1, label: '-1' },
 ] as const
 
 const STEP_BUTTONS_RIGHT = [
+  { delta: 1, label: '+1' },
   { delta: 10, label: '+10' },
   { delta: 100, label: '+100' },
 ] as const
