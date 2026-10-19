@@ -588,6 +588,14 @@ group.add(client.stores.room.on('room:update', ({ objects, diff, gameTime }) => 
 }))
 ```
 
+**Merging diffs yourself**: room history chunks (`client.http.game.roomHistory`) use the same diff format — a full snapshot at the chunk's base tick, then per-tick partial objects. Apply them with the exported `mergeRoomObjectDiff(prev, diff)`, the same merge `RoomStore` uses: nested objects such as `store` are merged recursively, a `null` leaf removes the field, and array fields (e.g. a creep's `body`) diffed positionally as `{ "0": { hits: 0 } }` are merged element-wise so they stay arrays. It returns a new object and never mutates `prev`.
+
+```ts
+import { mergeRoomObjectDiff } from 'screeps-connectivity'
+
+const next = mergeRoomObjectDiff(objects[id], tickDiff[id])
+```
+
 **Terrain data format**: `RoomTerrain` wraps a `Uint8Array(2500)` — one byte per tile, values 0–3 (`TerrainType.Plain`, `TerrainType.Wall`, `TerrainType.Swamp`). Stored as raw binary in persistent storage.
 
 ```ts

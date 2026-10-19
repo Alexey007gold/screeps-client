@@ -1,3 +1,4 @@
+import { mergeRoomObjectDiff } from 'screeps-connectivity'
 import type { RoomObjectMap, RoomObjectDiff, RoomObject, RoomHistoryChunk } from 'screeps-connectivity'
 
 interface GameHttpClient {
@@ -82,7 +83,7 @@ export class HistoryPlayer {
       if (val === null) {
         delete result[id]
       } else if (result[id]) {
-        result[id] = { ...result[id], ...val } as RoomObject
+        result[id] = mergeRoomObjectDiff(result[id] as Record<string, unknown>, val as Record<string, unknown>) as RoomObject
       } else {
         result[id] = val as RoomObject
       }

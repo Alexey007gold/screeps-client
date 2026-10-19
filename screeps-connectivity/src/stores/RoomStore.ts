@@ -24,7 +24,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 // merged element-wise — replacing the array with that object would turn `body` into a non-array
 // and break every consumer that iterates it. Returns fresh objects so previously returned
 // snapshots are never mutated.
-function mergeObjectDiff(prev: Record<string, unknown>, diff: Record<string, unknown>): Record<string, unknown> {
+export function mergeObjectDiff(prev: Record<string, unknown>, diff: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...prev }
   for (const key in diff) {
     const next = diff[key]

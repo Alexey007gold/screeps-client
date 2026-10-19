@@ -11,13 +11,13 @@ export interface SelectedObject {
 const setters = new WeakMap<SelectedObject, (value: RoomObject) => void>()
 
 export function createSelectedObject(id: string, obj: RoomObject): SelectedObject {
-  const [raw, setRaw] = createStore<RoomObject>(obj)
+  const [raw, setRaw] = createStore<RoomObject>(structuredClone(obj))
   const wrapper: SelectedObject = {
     id,
     type: obj.type,
     raw,
   }
-  setters.set(wrapper, (value) => setRaw(reconcile(value, { key: '_id', merge: false })))
+  setters.set(wrapper, (value) => setRaw(reconcile(structuredClone(value), { key: '_id', merge: false })))
   return wrapper
 }
 
